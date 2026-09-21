@@ -12,7 +12,11 @@ Node.js 22以降で `npm ci`、`npm run dev` を実行し、表示されたURL�
 
 ## 公開
 
-GitHub Pages / GitHub Actionsを使用します。Settings → Pages → Source を GitHub Actions に設定してください。mainへのpushでテスト・ビルド・公開します。公開先は https://kotor-1.github.io/SACHIZU-LAB1/ です。
+GitHub Pagesのブランチ公開を使用します。Settings → Pages → Source は Deploy from a branch、gh-pages / (root) です。公開先は https://kotor-1.github.io/SACHIZU-LAB1/ です。
+
+mainはソース、gh-pagesは `npm run build` で作った `dist-public` の内容のみです。更新時はテストとビルド後に、gh-pagesの別チェックアウトへビルド成果物を同期し、差分を確認してcommit/pushします。`.nojekyll` も含めてください。mainへのpushだけでは公開物は更新しません。
+
+Actions方式は手動起動用の設定を残していますが、現行の公開では使用しません。切り替える場合はPagesのSourceをGitHub Actionsに変更してください。
 
 リポジトリ名や公開パスを変える場合は `DEPLOY_BASE_PATH` をビルド時に設定してください。GitHub Pagesの無料枠・利用条件・容量／帯域上限が適用されます。独自ドメインは不要です。
 
