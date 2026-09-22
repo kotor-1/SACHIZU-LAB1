@@ -5,7 +5,8 @@ import { MobileCMJPose, type PoseSelector } from './mobile-pose';
 import { COMStream, type COMResult } from './com-stream';
 import type { SessionSummary, SessionUpdate } from './video-session';
 import { untilAborted } from './session-lifecycle';
-import type { COMSample } from './center-of-mass';
+import { centerOfMassSample, type COMSample } from './center-of-mass';
+import { recoveryCrop, acceptRecoveredPose } from './pose-recovery';
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 
 export interface RecordingOptions {
@@ -33,6 +34,8 @@ export async function measureRecording(file: File, canvas: HTMLCanvasElement, si
   const rotation = trackRotation((d.videoTrack as typeof d.videoTrack & { matrix?: ArrayLike<number> }).matrix);
   const decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
   const pose = new MobileCMJPose('full', options.selectPose);
+  let recovery: MobileCMJPose | null = null, recoveryCanvas: HTMLCanvasElement | null = null;
+  let retried = 0, recovered = 0;
   const abortDecode = () => decoder.dispose();
   signal.addEventListener('abort', abortDecode, { once: true });
   // Full source sampling can resolve a shorter recorded standing segment;
@@ -40,7 +43,7 @@ export async function measureRecording(file: File, canvas: HTMLCanvasElement, si
   const stream = new COMStream(.2);
   const results: COMResult[] = [];
   const failures = new Map<string, number>();
-  let valid = 0, prepared = false, averageMs = 0, lastUpdate = -Infinity, lastYield = performance.now();
+  let valid = 0, poseFrames = 0, prepared = false, averageMs = 0, lastUpdate = -Infinity, lastYield = performance.now();
   const started = performance.now();
   const context = canvas.getContext('2d');
   if (!context) { signal.removeEventListener('abort', abortDecode); decoder.dispose(); throw new Error('映像処理を開始できませんでした。ブラウザを再起動してください。'); }
@@ -68,7 +71,30 @@ export async function measureRecording(file: File, canvas: HTMLCanvasElement, si
       context.rotate(rotation * Math.PI / 180); context.scale(scale, scale);
       context.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2);
       context.setTransform(1, 0, 0, 1, 0, 0);
-      const r = pose.estimate(canvas, f.frameIndex, f.pts); check();
+      let r = pose.estimate(canvas, f.frameIndex, f.pts); check();
+      if (options.analysis !== 'OBSERVATIONS' && r.comSample.reason === 'BODY_POINT_OCCLUDED' && retried < 12) {
+        const crop = recoveryCrop(r.landmarks);
+        if (crop) {
+          retried++;
+          status('身体の点が不鮮明なコマを、同じ映像から再確認しています。');
+          if (!recovery) {
+            recovery = new MobileCMJPose('full'); recoveryCanvas = document.createElement('canvas');
+            await untilAborted(recovery.initialize(signal, status), signal); check();
+          }
+          const target = recoveryCanvas!, rc = target.getContext('2d');
+          if (rc) {
+            const cw = crop.w * w, ch = crop.h * h, zoom = Math.min(1, 960 / Math.max(cw, ch));
+            target.width = Math.round(cw * zoom); target.height = Math.round(ch * zoom);
+            rc.translate((w / 2 - crop.x * w) * zoom, (h / 2 - crop.y * h) * zoom);
+            rc.rotate(rotation * Math.PI / 180); rc.scale(zoom, zoom);
+            rc.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2); rc.setTransform(1, 0, 0, 1, 0, 0);
+            const retriedPose = recovery.estimate(target, f.frameIndex, f.pts);
+            const landmarks = acceptRecoveredPose(r.landmarks, retriedPose.landmarks, crop, f.frameIndex, f.pts);
+            if (landmarks) { recovered++; r = { ...r, landmarks, comSample: centerOfMassSample(landmarks, f.frameIndex, f.pts) }; }
+          }
+        }
+      }
+      if (r.landmarks.length === 1) poseFrames++;
       options.onSample?.(r.comSample);
       options.onPose?.(r.landmarks, f.frameIndex, f.pts);
       averageMs = averageMs ? .8 * averageMs + .2 * r.inferenceMs : r.inferenceMs;
@@ -80,6 +106,7 @@ export async function measureRecording(file: File, canvas: HTMLCanvasElement, si
         sourcePts: f.pts, inferenceMs: averageMs, landmarks: r.landmarks.length === 1 ? r.landmarks[0] : [],
         com: r.comSample.comX === null || r.comSample.comY === null ? null : { x: r.comSample.comX / 960, y: r.comSample.comY / 960 },
         observationReason: r.comSample.reason ?? null, processingMs: performance.now() - started };
+      latest.quality = { poseFrames, validFrames: valid, reasons: Object.fromEntries(failures), retriedFrames: retried, recoveredFrames: recovered };
       // Inference still runs for EVERY frame. Only React/status updates are
       // throttled; per-frame timer clamping must not impose playback pacing.
       const now = performance.now();
@@ -95,5 +122,5 @@ export async function measureRecording(file: File, canvas: HTMLCanvasElement, si
       ? [...failures].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'COM_TRACKING_LOST'
       : prepared ? 'NO_JUMP_DETECTED' : 'PREPARATION_NOT_CONFIRMED';
     return { resultCount: results.length, estimateCount: results.filter(r => r.analysis.heightCm !== null).length, reason };
-  } finally { signal.removeEventListener('abort', abortDecode); decoder.dispose(); pose.dispose(); }
+  } finally { signal.removeEventListener('abort', abortDecode); decoder.dispose(); pose.dispose(); recovery?.dispose(); if (recoveryCanvas) recoveryCanvas.width = 0; }
 }

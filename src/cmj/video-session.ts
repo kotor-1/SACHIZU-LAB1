@@ -13,6 +13,7 @@ export interface SessionUpdate {
   acquisition?: 'EXACT_FRAMES' | 'PLAYBACK' | 'LIVE';
   poseModel?: 'lite' | 'full';
   processingMs?: number;
+  quality?: { poseFrames: number; validFrames: number; reasons: Record<string, number>; retriedFrames?: number; recoveredFrames?: number };
   decodeDiagnostics?: { submittedSamples: number; emittedFrames: number; maxRetainedFrames: number; configureCount: number };
 }
 export interface SessionSummary { resultCount: number; estimateCount: number; reason: string | null }
@@ -27,7 +28,7 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
   const stream = new COMStream();
   const results: COMResult[] = [];
   let lastPts = -1, frame = 0, averageMs = 0, slowSince: number | null = null;
-  let validFrames = 0;
+  let validFrames = 0, poseFrames = 0;
   let prepared = false;
   const observationFailures = new Map<string, number>();
   const canvas = document.createElement('canvas');
@@ -59,7 +60,8 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
         const final = stream.end(); if (final) results.push(final);
         update({ phase: 'PREPARING', results: [...results], backend: pose.backend, processedFrames: frame,
           sourcePts: lastPts, inferenceMs: averageMs, playbackRate: video.playbackRate, slowDevice: false, landmarks: [], com: null, observationReason: null,
-          acquisition: mode === 'camera' ? 'LIVE' : 'PLAYBACK', poseModel: pose.variant });
+          acquisition: mode === 'camera' ? 'LIVE' : 'PLAYBACK', poseModel: pose.variant,
+          quality: { poseFrames, validFrames, reasons: Object.fromEntries(observationFailures) } });
         clean(); resolve({ resultCount: results.length,
           estimateCount: results.filter(result => result.analysis.heightCm !== null).length,
           reason: results.length ? results.at(-1)!.analysis.reason ?? null : (validFrames < frame / 2
@@ -74,6 +76,7 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
             const pts = meta.mediaTime; lastPts = pts;
             snapshot();
             const r = pose.estimate(canvas, frame++, pts);
+            if (r.landmarks.length === 1) poseFrames++;
             if (r.comSample.comY !== null) validFrames++;
             else if (r.comSample.reason) observationFailures.set(r.comSample.reason, (observationFailures.get(r.comSample.reason) ?? 0) + 1);
             averageMs = averageMs ? .8 * averageMs + .2 * r.inferenceMs : r.inferenceMs;
@@ -89,6 +92,7 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
               observationReason: r.comSample.reason ?? null,
               acquisition: mode === 'camera' ? 'LIVE' : 'PLAYBACK',
               poseModel: pose.variant,
+              quality: { poseFrames, validFrames, reasons: Object.fromEntries(observationFailures) },
               com: r.comSample.comX === null || r.comSample.comY === null ? null
                 : { x: r.comSample.comX / 960, y: r.comSample.comY / 960 } });
             if (results.length > 100) results.shift();

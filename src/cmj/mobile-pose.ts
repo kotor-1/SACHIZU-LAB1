@@ -1,6 +1,7 @@
 import type { PoseLandmarker, NormalizedLandmark } from '@mediapipe/tasks-vision';
 import type { Sample } from './analysis';
 import { centerOfMassSample } from './center-of-mass';
+import { downloadModel } from './model-download';
 
 const wasm = new URL('../../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_internal.wasm', import.meta.url).href;
 const loader = new URL('../../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_internal.js', import.meta.url).href;
@@ -8,6 +9,8 @@ const noSimdWasm = new URL('../../node_modules/@mediapipe/tasks-vision/wasm/visi
 const noSimdLoader = new URL('../../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_nosimd_internal.js', import.meta.url).href;
 export const MOBILE_MODEL_SHA256 = '59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a';
 export const RECORDING_MODEL_SHA256 = '5134a3aad27a58b93da0088d431f366da362b44e3ccfbe3462b3827a839011b1';
+// At most Lite + Full (15 MB); never cache videos or failed/partial downloads.
+const verifiedModels = new Map<string, Uint8Array<ArrayBuffer>>();
 export type PoseSelector = (poses: NormalizedLandmark[][], pts: number) => NormalizedLandmark[][];
 export function mobileSample(points: readonly NormalizedLandmark[][], frame: number, pts: number): Sample {
   const fail = (reason: string): Sample => ({ frame, pts, hipY: null, footY: null, reason });
@@ -28,12 +31,15 @@ export class MobileCMJPose {
     const { FilesetResolver, PoseLandmarker } = await import('@mediapipe/tasks-vision'); check();
     const simd = await FilesetResolver.isSimdSupported();
     status('姿勢モデルを確認しています。');
-    const response = await fetch(`${import.meta.env.BASE_URL}models/cmj/pose_landmarker_${this.variant}.task`, { signal });
-    if (!response.ok) throw new Error('姿勢モデルを読み込めませんでした。通信を確認してください。');
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    const digest = await crypto.subtle.digest('SHA-256', bytes);
-    if (Array.from(new Uint8Array(digest), v => v.toString(16).padStart(2, '0')).join('') !== (this.variant === 'lite' ? MOBILE_MODEL_SHA256 : RECORDING_MODEL_SHA256))
-      throw new Error('姿勢モデルの整合性を確認できませんでした。');
+    let bytes = verifiedModels.get(this.variant);
+    if (!bytes) {
+      bytes = await downloadModel(`${import.meta.env.BASE_URL}models/cmj/pose_landmarker_${this.variant}.task`, signal, status);
+      check(); status('受信した姿勢モデルを検証しています。');
+      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      if (Array.from(new Uint8Array(digest), v => v.toString(16).padStart(2, '0')).join('') !== (this.variant === 'lite' ? MOBILE_MODEL_SHA256 : RECORDING_MODEL_SHA256))
+        throw new Error('姿勢モデルの整合性を確認できませんでした。');
+      check(); verifiedModels.set(this.variant, bytes);
+    }
     const files = { wasmLoaderPath: simd ? loader : noSimdLoader, wasmBinaryPath: simd ? wasm : noSimdWasm };
     status(this.variant === 'lite' ? 'カメラ用の姿勢モデルを準備しています。' : '録画解析用の姿勢モデルを準備しています。');
     this.model = await PoseLandmarker.createFromOptions(files, {

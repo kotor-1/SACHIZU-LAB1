@@ -20,6 +20,7 @@ export default function CMJMobile() {
   const [exact, setExact] = useState(false), [review, setReview] = useState(false);
   const [dimensions, setDimensions] = useState({ w: 720, h: 1280 });
   const [activeResult, setActiveResult] = useState<number | null>(null);
+  const [failureReason, setFailureReason] = useState<string | null>(null);
 
   function cancel() {
     owner.current?.abort(); camera.current?.getTracks().forEach(t => t.stop()); camera.current = null;
@@ -53,7 +54,7 @@ export default function CMJMobile() {
     if (!video.current || busy || (mode === 'file' && !file)) return;
     const element = video.current, control = new AbortController(); owner.current = control;
     setBusy(true); setCancelling(false); setProblem(false); setReview(false); setState(null); setActiveResult(null);
-    setExact(false);
+    setExact(false); setFailureReason(null);
     if (canvas.current) canvas.current.getContext('2d')?.clearRect(0, 0, canvas.current.width, canvas.current.height);
     setMessage('計測の準備をしています…');
     const status = (value: string) => { if (owner.current === control && !control.signal.aborted) setMessage(value); };
@@ -93,11 +94,12 @@ export default function CMJMobile() {
       }
       if (owner.current !== control || control.signal.aborted) return;
       setProblem(summary.estimateCount === 0);
+      setFailureReason(summary.estimateCount ? null : summary.reason);
       setMessage(summary.estimateCount ? `${summary.estimateCount}回の解析が完了しました。` : comFeedback(summary.reason));
     } catch (e) {
       if (owner.current !== control) return;
       if (control.signal.aborted) setMessage('計測を停止しました。');
-      else { setProblem(true); setMessage(e instanceof Error ? e.message : String(e)); }
+      else { setProblem(true); setMessage(e instanceof Error ? e.message : String(e)); setFailureReason(e instanceof Error ? e.message : String(e)); }
     } finally {
       if (owner.current === control) {
         owner.current = null; setBusy(false); setCancelling(false);
@@ -106,10 +108,11 @@ export default function CMJMobile() {
     }
   }
   function download() {
-    if (!state) return;
-    const blob = new Blob([JSON.stringify({ file: mode === 'file' ? file?.name : 'camera', acquisition: state.acquisition,
-      poseModel: state.poseModel, processingMs: state.processingMs, decodeDiagnostics: state.decodeDiagnostics,
-      exportedAt: new Date().toISOString(), results: state.results }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ file: mode === 'file' ? file?.name : 'camera', acquisition: state?.acquisition,
+      poseModel: state?.poseModel, processingMs: state?.processingMs, decodeDiagnostics: state?.decodeDiagnostics,
+      diagnostics: { reason: failureReason, message, quality: state?.quality, processedFrames: state?.processedFrames,
+        browser: navigator.userAgent, videoDecoder: typeof VideoDecoder !== 'undefined', secureContext: window.isSecureContext },
+      exportedAt: new Date().toISOString(), results: state?.results ?? [] }, null, 2)], { type: 'application/json' });
     const objectURL = URL.createObjectURL(blob), link = document.createElement('a');
     link.href = objectURL; link.download = 'jump-analysis.json'; link.click();
     setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
@@ -132,6 +135,7 @@ export default function CMJMobile() {
         <button className={mode === 'file' ? 'is-selected' : ''} aria-pressed={mode === 'file'} disabled={busy} onClick={() => selectMode('file')}><Upload size={17} />録画を解析</button>
         <button className={mode === 'camera' ? 'is-selected' : ''} aria-pressed={mode === 'camera'} disabled={busy} onClick={() => selectMode('camera')}><Camera size={17} />カメラで計測</button>
       </div>
+      {mode === 'camera' && <p className="cmj-inline-note">リアルタイム解析：カメラ起動後、骨格・推定重心を表示します。Readyを確認してジャンプしてください。処理が追いつかない端末では録画解析をお使いください。</p>}
       <div className={`cmj-viewer ${hasSource ? 'has-source' : ''}`}>
         <video ref={video} playsInline muted preload="metadata" controls={review && !busy} hidden={showCanvas}
           onLoadedMetadata={() => { const v = video.current!; if (v.videoWidth) setDimensions({ w: v.videoWidth, h: v.videoHeight }); }} />
@@ -159,6 +163,9 @@ export default function CMJMobile() {
       {state?.slowDevice && <p className="cmj-inline-note">撮影中の解析が追いついていません。標準カメラで録画し、「録画を解析」から読み込んでください。</p>}
       {state?.acquisition === 'PLAYBACK' && <p className="cmj-inline-note">この動画は互換モードで解析しています。映像の間隔が不足する場合は数値を確定しません。</p>}
       {state?.acquisition === 'EXACT_FRAMES' && <p className="cmj-inline-note">再生速度とは独立して、元のフレームを省略せず解析します。画面の動きは解析の進み具合です。</p>}
+      {problem && !busy && <div className="cmj-inline-note" role="note"><p>この動画では高さを確定できませんでした。下の診断を保存すると、骨格未検出・重心取得・動画読み込みのどこで止まったか確認できます。動画そのものは含まれません。</p>
+        {state?.quality && <p>骨格取得：{state.quality.poseFrames} / {state.processedFrames}コマ、重心取得：{state.quality.validFrames}コマ</p>}
+        <button className="cmj-secondary" onClick={download}>解析できない原因を保存</button></div>}
     </section><aside className="cmj-side">
       <section className="cmj-result-panel"><div className="cmj-section-heading"><h2>今回の結果</h2><span>{successful.length} REPS</span></div>
         {state?.results.length ? <><ol className="cmj-result-list">{state.results.map(r => <li key={r.id}><button className={latest?.id === r.id ? 'is-active' : ''} onClick={() => { setActiveResult(r.id); setReview(false); }}>
