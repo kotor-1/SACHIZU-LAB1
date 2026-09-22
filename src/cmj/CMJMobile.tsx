@@ -122,6 +122,7 @@ export default function CMJMobile() {
     const blob = new Blob([JSON.stringify({ file: mode === 'file' ? file?.name : 'camera', acquisition: state?.acquisition,
       poseModel: state?.poseModel, processingMs: state?.processingMs, decodeDiagnostics: state?.decodeDiagnostics,
       diagnostics: { reason: failureReason, message, quality: state?.quality, processedFrames: state?.processedFrames,
+        cameraTiming: state?.cameraTiming, detectedPeople: state?.detectedPeople,
         browser: navigator.userAgent, videoDecoder: typeof VideoDecoder !== 'undefined', secureContext: window.isSecureContext },
       exportedAt: new Date().toISOString(), results: state?.results ?? [] }, null, 2)], { type: 'application/json' });
     const objectURL = URL.createObjectURL(blob), link = document.createElement('a');
@@ -132,7 +133,9 @@ export default function CMJMobile() {
   const height = latest?.analysis.heightCm, successful = state?.results.filter(r => r.analysis.heightCm !== null) ?? [];
   const progress = state?.totalFrames ? Math.min(100, Math.round(state.processedFrames / state.totalFrames * 100)) : null;
   const hasSource = mode === 'file' ? !!file : busy || !!state;
-  const statusText = message || (state && busy ? state.observationReason ? comFeedback(state.observationReason)
+  const statusText = message || (state && busy ? mode === 'camera' && state.detectedPeople === 0
+    ? '身体を検出できません。頭から足先まで映して、明るい場所で正面を向いてください。'
+    : state.observationReason ? comFeedback(state.observationReason)
     : mode === 'file' && state.phase === 'READY' ? '準備姿勢を確認しました。続けて動きを解析します。' : phases[state.phase]
     : mode === 'camera' ? 'カメラを起動して、全身をフレームに入れてください。' : file ? '準備ができました。動画を解析してください。' : '撮影したジャンプ動画を読み込んでください。');
   const showHeight = height != null && !review && (!busy || state?.phase === 'PREPARING' || state?.phase === 'READY');
@@ -172,6 +175,8 @@ export default function CMJMobile() {
         {!busy && file && mode === 'file' && <button className="cmj-secondary" aria-pressed={review} onClick={() => { setReview(!review); video.current?.pause(); }}>動画を確認</button>}
       </div>
       {state?.slowDevice && <p className="cmj-inline-note">撮影中の解析が追いついていません。標準カメラで録画し、「録画を解析」から読み込んでください。</p>}
+      {mode === 'camera' && state && <div className="cmj-inline-note"><span>{state.processedFrames}コマ解析済み · {state.detectedPeople ?? 0}人検出</span>
+        <button className="cmj-secondary" onClick={download}>カメラ診断を保存</button></div>}
       {state?.acquisition === 'PLAYBACK' && <p className="cmj-inline-note">この動画は互換モードで解析しています。映像の間隔が不足する場合は数値を確定しません。</p>}
       {state?.acquisition === 'EXACT_FRAMES' && <p className="cmj-inline-note">再生速度とは独立して、元のフレームを省略せず解析します。画面の動きは解析の進み具合です。</p>}
       {problem && !busy && <div className="cmj-inline-note" role="note"><p>この動画では高さを確定できませんでした。下の診断を保存すると、骨格未検出・重心取得・動画読み込みのどこで止まったか確認できます。動画そのものは含まれません。</p>

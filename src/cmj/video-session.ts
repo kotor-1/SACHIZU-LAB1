@@ -1,6 +1,7 @@
 import { MobileCMJPose } from './mobile-pose';
 import { COMStream, type COMPhase, type COMResult } from './com-stream';
 import { untilAborted } from './session-lifecycle';
+import { CameraClock } from './camera-clock';
 
 export interface SessionUpdate {
   phase: COMPhase; results: COMResult[]; backend: string;
@@ -9,6 +10,8 @@ export interface SessionUpdate {
   landmarks: { x: number; y: number }[];
   com: { x: number; y: number } | null;
   observationReason: string | null;
+  detectedPeople?: number;
+  cameraTiming?: 'capture' | 'media' | 'unavailable';
   totalFrames?: number;
   acquisition?: 'EXACT_FRAMES' | 'PLAYBACK' | 'LIVE';
   poseModel?: 'lite' | 'full';
@@ -24,6 +27,7 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
   if (!video.requestVideoFrameCallback) throw new Error('このブラウザは映像の時刻取得に未対応です。OSとブラウザを更新してください。');
   const check = () => { if (signal.aborted) throw new DOMException('中止', 'AbortError'); };
   const pose = new MobileCMJPose(mode === 'camera' ? 'lite' : 'full');
+  const clock = new CameraClock();
   let callback = 0;
   let stream = new COMStream();
   const results: COMResult[] = [];
@@ -81,28 +85,34 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
             ? [...observationFailures].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'COM_TRACKING_LOST'
             : prepared ? 'NO_JUMP_DETECTED' : 'PREPARATION_NOT_CONFIRMED') });
       };
-      const next = (_now: number, meta: VideoFrameCallbackMetadata) => {
+      const next = (now: number, meta: VideoFrameCallbackMetadata) => {
         try {
           check();
-          if (meta.mediaTime < lastPts) { seek(); return; }
-          if (meta.mediaTime > lastPts) {
-            const pts = meta.mediaTime; lastPts = pts;
+          if (mode === 'file' && meta.mediaTime < lastPts) { seek(); return; }
+          if (mode === 'camera' || meta.mediaTime > lastPts) {
+            const timing = mode === 'camera' ? clock.read(now, meta) : null;
+            const pts = timing ? timing.inferencePts : meta.mediaTime; lastPts = pts;
             snapshot();
+            if (timing?.reset) { stream = new COMStream(); prepared = false; }
             const r = pose.estimate(canvas, frame++, pts);
             if (r.landmarks.length === 1) poseFrames++;
             if (r.comSample.comY !== null) validFrames++;
             else if (r.comSample.reason) observationFailures.set(r.comSample.reason, (observationFailures.get(r.comSample.reason) ?? 0) + 1);
             averageMs = averageMs ? .8 * averageMs + .2 * r.inferenceMs : r.inferenceMs;
-            const found = stream.push(r.comSample); if (found) results.push(found);
+            const found = timing ? timing.measurementPts === null ? null
+              : stream.push({ ...r.comSample, pts: timing.measurementPts }) : stream.push(r.comSample);
+            if (found) results.push(found);
             if (stream.phase === 'READY') prepared = true;
             if (mode === 'file') video.playbackRate = Math.max(.1, Math.min(1, 20 / Math.max(1, averageMs)));
             if (mode === 'camera' && averageMs > 40) slowSince ??= pts;
             else slowSince = null;
             update({ phase: stream.phase, results: results.slice(-100), backend: pose.backend,
-              processedFrames: frame, sourcePts: pts, inferenceMs: averageMs,
+              processedFrames: frame, sourcePts: timing ? timing.elapsed : pts, inferenceMs: averageMs,
               playbackRate: video.playbackRate, slowDevice: slowSince !== null && pts - slowSince > 1,
               landmarks: r.landmarks.length === 1 ? r.landmarks[0] : [],
-              observationReason: r.comSample.reason ?? null,
+              observationReason: timing && timing.measurementPts === null ? 'CAMERA_TIME_UNAVAILABLE' : r.comSample.reason ?? null,
+              detectedPeople: r.landmarks.length,
+              cameraTiming: timing ? timing.source ?? 'unavailable' : undefined,
               acquisition: mode === 'camera' ? 'LIVE' : 'PLAYBACK',
               poseModel: pose.variant,
               quality: { poseFrames, validFrames, reasons: Object.fromEntries(observationFailures) },

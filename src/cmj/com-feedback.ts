@@ -1,6 +1,7 @@
 /** Actionable capture feedback; detailed model diagnostics stay in details. */
 export function comFeedback(reason?: string | null): string {
   switch (reason) {
+    case 'CAMERA_TIME_UNAVAILABLE': return '骨格表示中。カメラの撮影時刻を取得できないため、高さの計測には録画解析をお使いください。';
     case 'POSE_NOT_UNIQUE': return '1人だけが映る位置で撮影してください。';
     case 'BODY_POINT_OUTSIDE_IMAGE':
     case 'BODY_TOO_SMALL_OR_NOT_UPRIGHT': return '頭から足先まで全身が映る位置で、正面を向いてください。';
