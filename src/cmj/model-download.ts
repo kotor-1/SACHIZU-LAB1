@@ -11,7 +11,9 @@ export async function downloadModel(url: string, signal: AbortSignal, status: (t
     status('姿勢モデルをダウンロードしています…');
     const response = await fetch(url, { signal: control.signal });
     if (!response.ok) throw new Error(`姿勢モデルを取得できません（HTTP ${response.status}）。通信を確認して再試行してください。`);
-    const expected = Number(response.headers.get('content-length'));
+    // Fetch exposes decompressed bytes; Content-Length may describe compressed wire bytes.
+    const encoding = response.headers.get('content-encoding');
+    const expected = encoding && encoding !== 'identity' ? 0 : Number(response.headers.get('content-length'));
     if (!response.body) return new Uint8Array(await response.arrayBuffer());
     const reader = response.body.getReader(), chunks: Uint8Array[] = [];
     let size = 0;
