@@ -25,7 +25,7 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
   const check = () => { if (signal.aborted) throw new DOMException('中止', 'AbortError'); };
   const pose = new MobileCMJPose(mode === 'camera' ? 'lite' : 'full');
   let callback = 0;
-  const stream = new COMStream();
+  let stream = new COMStream();
   const results: COMResult[] = [];
   let lastPts = -1, frame = 0, averageMs = 0, slowSince: number | null = null;
   let validFrames = 0, poseFrames = 0;
@@ -33,7 +33,20 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
   const observationFailures = new Map<string, number>();
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d')!;
+  let sourceWidth = 0, sourceHeight = 0, cameraTurned = false;
+  const orientationChanged = () => { cameraTurned = true; };
+  if (mode === 'camera') {
+    window.addEventListener('orientationchange', orientationChanged);
+    window.screen.orientation?.addEventListener('change', orientationChanged);
+  }
   const snapshot = () => {
+    if (mode === 'camera' && (cameraTurned || (sourceWidth > 0 &&
+      (sourceWidth !== video.videoWidth || sourceHeight !== video.videoHeight)))) {
+      // Pixel axes/scale changed: never join motion across a camera rotation.
+      // Keep completed results, discard the incomplete jump, require readiness again.
+      stream = new COMStream(); prepared = false; slowSince = null; cameraTurned = false;
+    }
+    sourceWidth = video.videoWidth; sourceHeight = video.videoHeight;
     const scale = Math.min(1, 720 / Math.max(video.videoWidth, video.videoHeight));
     const w = Math.round(video.videoWidth * scale), h = Math.round(video.videoHeight * scale);
     if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
@@ -107,5 +120,11 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
       callback = video.requestVideoFrameCallback(next);
       video.play().catch(e => { clean(); reject(e); });
     });
-  } finally { video.cancelVideoFrameCallback(callback); video.pause(); video.playbackRate = 1; pose.dispose(); }
+  } finally {
+    if (mode === 'camera') {
+      window.removeEventListener('orientationchange', orientationChanged);
+      window.screen.orientation?.removeEventListener('change', orientationChanged);
+    }
+    video.cancelVideoFrameCallback(callback); video.pause(); video.playbackRate = 1; pose.dispose();
+  }
 }

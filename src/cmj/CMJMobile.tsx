@@ -4,6 +4,7 @@ import { measureVideo, type SessionUpdate } from './video-session';
 import { comFeedback } from './com-feedback';
 import { waitForCurrentFrame } from './media-ready';
 import { untilAborted } from './session-lifecycle';
+import { cameraConstraints, cameraDimensions } from './camera-geometry';
 import './mobile-ui.css';
 
 const phases = { PREPARING: '姿勢を確認しています', READY: '準備OK。ジャンプしてください', MOVING: '重心の動きを追跡中', RECOVERING: 'ジャンプの軌道を確認中' };
@@ -28,10 +29,22 @@ export default function CMJMobile() {
     if (owner.current) { setCancelling(true); setMessage('解析を停止しています…'); }
   }
   useEffect(() => {
+    const element = video.current;
+    const resized = () => {
+      if (!element) return;
+      const next = cameraDimensions(element);
+      if (!next) return;
+      setDimensions(old => old.w === next.w && old.h === next.h ? old : next);
+      // Do not stretch the preceding frame's pose over the new camera geometry.
+      if (element.srcObject) setState(old => old ? { ...old, landmarks: [], com: null } : old);
+    };
+    element?.addEventListener('resize', resized);
+    element?.addEventListener('loadedmetadata', resized);
     const hidden = () => { if (document.hidden && owner.current) cancel(); };
     document.addEventListener('visibilitychange', hidden);
     return () => {
       document.removeEventListener('visibilitychange', hidden); owner.current?.abort(); owner.current = null;
+      element?.removeEventListener('resize', resized); element?.removeEventListener('loadedmetadata', resized);
       camera.current?.getTracks().forEach(t => t.stop()); if (url.current) URL.revokeObjectURL(url.current);
     };
   }, []);
@@ -81,9 +94,7 @@ export default function CMJMobile() {
       } else {
         setExact(false);
         if (!navigator.mediaDevices?.getUserMedia) throw new Error('カメラを利用できません。HTTPS接続を確認するか、録画を読み込んでください。');
-        const media = await untilAborted(navigator.mediaDevices.getUserMedia({ audio: false, video: {
-          facingMode: { ideal: 'environment' }, width: { ideal: 720 }, height: { ideal: 1280 }, frameRate: { ideal: 60 },
-        } }).then(media => {
+        const media = await untilAborted(navigator.mediaDevices.getUserMedia(cameraConstraints(navigator.mediaDevices.getSupportedConstraints())).then(media => {
           if (control.signal.aborted) media.getTracks().forEach(t => t.stop());
           return media;
         }), control.signal);
@@ -136,9 +147,9 @@ export default function CMJMobile() {
         <button className={mode === 'camera' ? 'is-selected' : ''} aria-pressed={mode === 'camera'} disabled={busy} onClick={() => selectMode('camera')}><Camera size={17} />カメラで計測</button>
       </div>
       {mode === 'camera' && <p className="cmj-inline-note">リアルタイム解析：カメラ起動後、骨格・推定重心を表示します。Readyを確認してジャンプしてください。処理が追いつかない端末では録画解析をお使いください。</p>}
-      <div className={`cmj-viewer ${hasSource ? 'has-source' : ''}`}>
-        <video ref={video} playsInline muted preload="metadata" controls={review && !busy} hidden={showCanvas}
-          onLoadedMetadata={() => { const v = video.current!; if (v.videoWidth) setDimensions({ w: v.videoWidth, h: v.videoHeight }); }} />
+      <div className={`cmj-viewer ${hasSource ? 'has-source' : ''}`}
+        style={mode === 'camera' && hasSource ? { aspectRatio: `${dimensions.w} / ${dimensions.h}` } : undefined}>
+        <video ref={video} playsInline muted preload="metadata" controls={review && !busy} hidden={showCanvas} />
         <canvas ref={canvas} hidden={!showCanvas} aria-label="解析した元動画フレーム" />
         {!hasSource && <div className="cmj-empty"><div className="cmj-frame-guide"><svg viewBox="0 0 140 240" aria-hidden="true">
           <circle cx="70" cy="35" r="17" /><path d="M46 68 Q70 58 94 68 L107 120 L88 135 M46 68 L33 120 L52 135 M49 76 L51 143 L89 143 L91 76 M53 146 L50 191 L44 221 M87 146 L90 191 L96 221 M34 223 L51 223 M89 223 L106 223" /></svg></div>
