@@ -3,9 +3,10 @@ import type { COMSample } from '../cmj/center-of-mass';
 import { G } from '../cmj/analysis';
 import type { PredictionSignals } from './predictions';
 import { detectLowerPeaks, type Apex } from './waveform-fit';
+import type { ReviewRefinement } from './review-refinement';
 
 export interface Registration { takeoff1: FirstContact; landing1: FirstContact; takeoff2: FirstContact }
-export interface Boundary { pts: number; source: 'MANUAL' | 'TEMPLATE' | 'TERMINAL_FLIGHT_TEMPLATE' | 'AUTO_FOOT' }
+export interface Boundary { pts: number; source: 'MANUAL' | 'TEMPLATE' | 'TERMINAL_FLIGHT_TEMPLATE' | 'AUTO_FOOT' | 'PIXEL_REFINED' }
 export interface TemplateFit {
   afterJump: number; landing: Boundary | null; takeoff: Boundary | null;
   error: number | null; contactRange: [number, number] | null; reason: string | null;
@@ -20,6 +21,7 @@ export interface RegisteredAnalysis {
   detected: number; selectedPeakFrames: number[]; excludedPeakFrames: number[];
   fits: TemplateFit[]; jumps: RegisteredJump[]; validRSICount: number; meanRSI: number | null; maxRSI: number | null;
   warnings: string[];
+  footRefinement?: ReviewRefinement;
 }
 export const TEMPLATE_PARAMETERS = { points: 41, maxGapSeconds: .05, minCoverage: .9, maxError: .18,
   ambiguityError: .005, maxContactRangeSeconds: .08, minContactSeconds: .06, maxContactSeconds: .6 } as const;

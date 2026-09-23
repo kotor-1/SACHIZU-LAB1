@@ -8,8 +8,8 @@ import RegisteredResults from './RegisteredResults';
 
 /** Mounted per source/template. Corrections update arithmetic only: no model
  * inference, video replay, or propagation of one manual timing to other jumps. */
-export default function RegisteredReview({ file, poses, base }: {
-  file: File; poses: readonly PoseFrame[]; base: RegisteredAnalysis;
+export default function RegisteredReview({ file, poses, base, coarse = base }: {
+  file: File; poses: readonly PoseFrame[]; base: RegisteredAnalysis; coarse?: RegisteredAnalysis;
 }) {
   const [edits, setEdits] = useState<BoundaryCorrections>({});
   const [active, setActive] = useState<{ jump: number; kind: EventKind; pts: number } | null>(null);
@@ -48,7 +48,7 @@ export default function RegisteredReview({ file, poses, base }: {
     }
   }
   function save(csv: boolean) {
-    const data = csv ? reviewedCSV(result) : JSON.stringify(reviewedExport(result, base, edits, file), null, 2);
+    const data = csv ? reviewedCSV(result) : JSON.stringify({...reviewedExport(result, base, edits, file), coarseCandidates:coarse}, null, 2);
     const url = URL.createObjectURL(new Blob([data], { type: csv ? 'text/csv;charset=utf-8' : 'application/json' }));
     const a = document.createElement('a'); a.href = url; a.download = `rebound-reviewed.${csv ? 'csv' : 'json'}`; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -56,6 +56,11 @@ export default function RegisteredReview({ file, poses, base }: {
   return <section className="rj-review" aria-label="跳躍の確認と修正">
     <h2>{result.jumps.length}跳躍の結果を確認・修正</h2>
     <p>候補の足元を確認し、合っていればそのまま確定、ずれていればコマ送りで修正します。再解析は不要です。確認した時刻だけを使うRSIと、未確認の仮値を分けて表示します。</p>
+    {base.footRefinement&&<div className="rj-partial-note"><strong>足元による絞り込み：{base.footRefinement.applied} / {base.footRefinement.attempted} 箇所</strong>
+      <p>画像から候補を絞れた箇所を反映しました。未確定なので映像で確認してください。暗い靴と明るい床で足が分離して見える映像向けです。絞れない箇所は元候補／未取得のまま残します。</p>
+      <details><summary>要確認箇所と補正量</summary>{base.footRefinement.events.map(e=><p key={`${e.jump}-${e.kind}`}>
+        {e.jump}回目の{e.kind==='takeoff'?'離地':'着地'}：{e.applied&&e.pts!==null ? e.originalPts!==null?`足元候補へ ${((e.pts-e.originalPts)*1000).toFixed(1)}ms` : '複数の画像候補が一致・未確認' : e.reason}
+      </p>)}</details></div>}
     <div className="rj-review-progress"><strong>確認 {events.filter(e => e.confirmed).length} / {events.length} 箇所 · RSI確定 {summary.count} 回</strong>
       <button className="rj-button" disabled={!pending} onClick={() => pending && open(pending.jump,pending.kind)}>{pending ? '未確認から順に確認' : 'すべて確認済み'}</button>
       <p>静止開始の1回目は高さのみ。RSIは直前の着地・今回の離地・着地がそろった回から集計します。</p></div>
@@ -64,7 +69,7 @@ export default function RegisteredReview({ file, poses, base }: {
       {(['takeoff', 'landing'] as const).map(kind => <button key={kind} onClick={() => open(j.jump, kind)}
         aria-pressed={active?.jump === j.jump && active.kind === kind}>
         {j.jump}回目の{kind === 'takeoff' ? '離地' : '着地'}を修正
-        <small>{j[kind]?.pts.toFixed(4) ?? '未取得'} 秒 · {j[kind]?.source === 'MANUAL' ? '確認済み' : '未確認の候補'}</small>
+        <small>{j[kind]?.pts.toFixed(4) ?? '未取得'} 秒 · {j[kind]?.source === 'MANUAL' ? '確認済み' : j[kind]?.source === 'PIXEL_REFINED' ? '足元で絞った候補・未確認' : '元候補・要確認'}</small>
       </button>)}
     </article>)}</div>
     {active && <div className="rj-review-editor" ref={viewer}>

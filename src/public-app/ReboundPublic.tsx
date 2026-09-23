@@ -7,7 +7,7 @@ import { createLowerSubjectSelector, type JumpMode } from '../rebound/lower-body
 import { predictionSignals, type PoseFrame } from '../rebound/prediction-observations';
 import { analyzeRegistered, type Registration } from '../rebound/registered-template';
 import { detectLowerPeaks } from '../rebound/waveform-fit';
-import RegisteredReview from '../rebound/RegisteredReview';
+import RefinedRegisteredReview from '../rebound/RefinedRegisteredReview';
 import PoseReplay from '../rebound/PoseReplay';
 import { drawPose } from '../cmj/pose-drawing';
 import { autoReview } from '../rebound/auto-review';
@@ -114,7 +114,7 @@ export default function ReboundPublic() {
       {peaks.detected > 11 && <label>解析する10回の範囲<select aria-label="解析する10回の範囲" value={first} onChange={e => setFirst(Number(e.target.value))}><option value={0}>範囲を選んでください</option>{Array.from({ length: peaks.detected - 9 }, (_, i) => <option key={i} value={i + 1}>{i + 1}〜{i + 10}回目</option>)}</select></label>}
     </section>}
     {result?.reason && <p role="alert" className="rj-warning">{result.reason}</p>}
-    {file && result && !result.reason && <RegisteredReview key={`${url}-${templateMode}-${JSON.stringify(registration)}-${JSON.stringify(region)}-${mode}-${first}`} file={file} poses={selectedFrames} base={result} />}
+    {file && result && !result.reason && <RefinedRegisteredReview key={`${url}-${templateMode}-${JSON.stringify(registration)}-${JSON.stringify(region)}-${mode}-${first}`} file={file} poses={poses} region={region} mode={mode} base={result} />}
     <footer>動画は端末内で処理 · 150MB / 30秒 / 3600フレーム以内 · 記録は保存してください。靴・路面・撮影条件を揃えて比較してください。</footer>
   </main>;
 }
