@@ -21,3 +21,10 @@
 .rj-review-editor>button {margin: 8px 8px 0 0; min-height: 44px; padding: 8px 12px; border: 1px solid #abc9bb; border-radius: 8px;}
 .rj-review-editor [role=alert] {color: #a22518;}
 .rj-review-editor [role=status] {color: #225d4b;}
+.rj-review-progress {padding:16px;background:#edf6f0;border:1px solid #abc9bb;border-radius:14px;margin:16px 0;}
+.rj-review-progress strong {display:block;margin-bottom:12px;}
+.rj-review-progress p {font-size:13px;margin-bottom:0;}
+.rj-review-nav {display:flex;gap:12px;margin:12px 0;}
+.rj-review-nav button {flex:1;min-height:44px;padding:8px;border:1px solid #abc9bb;border-radius:8px;background:#edf6f0;color:#173a36;}
+.rj-review button:disabled {opacity:.45;cursor:default;}
+.rj-review-editor>label {display:inline-block;margin:6px 0;}

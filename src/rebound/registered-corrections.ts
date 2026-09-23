@@ -25,13 +25,28 @@ export function correctRegistered(base: RegisteredAnalysis, corrections: Boundar
   });
   for (let i = 0; i < jumps.length; i++) {
     const j = jumps[i], apex = frames.find(f => f.frame === base.selectedPeakFrames[i]);
-    if ((j.takeoff && apex && j.takeoff.pts >= apex.pts) || (j.landing && apex && j.landing.pts <= apex.pts))
-      return fail(`${j.jump}回目：離地 → 頂点 → 着地の順になるコマを選んでください。`);
+    for (const kind of ['takeoff', 'landing'] as const) {
+      const b = j[kind];
+      if (b && apex && (kind === 'takeoff' ? b.pts >= apex.pts : b.pts <= apex.pts)) {
+        if (b.source === 'MANUAL') return fail(`${j.jump}回目：離地 → 頂点 → 着地の順になるコマを選んでください。`);
+        j[kind] = null;
+      }
+    }
     const previous = jumps[i - 1]?.landing;
-    const ft = j.takeoff && j.landing ? j.landing.pts - j.takeoff.pts : null;
-    const ct = j.takeoff && previous ? j.takeoff.pts - previous.pts : null;
-    if (ft !== null && (ft < .12 || ft > .9)) return fail(`${j.jump}回目：滞空時間が0.12〜0.9秒の範囲外です。`);
-    if (ct !== null && (ct < .06 || ct > .6)) return fail(`${j.jump}回目：直前の着地から離地までが0.06〜0.6秒の範囲外です。`);
+    let ft = j.takeoff && j.landing ? j.landing.pts - j.takeoff.pts : null;
+    let ct = j.takeoff && previous ? j.takeoff.pts - previous.pts : null;
+    // A bad, unconfirmed neighbour must not prevent correcting the current
+    // event. Blank the conflicting interval until both ends are reviewed.
+    if (ft !== null && (ft < .12 || ft > .9)) {
+      if (j.takeoff?.source === 'MANUAL' && j.landing?.source === 'MANUAL')
+        return fail(`${j.jump}回目：滞空時間が0.12〜0.9秒の範囲外です。`);
+      ft = null;
+    }
+    if (ct !== null && (ct < .06 || ct > .6)) {
+      if (j.takeoff?.source === 'MANUAL' && previous?.source === 'MANUAL')
+        return fail(`${j.jump}回目：直前の着地から離地までが0.06〜0.6秒の範囲外です。`);
+      ct = null;
+    }
     j.flightSeconds = ft; j.contactSeconds = ct;
     j.heightM = ft === null ? null : G * ft ** 2 / 8;
     j.rsi = ct === null || j.heightM === null ? null : j.heightM / ct;

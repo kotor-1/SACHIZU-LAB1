@@ -5,7 +5,7 @@ import type { PredictionSignals } from './predictions';
 import { detectLowerPeaks, type Apex } from './waveform-fit';
 
 export interface Registration { takeoff1: FirstContact; landing1: FirstContact; takeoff2: FirstContact }
-export interface Boundary { pts: number; source: 'MANUAL' | 'TEMPLATE' | 'TERMINAL_FLIGHT_TEMPLATE' }
+export interface Boundary { pts: number; source: 'MANUAL' | 'TEMPLATE' | 'TERMINAL_FLIGHT_TEMPLATE' | 'AUTO_FOOT' }
 export interface TemplateFit {
   afterJump: number; landing: Boundary | null; takeoff: Boundary | null;
   error: number | null; contactRange: [number, number] | null; reason: string | null;
@@ -16,7 +16,7 @@ export interface RegisteredJump {
   contactSource: 'MANUAL' | 'PREDICTED' | null; flightSource: 'MANUAL' | 'PREDICTED' | null; reason: string | null;
 }
 export interface RegisteredAnalysis {
-  version: string; validated: false; registration: Registration; reason: string | null;
+  version: string; validated: false; registration: Registration | null; reason: string | null;
   detected: number; selectedPeakFrames: number[]; excludedPeakFrames: number[];
   fits: TemplateFit[]; jumps: RegisteredJump[]; validRSICount: number; meanRSI: number | null; maxRSI: number | null;
   warnings: string[];
