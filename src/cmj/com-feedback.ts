@@ -1,6 +1,11 @@
 /** Actionable capture feedback; detailed model diagnostics stay in details. */
 export function comFeedback(reason?: string | null): string {
   switch (reason) {
+    case 'LIVE_MODEL_WARMUP': return 'ライブ解析の処理速度を確認中です。全身を映して静止してお待ちください。';
+    case 'INSUFFICIENT_ARC_SAMPLES':
+    case 'INSUFFICIENT_SHORT_ARC_EVIDENCE': return '空中の動きを計算するためのコマ数が足りませんでした。';
+    case 'GRAVITY_ARC_UNRESOLVED': return '空中の重心軌道が不安定で、高さを計算できませんでした。';
+    case 'INSUFFICIENT_RISE': return '重心の上昇を十分に確認できませんでした。';
     case 'CAMERA_TIME_UNAVAILABLE': return '骨格表示中。カメラの撮影時刻を取得できないため、高さの計測には録画解析をお使いください。';
     case 'POSE_NOT_UNIQUE': return '1人だけが映る位置で撮影してください。';
     case 'BODY_POINT_OUTSIDE_IMAGE':

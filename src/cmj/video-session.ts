@@ -19,6 +19,7 @@ export interface SessionUpdate {
   totalFrames?: number;
   acquisition?: 'EXACT_FRAMES' | 'PLAYBACK' | 'LIVE';
   poseModel?: 'lite' | 'full';
+  profileReason?: string;
   processingMs?: number;
   quality?: { poseFrames: number; validFrames: number; reasons: Record<string, number>; retriedFrames?: number; recoveredFrames?: number };
   decodeDiagnostics?: { submittedSamples: number; emittedFrames: number; maxRetainedFrames: number; configureCount: number };

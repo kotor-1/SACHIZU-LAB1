@@ -47,6 +47,7 @@ function environment() {
   return { video, emit, close, win };
 }
 const frameResult = { phase: 'READY', backend: 'CPU', found: null, landmarks: [], inferenceMs: 10,
+  poseModel: 'full', warmingUp: false, profileReason: 'FULL_WITHIN_BUDGET',
   comSample: { frame: 0, pts: 0, comX: null, comY: null, bodyScale: null, reason: 'POSE_NOT_UNIQUE' } };
 it('does not queue frames during a slow inference, measures actual sampling, and stops on abort', async () => {
   const env = environment(), control = new AbortController(), updates: SessionUpdate[] = [];

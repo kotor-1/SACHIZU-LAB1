@@ -165,6 +165,7 @@ export default function CMJMobile() {
       liveBeforeRefinement: refining ? liveSnapshot.current : undefined,
       diagnostics: { reason: failureReason, message, quality: state?.quality, processedFrames: state?.processedFrames,
         cameraTiming: state?.cameraTiming, detectedPeople: state?.detectedPeople,
+        liveVersion: 'full-first-v4', profileReason: state?.profileReason,
         processingThread: state?.processingThread, backend: state?.backend, effectiveFps: state?.effectiveFps,
         maxGapMs: state?.maxGapMs, skippedCameraFrames: state?.skippedCameraFrames,
         browser: navigator.userAgent, videoDecoder: typeof VideoDecoder !== 'undefined', secureContext: window.isSecureContext },
@@ -217,6 +218,7 @@ export default function CMJMobile() {
       {busy && mode === 'file' && <div className="cmj-progress"><div role="progressbar" aria-label="動画の解析" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress ?? undefined} style={{ width: `${progress ?? 3}%` }} /></div>}
       <div className={`cmj-status ${problem ? 'has-problem' : ''}`} role="status">{busy ? <LoaderCircle size={18} className="cmj-spin" /> : successful.length ? <Check size={18} /> : <Activity size={18} />}<span>{statusText}</span></div>
       {rejected && <div className="cmj-inline-note" role="alert"><strong>動きは検出しましたが、高さを確定できませんでした。</strong><p>{comFeedback(rejected.analysis.reason)}</p>
+        <small>診断コード：{rejected.analysis.reason ?? 'UNKNOWN'} · {state?.poseModel ?? '不明'}モデル</small>
         <p>{busy ? '腰付近の高さでカメラを固定し、明るい場所で全身を映してください。静止してReadyになったら次のジャンプを試せます。' : '録画がある場合は、下のボタンから再解析できます。'}</p></div>}
       <input className="cmj-file-input" ref={input} type="file" accept="video/*" disabled={busy} aria-label="録画動画を選ぶ" onChange={e => fileSelected(e.target.files?.[0])} />
       {mode === 'file' && file && <div className="cmj-file"><span>{file.name}</span><button disabled={busy} onClick={() => input.current?.click()}>変更</button></div>}
@@ -235,7 +237,7 @@ export default function CMJMobile() {
       {refining && <p className="cmj-inline-note">カメラ録画の再解析です。結果と診断JSONに撮影中の解析とは区別して記録します。</p>}
       {state?.slowDevice && <p className="cmj-inline-note">ライブ解析の実効速度が不足しています。小さいジャンプの計測に不利な状態です。録画を残す設定を外し、他のアプリを閉じて試してください。数値の確定を優先して判定を緩めることはしません。</p>}
       {mode === 'camera' && state && <div className="cmj-inline-note"><span>{state.processedFrames}コマ解析済み · {state.detectedPeople ?? 0}人検出</span>
-        <p>{state.effectiveFps == null ? '実効速度を確認中' : `実効 ${state.effectiveFps.toFixed(0)} fps`}{state.maxGapMs == null ? '' : ` · 最大コマ間隔 ${state.maxGapMs.toFixed(0)} ms`} · {state.processingThread === 'worker' ? '別スレッド' : '互換処理'} / {state.backend}</p>
+        <p>{state.effectiveFps == null ? '実効速度を確認中' : `実効 ${state.effectiveFps.toFixed(0)} fps`}{state.maxGapMs == null ? '' : ` · 最大コマ間隔 ${state.maxGapMs.toFixed(0)} ms`} · {state.processingThread === 'worker' ? '別スレッド' : '互換処理'} / {state.backend} / {state.poseModel === 'full' ? 'Full' : 'Lite'} · v4</p>
         <button className="cmj-secondary" onClick={download}>カメラ診断を保存</button></div>}
       {state?.acquisition === 'PLAYBACK' && <p className="cmj-inline-note">この動画は互換モードで解析しています。映像の間隔が不足する場合は数値を確定しません。</p>}
       {state?.acquisition === 'EXACT_FRAMES' && <p className="cmj-inline-note">再生速度とは独立して、元のフレームを省略せず解析します。画面の動きは解析の進み具合です。</p>}

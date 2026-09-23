@@ -4,7 +4,8 @@ import type { MobileCMJPose } from './mobile-pose';
 import type { COMPhase, COMResult } from './com-stream';
 import type { SessionSummary, SessionUpdate } from './video-session';
 
-type FrameResult = ReturnType<MobileCMJPose['estimate']> & { found: COMResult | null; phase: COMPhase; backend: string };
+type FrameResult = ReturnType<MobileCMJPose['estimate']> & { found: COMResult | null; phase: COMPhase; backend: string;
+  poseModel: 'full' | 'lite'; warmingUp: boolean; profileReason: string };
 export async function prepareLiveWorker(signal: AbortSignal, status: (message: string) => void) {
   if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') return null;
   let client: LiveWorkerClient | null = null;
@@ -87,8 +88,10 @@ export async function measureLive(video: HTMLVideoElement, client: LiveWorkerCli
               slowDevice: effectiveFps !== null && effectiveFps < 40,
               landmarks: r.landmarks.length === 1 ? r.landmarks[0] : [],
               com: r.comSample.comX === null || r.comSample.comY === null ? null : { x: r.comSample.comX / 960, y: r.comSample.comY / 960 },
-              observationReason: timing.measurementPts === null ? 'CAMERA_TIME_UNAVAILABLE' : r.comSample.reason ?? null,
-              detectedPeople: r.landmarks.length, cameraTiming: timing.source ?? 'unavailable', acquisition: 'LIVE', poseModel: 'lite',
+              observationReason: timing.measurementPts === null ? 'CAMERA_TIME_UNAVAILABLE'
+                : r.warmingUp ? 'LIVE_MODEL_WARMUP' : r.comSample.reason ?? null,
+              detectedPeople: r.landmarks.length, cameraTiming: timing.source ?? 'unavailable', acquisition: 'LIVE', poseModel: r.poseModel,
+              profileReason: r.profileReason,
               processingThread: 'worker', effectiveFps, maxGapMs, skippedCameraFrames: callbacks - processed,
               quality: { poseFrames, validFrames, reasons: Object.fromEntries(failures) } });
           } catch (e) { if (!done) { clean(); reject(e); } }
