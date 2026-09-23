@@ -1,0 +1,57 @@
+import { describe, expect, it } from 'vitest';
+import { analyzeCOM } from '../src/cmj/com-analysis';
+import { COMStream } from '../src/cmj/com-stream';
+import { G } from '../src/cmj/analysis';
+
+function smallJump(height: number, fps: number, noise = 0, phase = 0) {
+  const v = Math.sqrt(2 * G * height / 100), scale = .003, depth = v * .1 / scale;
+  return Array.from({ length: 2 * fps + 1 }, (_, frame) => {
+    const pts = (frame + phase) / fps; let y = 500;
+    if (pts > .45 && pts < .65) y += depth * (1 - Math.cos(Math.PI * (pts - .45) / .2)) / 2;
+    else if (pts >= .65 && pts < .85) y = 500 + depth - .5 * (v / .2) * (pts - .65) ** 2 / scale;
+    else if (pts >= .85) y = Math.min(500, 500 - v * (pts - .85) / scale + .5 * G * (pts - .85) ** 2 / scale);
+    return { frame, pts, comX: 480, comY: y + noise * Math.sin(frame * 1.7), bodyScale: 400 };
+  });
+}
+describe('small jumps (synthetic mechanics, not validation in children)', () => {
+  it.each([5, 10, 15, 20, 30, 45])('estimates %i cm at 60 Hz and publishes automatically after recovery', height => {
+    const samples = smallJump(height, 60), result = analyzeCOM(samples, 400);
+    expect(result.heightCm, result.reason).toBeCloseTo(height, 0);
+    const stream = new COMStream(), results = samples.map(p => stream.push(p)).filter(r => r !== null);
+    expect(results).toHaveLength(1); expect(results[0].analysis.heightCm).toBeCloseTo(height, 0);
+    const landing = .85 + 2 * Math.sqrt(2 * G * height / 100) / G;
+    expect(results[0].detectedAtPts - landing).toBeLessThan(.5);
+  });
+  it.each([10, 15])('estimates %i cm at 30 Hz without changing the timestamps', height => {
+    const samples = smallJump(height, 30), result = analyzeCOM(samples, 400);
+    expect(result.heightCm, result.reason).toBeCloseTo(height, 0);
+    expect(result.samples).toBe(samples);
+  });
+  it('does not turn noisy standing, heel raises, or squats into jump heights', () => {
+    const samples = smallJump(10, 60);
+    for (const signal of [
+      (t: number) => 500 + Math.sin(t * 39) * .8,
+      (t: number) => 500 - 20 * Math.max(0, Math.min(1, (t - .5) / .2, (1.7 - t) / .2)),
+      (t: number) => 500 + 50 * Math.max(0, Math.sin(Math.PI * (t - .4) / 1.2)),
+    ]) {
+      const rows = samples.map(p => ({ ...p, comY: signal(p.pts) }));
+      expect(analyzeCOM(rows, 400).heightCm).toBeNull();
+      const stream = new COMStream();
+      expect(rows.map(p => stream.push(p)).filter(r => r?.analysis.heightCm != null)).toHaveLength(0);
+    }
+  });
+  it('does not bridge a missing observation at the apex', () => {
+    const samples = smallJump(10, 60), apex = samples.reduce((a, b) => a.comY < b.comY ? a : b);
+    expect(analyzeCOM(samples.map(p => p === apex ? { ...p, comY: null } : p), 400).heightCm).toBeNull();
+  });
+  it('keeps accepted low-jump estimates bounded under sub-frame offsets and coordinate noise', () => {
+    let accepted = 0;
+    for (const fps of [30, 60]) for (const height of [5, 10, 15]) for (const phase of [0, .3, .7]) {
+      const result = analyzeCOM(smallJump(height, fps, .3, phase), 400);
+      if (result.heightCm === null) continue; // Sparse/ambiguous evidence may be rejected.
+      accepted++;
+      expect(Math.abs(result.heightCm - height)).toBeLessThan(3);
+    }
+    expect(accepted).toBeGreaterThanOrEqual(9);
+  });
+});

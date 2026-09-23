@@ -7,6 +7,7 @@ export default defineConfig({
   root: resolve(import.meta.dirname, 'public-app'),
   base: process.env.DEPLOY_BASE_PATH || '/SACHIZU-LAB1/',
   publicDir: false,
+  worker: { format: 'iife', rollupOptions: { output: { inlineDynamicImports: true } } },
   plugins: [react(), {
     name: 'public-model-allowlist',
     generateBundle() {

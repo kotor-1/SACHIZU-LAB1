@@ -8,7 +8,7 @@ export interface COMCandidate {
   resampledHeightsCm: number[];
 }
 export interface COMAnalysis {
-  version: 'cmj-com-velocity-v2-experimental'; method: 'COM_VELOCITY_GRAVITY'; comModel: string;
+  version: 'cmj-com-velocity-v2-experimental' | 'cmj-com-short-arc-v3-experimental'; method: 'COM_VELOCITY_GRAVITY'; comModel: string;
   status: 'EXPERIMENTAL_ESTIMATE' | 'UNAVAILABLE'; reason?: string;
   heightCm: number | null; velocityMps: number | null;
   sensitivityCm: [number, number] | null; candidates: COMCandidate[];
@@ -23,7 +23,16 @@ const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floo
 // estimated: continuity-constrained quadratics model propulsion and free fall.
 // A fitted parabola alone cannot identify takeoff velocity.
 export function analyzeCOM(samples: readonly COMSample[], baselineScale: number): COMAnalysis {
-  const result: COMAnalysis = { version: 'cmj-com-velocity-v2-experimental', method: 'COM_VELOCITY_GRAVITY',
+  const original = fitCOM(samples, baselineScale, false);
+  // Preserve established long-jump results. Short windows are an alternative
+  // physical model, not a way to accept an unstable fit from the original one.
+  if (original.heightCm !== null) return original;
+  const short = fitCOM(samples, baselineScale, true);
+  return short.heightCm !== null ? short : original;
+}
+
+function fitCOM(samples: readonly COMSample[], baselineScale: number, short: boolean): COMAnalysis {
+  const result: COMAnalysis = { version: short ? 'cmj-com-short-arc-v3-experimental' : 'cmj-com-velocity-v2-experimental', method: 'COM_VELOCITY_GRAVITY',
     comModel: COM_MODEL, status: 'UNAVAILABLE', heightCm: null, velocityMps: null,
     sensitivityCm: null, candidates: [], samples };
   const fail = (reason: string): COMAnalysis => ({ ...result, reason });
@@ -46,25 +55,44 @@ export function analyzeCOM(samples: readonly COMSample[], baselineScale: number)
   // determine velocity/scale (with a pre-bottom margin). An occluded wrist
   // during an earlier squat must not erase a later fully observed propulsion
   // and airborne arc. Never bridge missingness inside the measurement window.
-  const measurement = samples.filter(p => p.pts >= bottom.pts - .05 && p.pts <= apex.pts + .16 + 1e-6);
+  const measurement = samples.filter(p => p.pts >= bottom.pts - .05 && p.pts <= apex.pts + (short ? .06 : .16) + 1e-6);
   if (measurement.some(p => p.comY === null || p.comX === null || p.bodyScale === null)) return fail('COM_TRACKING_LOST');
   if (measurement.some((p, i) => i > 0 && p.pts - measurement[i - 1].pts > MAX_COM_GAP_SECONDS)) return fail('COM_SAMPLE_GAP');
 
-  for (const post of [.10, .13, .16]) {
+  const usedRows = new Set<string>();
+  for (const post of short ? [.06, .08, .10, .13, .16] : [.10, .13, .16]) {
     const arcRows = samples.filter(p => Math.abs(p.pts - apex.pts) <= post + 1e-6);
-    if (arcRows.length < 7 || arcRows.filter(p => p.pts < apex.pts).length < 3 ||
-      arcRows.filter(p => p.pts > apex.pts).length < 3) return fail('INSUFFICIENT_ARC_SAMPLES');
+    const minimumSide = short ? 2 : 3;
+    if (arcRows.length < (short ? 5 : 7) || arcRows.filter(p => p.pts < apex.pts).length < minimumSide ||
+      arcRows.filter(p => p.pts > apex.pts).length < minimumSide) {
+      if (short) continue;
+      return fail('INSUFFICIENT_ARC_SAMPLES');
+    }
+    const local = samples.filter(p => p.pts >= bottom.pts - .05 && p.pts <= apex.pts + post + 1e-6);
+    if (local.some(p => p.comY === null || p.comX === null || p.bodyScale === null) ||
+      local.some((p, i) => i > 0 && p.pts - local[i - 1].pts > MAX_COM_GAP_SECONDS)) {
+      if (short) continue;
+      return fail('COM_TRACKING_LOST');
+    }
     const arc = quadratic(arcRows.map(p => ({ t: p.pts - apex.pts, y: p.comY! })));
     if (!arc || arc.a <= 0 || Math.abs(arc.b / (2 * arc.a)) > .04 ||
-      arc.rmse > baselineScale * .006 || arc.a * post * post < Math.max(.5, arc.rmse * 3)) return fail('GRAVITY_ARC_UNRESOLVED');
+      arc.rmse > baselineScale * .006 || arc.a * post * post < Math.max(.5, arc.rmse * 3)) {
+      if (short) continue;
+      return fail('GRAVITY_ARC_UNRESOLVED');
+    }
     const rows = samples.filter(p => p.pts >= bottom.pts && p.pts <= apex.pts + post + 1e-6);
+    const rowKey = rows.map(p => p.frame).join(',');
+    if (short && usedRows.has(rowKey)) continue;
+    usedRows.add(rowKey);
     const search = (observations: typeof rows): COMCandidate[] => {
     const fits: COMCandidate[] = [];
     // Same observations for every candidate transition: short candidate windows
     // must not win simply by omitting inconvenient propulsion observations.
     for (let boundary = Math.max(bottom.pts + .06, apex.pts - .6); boundary <= apex.pts - .08; boundary += .001) {
       const left = observations.filter(p => p.pts < boundary);
-      if (left.length < 4 || observations.filter(p => p.pts >= boundary && p.pts < apex.pts).length < 4) continue;
+      if (left.length < (short ? 3 : 4) || observations.filter(p => p.pts >= boundary && p.pts < apex.pts).length < (short ? 2 : 4)) continue;
+      if (short && (observations.length < 9 || observations.filter(p => p.pts >= boundary).length < 5 ||
+        boundary > arcRows[0].pts)) continue;
       const design = observations.map(p => {
         const t = p.pts - apex.pts;
         return [1, t, t * t, Math.min(0, p.pts - boundary) ** 2];
@@ -82,6 +110,7 @@ export function analyzeCOM(samples: readonly COMSample[], baselineScale: number)
       const rmse = Math.sqrt(design.reduce((sum, row, i) => sum + (row.reduce((s, x, j) => s + x * fit[j], 0) - observations[i].comY!) ** 2, 0) / observations.length);
       if (rmse > baselineScale * .008) continue;
       const heightCm = v * v / (2 * G) * 100;
+      if (short && heightCm > 20) continue;
       fits.push({ postApexSeconds: post, transitionPts: boundary, apexPts: fittedApex,
         velocityMps: v, heightCm, metersPerUnit: scale, rmseUnits: rmse, arcRmseUnits: arc.rmse,
         transitionSensitivityCm: [heightCm, heightCm], resampledHeightsCm: [] });
@@ -90,24 +119,32 @@ export function analyzeCOM(samples: readonly COMSample[], baselineScale: number)
     return fits;
     };
     const fits = search(rows);
-    if (!fits.length) return fail('PROPULSION_TRANSITION_UNRESOLVED');
+    if (!fits.length) { if (short) continue; return fail('PROPULSION_TRANSITION_UNRESOLVED'); }
     const best = fits[0];
     // Temporal block-deletion stress test. The old fixed +0.15 px RMSE band
     // changed its meaning with image scale/sample density. Refit after removing
     // each of five interleaved 40 ms block groups instead. No confidence interval
     // or physical accuracy is implied; this tests dependence on observations.
-    for (let group = 0; group < 5; group++) {
-      const kept = rows.filter(p => Math.floor((p.pts - bottom.pts + 1e-8) / .04) % 5 !== group);
+    // For short, sparsely sampled arcs remove each observation individually.
+    // Require every refit to succeed and retain the same numerical stability
+    // bounds. Larger arcs keep the existing temporal-block test.
+    let stable = true;
+    for (let group = 0; group < (short ? rows.length : 5); group++) {
+      const kept = short ? rows.filter((_, i) => i !== group)
+        : rows.filter(p => Math.floor((p.pts - bottom.pts + 1e-8) / .04) % 5 !== group);
       const alternate = search(kept)[0];
-      if (!alternate) return fail('PROPULSION_TRANSITION_AMBIGUOUS');
+      if (!alternate) { stable = false; break; }
       best.resampledHeightsCm.push(alternate.heightCm);
     }
+    if (!stable) { if (short) continue; return fail('PROPULSION_TRANSITION_AMBIGUOUS'); }
     const heights = [best.heightCm, ...best.resampledHeightsCm];
     best.transitionSensitivityCm = [Math.min(...heights), Math.max(...heights)];
+    if (best.transitionSensitivityCm[1] - best.transitionSensitivityCm[0] > Math.max(3, best.heightCm * .15)) {
+      result.candidates.push(best); return fail('PROPULSION_TRANSITION_AMBIGUOUS');
+    }
     result.candidates.push(best);
-    if (best.transitionSensitivityCm[1] - best.transitionSensitivityCm[0] > Math.max(3, best.heightCm * .15))
-      return fail('PROPULSION_TRANSITION_AMBIGUOUS');
   }
+  if (short && result.candidates.length < 2) return fail('INSUFFICIENT_SHORT_ARC_EVIDENCE');
   const heights = result.candidates.map(p => p.heightCm);
   const height = median(heights);
   const range: [number, number] = [Math.min(...result.candidates.map(p => p.transitionSensitivityCm[0])),

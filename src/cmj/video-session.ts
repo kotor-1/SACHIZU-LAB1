@@ -12,6 +12,10 @@ export interface SessionUpdate {
   observationReason: string | null;
   detectedPeople?: number;
   cameraTiming?: 'capture' | 'media' | 'unavailable';
+  processingThread?: 'worker' | 'main';
+  effectiveFps?: number | null;
+  maxGapMs?: number | null;
+  skippedCameraFrames?: number;
   totalFrames?: number;
   acquisition?: 'EXACT_FRAMES' | 'PLAYBACK' | 'LIVE';
   poseModel?: 'lite' | 'full';
@@ -25,6 +29,11 @@ export interface SessionSummary { resultCount: number; estimateCount: number; re
 export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'file', signal: AbortSignal,
   update: (state: SessionUpdate) => void, status: (message: string) => void = () => {}): Promise<SessionSummary> {
   if (!video.requestVideoFrameCallback) throw new Error('このブラウザは映像の時刻取得に未対応です。OSとブラウザを更新してください。');
+  if (mode === 'camera' && typeof Worker !== 'undefined') {
+    const live = await import('./live-session');
+    const client = await live.prepareLiveWorker(signal, status);
+    if (client) return live.measureLive(video, client, signal, update);
+  }
   const check = () => { if (signal.aborted) throw new DOMException('中止', 'AbortError'); };
   const pose = new MobileCMJPose(mode === 'camera' ? 'lite' : 'full');
   const clock = new CameraClock();
@@ -35,6 +44,7 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
   let validFrames = 0, poseFrames = 0;
   let prepared = false;
   const observationFailures = new Map<string, number>();
+  const observed: number[] = [];
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d')!;
   let sourceWidth = 0, sourceHeight = 0, cameraTurned = false;
@@ -48,7 +58,7 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
       (sourceWidth !== video.videoWidth || sourceHeight !== video.videoHeight)))) {
       // Pixel axes/scale changed: never join motion across a camera rotation.
       // Keep completed results, discard the incomplete jump, require readiness again.
-      stream = new COMStream(); prepared = false; slowSince = null; cameraTurned = false;
+      stream = new COMStream(); prepared = false; slowSince = null; cameraTurned = false; observed.length = 0;
     }
     sourceWidth = video.videoWidth; sourceHeight = video.videoHeight;
     const scale = Math.min(1, 720 / Math.max(video.videoWidth, video.videoHeight));
@@ -93,7 +103,7 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
             const timing = mode === 'camera' ? clock.read(now, meta) : null;
             const pts = timing ? timing.inferencePts : meta.mediaTime; lastPts = pts;
             snapshot();
-            if (timing?.reset) { stream = new COMStream(); prepared = false; }
+            if (timing?.reset) { stream = new COMStream(); prepared = false; observed.length = 0; }
             const r = pose.estimate(canvas, frame++, pts);
             if (r.landmarks.length === 1) poseFrames++;
             if (r.comSample.comY !== null) validFrames++;
@@ -106,15 +116,22 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
             if (mode === 'file') video.playbackRate = Math.max(.1, Math.min(1, 20 / Math.max(1, averageMs)));
             if (mode === 'camera' && averageMs > 40) slowSince ??= pts;
             else slowSince = null;
+            if (timing?.measurementPts != null) observed.push(timing.measurementPts);
+            while (observed.length > 2 && observed.at(-1)! - observed[0] > 1) observed.shift();
+            const span = observed.length > 1 ? observed.at(-1)! - observed[0] : 0;
+            const effectiveFps = span >= .25 ? (observed.length - 1) / span : null;
+            const maxGapMs = observed.length > 1 ? Math.max(...observed.slice(1).map((t, i) => (t - observed[i]) * 1000)) : null;
             update({ phase: stream.phase, results: results.slice(-100), backend: pose.backend,
               processedFrames: frame, sourcePts: timing ? timing.elapsed : pts, inferenceMs: averageMs,
-              playbackRate: video.playbackRate, slowDevice: slowSince !== null && pts - slowSince > 1,
+              playbackRate: video.playbackRate, slowDevice: mode === 'camera' && effectiveFps !== null ? effectiveFps < 40 : slowSince !== null && pts - slowSince > 1,
+              effectiveFps, maxGapMs,
               landmarks: r.landmarks.length === 1 ? r.landmarks[0] : [],
               observationReason: timing && timing.measurementPts === null ? 'CAMERA_TIME_UNAVAILABLE' : r.comSample.reason ?? null,
               detectedPeople: r.landmarks.length,
               cameraTiming: timing ? timing.source ?? 'unavailable' : undefined,
               acquisition: mode === 'camera' ? 'LIVE' : 'PLAYBACK',
               poseModel: pose.variant,
+              processingThread: 'main',
               quality: { poseFrames, validFrames, reasons: Object.fromEntries(observationFailures) },
               com: r.comSample.comX === null || r.comSample.comY === null ? null
                 : { x: r.comSample.comX / 960, y: r.comSample.comY / 960 } });

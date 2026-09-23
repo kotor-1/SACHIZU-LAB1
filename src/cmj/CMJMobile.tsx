@@ -28,6 +28,7 @@ export default function CMJMobile() {
   const [recordedClip, setRecordedClip] = useState<File | null>(null);
   const [recordingNote, setRecordingNote] = useState('');
   const [refining, setRefining] = useState(false);
+  const [keepRecording, setKeepRecording] = useState(false);
 
   function cancel() {
     owner.current?.abort();
@@ -92,7 +93,7 @@ export default function CMJMobile() {
         liveSnapshot.current = next;
         // Begin only after model warm-up, before readiness/jumping. Model download
         // time must not consume the short recording window.
-        if (!recorderAttempted && camera.current) {
+        if (keepRecording && !recorderAttempted && camera.current) {
           recorderAttempted = true;
           try {
             backup.current = recordCamera(camera.current, () => {
@@ -164,6 +165,8 @@ export default function CMJMobile() {
       liveBeforeRefinement: refining ? liveSnapshot.current : undefined,
       diagnostics: { reason: failureReason, message, quality: state?.quality, processedFrames: state?.processedFrames,
         cameraTiming: state?.cameraTiming, detectedPeople: state?.detectedPeople,
+        processingThread: state?.processingThread, backend: state?.backend, effectiveFps: state?.effectiveFps,
+        maxGapMs: state?.maxGapMs, skippedCameraFrames: state?.skippedCameraFrames,
         browser: navigator.userAgent, videoDecoder: typeof VideoDecoder !== 'undefined', secureContext: window.isSecureContext },
       exportedAt: new Date().toISOString(), results: state?.results ?? [] }, null, 2)], { type: 'application/json' });
     const objectURL = URL.createObjectURL(blob), link = document.createElement('a');
@@ -179,7 +182,7 @@ export default function CMJMobile() {
   const statusText = message || (state && busy ? mode === 'camera' && state.detectedPeople === 0
     ? '身体を検出できません。頭から足先まで映して、明るい場所で正面を向いてください。'
     : state.observationReason ? comFeedback(state.observationReason)
-    : rejected && state.phase === 'READY' ? '直前の動きは高さを確定できませんでした。停止後に録画を再解析できます。'
+    : rejected && state.phase === 'READY' ? '直前の動きは高さを確定できませんでした。撮影条件を確認して次のジャンプへ進んでください。'
     : mode === 'file' && state.phase === 'READY' ? '準備姿勢を確認しました。続けて動きを解析します。' : phases[state.phase]
     : mode === 'camera' ? 'カメラを起動して、全身をフレームに入れてください。' : file ? '準備ができました。動画を解析してください。' : '撮影したジャンプ動画を読み込んでください。');
   const showHeight = height != null && !review && (!busy || state?.phase === 'PREPARING' || state?.phase === 'READY');
@@ -193,7 +196,9 @@ export default function CMJMobile() {
         <button className={mode === 'file' ? 'is-selected' : ''} aria-pressed={mode === 'file'} disabled={busy} onClick={() => selectMode('file')}><Upload size={17} />録画を解析</button>
         <button className={mode === 'camera' ? 'is-selected' : ''} aria-pressed={mode === 'camera'} disabled={busy} onClick={() => selectMode('camera')}><Camera size={17} />カメラで計測</button>
       </div>
-      {mode === 'camera' && <p className="cmj-inline-note">Readyを確認してジャンプし、着地後1秒静止してください。追跡開始から最長20秒、端末内に音声なしで録画します。停止後に録画用モデルで再解析できます。映像は送信しません。撮影中はスマホの向きを変えないでください。</p>}
+      {mode === 'camera' && <div className="cmj-inline-note"><p>Readyを確認してジャンプ。着地後に静止すると、高さを自動で表示します。結果表示に停止操作は不要です。スマホは選手の腰付近の高さで固定し、頭から足先まで映してください。</p>
+        <label><input type="checkbox" checked={keepRecording} disabled={busy} onChange={e => setKeepRecording(e.target.checked)} /> 録画も残す（最長20秒で計測終了）</label>
+        <p>{keepRecording ? '音声なしで端末内に録画します。映像は送信しません。停止後の再解析にも使えます。' : 'ライブ優先：録画せず連続計測します。撮影中はスマホの位置・向きを変えないでください。'}</p></div>}
       <div className={`cmj-viewer ${hasSource ? 'has-source' : ''}`}
         style={mode === 'camera' && hasSource ? { aspectRatio: `${dimensions.w} / ${dimensions.h}` } : undefined}>
         <video ref={video} playsInline muted preload="metadata" controls={review && !busy} hidden={showCanvas} />
@@ -212,7 +217,7 @@ export default function CMJMobile() {
       {busy && mode === 'file' && <div className="cmj-progress"><div role="progressbar" aria-label="動画の解析" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress ?? undefined} style={{ width: `${progress ?? 3}%` }} /></div>}
       <div className={`cmj-status ${problem ? 'has-problem' : ''}`} role="status">{busy ? <LoaderCircle size={18} className="cmj-spin" /> : successful.length ? <Check size={18} /> : <Activity size={18} />}<span>{statusText}</span></div>
       {rejected && <div className="cmj-inline-note" role="alert"><strong>動きは検出しましたが、高さを確定できませんでした。</strong><p>{comFeedback(rejected.analysis.reason)}</p>
-        <p>{busy ? '着地後に静止してから「計測を停止」を押してください。録画を保持できた場合は、続けて詳しく解析できます。' : '録画がある場合は、下のボタンから再解析できます。'}</p></div>}
+        <p>{busy ? '腰付近の高さでカメラを固定し、明るい場所で全身を映してください。静止してReadyになったら次のジャンプを試せます。' : '録画がある場合は、下のボタンから再解析できます。'}</p></div>}
       <input className="cmj-file-input" ref={input} type="file" accept="video/*" disabled={busy} aria-label="録画動画を選ぶ" onChange={e => fileSelected(e.target.files?.[0])} />
       {mode === 'file' && file && <div className="cmj-file"><span>{file.name}</span><button disabled={busy} onClick={() => input.current?.click()}>変更</button></div>}
       <div className="cmj-primary-actions">{busy ? <button className="cmj-stop" disabled={cancelling} onClick={cancel}><Square size={17} />{cancelling ? '停止中' : '計測を停止'}</button>
@@ -228,8 +233,9 @@ export default function CMJMobile() {
           link.href = href; link.download = recordedClip.name; link.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
         }}>撮影した動画を保存</button></div>}
       {refining && <p className="cmj-inline-note">カメラ録画の再解析です。結果と診断JSONに撮影中の解析とは区別して記録します。</p>}
-      {state?.slowDevice && <p className="cmj-inline-note">撮影中の解析が追いついていません。停止後に録画を詳しく解析してください。同時録画できない場合は標準カメラの動画を読み込んでください。</p>}
+      {state?.slowDevice && <p className="cmj-inline-note">ライブ解析の実効速度が不足しています。小さいジャンプの計測に不利な状態です。録画を残す設定を外し、他のアプリを閉じて試してください。数値の確定を優先して判定を緩めることはしません。</p>}
       {mode === 'camera' && state && <div className="cmj-inline-note"><span>{state.processedFrames}コマ解析済み · {state.detectedPeople ?? 0}人検出</span>
+        <p>{state.effectiveFps == null ? '実効速度を確認中' : `実効 ${state.effectiveFps.toFixed(0)} fps`}{state.maxGapMs == null ? '' : ` · 最大コマ間隔 ${state.maxGapMs.toFixed(0)} ms`} · {state.processingThread === 'worker' ? '別スレッド' : '互換処理'} / {state.backend}</p>
         <button className="cmj-secondary" onClick={download}>カメラ診断を保存</button></div>}
       {state?.acquisition === 'PLAYBACK' && <p className="cmj-inline-note">この動画は互換モードで解析しています。映像の間隔が不足する場合は数値を確定しません。</p>}
       {state?.acquisition === 'EXACT_FRAMES' && <p className="cmj-inline-note">再生速度とは独立して、元のフレームを省略せず解析します。画面の動きは解析の進み具合です。</p>}

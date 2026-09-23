@@ -22,9 +22,9 @@ export function mobileSample(points: readonly NormalizedLandmark[][], frame: num
   return { frame, pts, hipY: (p[23].y + p[24].y) * 480, footY: Math.max(p[31].y, p[32].y) * 960 };
 }
 export class MobileCMJPose {
-  constructor(readonly variant: 'lite' | 'full' = 'lite', private selectPose?: PoseSelector) {}
+  constructor(readonly variant: 'lite' | 'full' = 'lite', private selectPose?: PoseSelector, private delegate: 'CPU' | 'GPU' = 'CPU') {}
   private model: PoseLandmarker | null = null;
-  backend: 'CPU' = 'CPU';
+  get backend(): 'CPU' | 'GPU' { return this.delegate; }
   async initialize(signal: AbortSignal, status: (message: string) => void = () => {}) {
     const check = () => { if (signal.aborted) throw new DOMException('中止', 'AbortError'); };
     status('処理プログラムを読み込んでいます。');
@@ -43,13 +43,13 @@ export class MobileCMJPose {
     const files = { wasmLoaderPath: simd ? loader : noSimdLoader, wasmBinaryPath: simd ? wasm : noSimdWasm };
     status(this.variant === 'lite' ? 'カメラ用の姿勢モデルを準備しています。' : '録画解析用の姿勢モデルを準備しています。');
     this.model = await PoseLandmarker.createFromOptions(files, {
-      baseOptions: { modelAssetBuffer: bytes, delegate: 'CPU' }, runningMode: 'VIDEO', numPoses: 2,
+      baseOptions: { modelAssetBuffer: bytes, delegate: this.delegate }, runningMode: 'VIDEO', numPoses: 2,
       outputSegmentationMasks: false,
     });
     if (signal.aborted) { this.dispose(); check(); }
     status('映像処理を準備しています。');
   }
-  estimate(image: HTMLVideoElement | HTMLCanvasElement, frame: number, pts: number) {
+  estimate(image: HTMLVideoElement | HTMLCanvasElement | ImageBitmap | OffscreenCanvas, frame: number, pts: number) {
     if (!this.model) throw new Error('MODEL_NOT_READY');
     const start = performance.now();
     const result = this.model.detectForVideo(image, pts * 1000 + 1);
@@ -57,6 +57,6 @@ export class MobileCMJPose {
     return { comSample: centerOfMassSample(landmarks, frame, pts), landmarks,
       inferenceMs: performance.now() - start };
   }
-  warm(image: HTMLCanvasElement) { this.model?.detectForVideo(image, 0); }
+  warm(image: HTMLCanvasElement | ImageBitmap | OffscreenCanvas) { this.model?.detectForVideo(image, 0); }
   dispose() { this.model?.close(); this.model = null; }
 }

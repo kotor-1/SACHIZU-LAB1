@@ -19,6 +19,7 @@ export class COMStream {
   private recovered: number | null = null;
   private lastPts: number | null = null;
   private id = 0;
+  private standingNoise = 0;
 
   push(p: COMSample): COMResult | null {
     if (!Number.isFinite(p.pts) || (this.lastPts !== null && p.pts <= this.lastPts)) throw new Error('NON_MONOTONIC_STREAM');
@@ -46,14 +47,18 @@ export class COMStream {
       this.scale = median(scales);
       if (Math.max(...ys) - Math.min(...ys) > .012 * this.scale ||
         Math.max(...scales) - Math.min(...scales) > .04 * this.scale) return null;
-      this.baseline = median(ys); this.phase = 'READY';
+      this.baseline = median(ys);
+      this.standingNoise = 1.4826 * median(ys.map(y => Math.abs(y - this.baseline)));
+      this.phase = 'READY';
     } else if (this.phase === 'READY') {
-      if (Math.abs(p.comY - this.baseline) > .025 * this.scale) {
+      if (Math.abs(p.comY - this.baseline) > Math.max(.006 * this.scale, this.standingNoise * 4)) {
         this.started = p.pts; this.apexY = p.comY; this.apexPts = p.pts; this.phase = 'MOVING';
       } else this.samples = this.samples.filter(s => p.pts - s.pts <= .6);
     } else {
       if (p.comY < this.apexY) { this.apexY = p.comY; this.apexPts = p.pts; }
-      const rose = this.baseline - this.apexY > .05 * this.scale;
+      // Candidate detection, NOT a height acceptance threshold. Small rises
+      // above standing jitter still have to pass the physical estimator.
+      const rose = this.baseline - this.apexY > Math.max(.015 * this.scale, this.standingNoise * 6);
       const returned = rose && p.pts - this.apexPts >= .16 && p.comY >= this.baseline - .02 * this.scale;
       if (returned) {
         this.recovered ??= p.pts; this.phase = 'RECOVERING';
