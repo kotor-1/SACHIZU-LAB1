@@ -283,6 +283,17 @@ export function buildPresentationTimeline(
     };
   });
 
+  // MediaRecorder MP4 headers can retain an initial/zero duration even though
+  // later fragments contain more samples. With no edit window, all extracted
+  // presentation samples belong to the clip. Derive a lower bound from their
+  // encoded CTS + duration, never from wall time, nominal FPS, or frame count.
+  // Explicit edit-list windows above remain authoritative and are not extended.
+  if (!hasEditList && frames.length > 0) {
+    const sampleEnd = frames.reduce((end, frame) => Math.max(end,
+      Number.isFinite(frame.duration) && frame.duration > 0 ? frame.pts + frame.duration : frame.pts), 0);
+    presentationDuration = Math.max(Number.isFinite(presentationDuration) ? presentationDuration : 0, sampleEnd);
+  }
+
   // Edit-list videoのFrameInfo.durationはdecode-order sample durationではなく、
   // presentation上の隣接source frame間隔 (末尾はmovie durationまで) とする。
   if (hasEditList && frames.length > 0) {
