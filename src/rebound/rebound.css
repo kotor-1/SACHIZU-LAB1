@@ -28,3 +28,23 @@
 .rj-review-nav button {flex:1;min-height:44px;padding:8px;border:1px solid #abc9bb;border-radius:8px;background:#edf6f0;color:#173a36;}
 .rj-review button:disabled {opacity:.45;cursor:default;}
 .rj-review-editor>label {display:inline-block;margin:6px 0;}
+.rj-registered-overview h3{font-size:18px;margin:0 0 6px}
+.rj-rsi-dashboard{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(210px,.9fr);gap:12px;margin:18px 0}
+.rj-rsi-hero{min-width:0;padding:20px 22px;border-radius:16px;background:#173b31;color:#fff}
+.rj-rsi-hero-heading{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:12px}
+.rj-rsi-hero-heading>span:first-child{letter-spacing:2px;color:#b5c8bd;font-weight:700}
+.rj-rsi-status{display:inline-block;padding:3px 9px;border:1px solid #9cb8a9;border-radius:999px;font-weight:700;color:#e6f8bb;letter-spacing:0}
+.rj-rsi-hero-main{display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:6px 14px;margin:16px 0 10px}
+.rj-rsi-hero-main>span{font-size:18px;font-weight:700}
+.rj-rsi-hero-main>div{display:flex;align-items:baseline;gap:8px;white-space:nowrap}
+.rj-rsi-hero-main strong{font-size:clamp(52px,7vw,76px);font-weight:800;line-height:1.05;letter-spacing:-.05em;color:#d5f78b;font-variant-numeric:tabular-nums}
+.rj-rsi-hero-main>div>span{font-size:18px;font-weight:700}
+.rj-rsi-hero p{margin:0;padding-top:10px;border-top:1px solid #44675a;font-size:13px;font-weight:700}
+.rj-rsi-hero p small{font-size:11px;font-weight:400;color:#c7d8cf}
+.rj-rsi-secondary{display:grid;grid-template-rows:repeat(2,minmax(0,1fr));gap:10px;margin:0}
+.rj-rsi-secondary>div{min-width:0;padding:13px 15px;border:1px solid #d6e4df;border-radius:14px;background:#edf6f0}
+.rj-rsi-secondary dt{font-size:12px;font-weight:700}
+.rj-rsi-secondary dd{margin:2px 0 0;font-size:30px;line-height:1.2;font-weight:800;font-variant-numeric:tabular-nums}
+.rj-rsi-secondary dd small{font-size:13px;font-weight:600}
+.rj-rsi-secondary>div>small{font-size:11px;color:#637a6f}
+@media(max-width:760px){.rj-rsi-dashboard{grid-template-columns:1fr}.rj-rsi-secondary{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:auto}.rj-rsi-hero-main strong{font-size:clamp(52px,15vw,72px)}}

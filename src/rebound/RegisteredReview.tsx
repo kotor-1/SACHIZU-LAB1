@@ -4,7 +4,7 @@ import type { PoseFrame } from './prediction-observations';
 import { type RegisteredAnalysis } from './registered-template';
 import { reviewSummary, reviewedCSV, reviewedExport } from './auto-review';
 import { correctRegistered, eventKey, type BoundaryCorrections, type EventKind } from './registered-corrections';
-import RegisteredResults from './RegisteredResults';
+import RegisteredResults, { RegisteredSummary } from './RegisteredResults';
 
 /** Mounted per source/template. Corrections update arithmetic only: no model
  * inference, video replay, or propagation of one manual timing to other jumps. */
@@ -56,6 +56,7 @@ export default function RegisteredReview({ file, poses, base, coarse = base }: {
   return <section className="rj-review" aria-label="跳躍の確認と修正">
     <h2>{result.jumps.length}跳躍の結果を確認・修正</h2>
     <p>候補の足元を確認し、合っていればそのまま確定、ずれていればコマ送りで修正します。再解析は不要です。確認した時刻だけを使うRSIと、未確認の仮値を分けて表示します。</p>
+    <section className="rj-registered rj-registered-overview" aria-label="RSIの集計結果"><h3>RSIの集計結果</h3><RegisteredSummary reviewed result={result} /></section>
     {base.footRefinement&&<div className="rj-partial-note"><strong>足元による絞り込み：{base.footRefinement.applied} / {base.footRefinement.attempted} 箇所</strong>
       {base.footRefinement.polarity&&<p>動画全体で採用した輪郭：地面より{base.footRefinement.polarity==='BRIGHT'?'明るい':'暗い'}側。別の明暗判定の成立数は{base.footRefinement.alternateApplied ?? '—'}箇所です。</p>}
       <p>画像から候補を絞れた箇所を反映しました。未確定なので映像で確認してください。靴と地面に明暗差があり、左右の足が分離して見える映像向けです。絞れない箇所は元候補／未取得のまま残します。</p>
@@ -94,7 +95,7 @@ export default function RegisteredReview({ file, poses, base, coarse = base }: {
       }}>この箇所を元の候補に戻す</button>}
       <button onClick={() => setActive(null)}>確認画面を閉じる</button>
     </div>}
-    <RegisteredResults reviewed result={result} seek={pts => {
+    <RegisteredResults reviewed detailsOnly result={result} seek={pts => {
       const j = result.jumps.find(j => j.takeoff?.pts === pts || j.landing?.pts === pts);
       if (j) open(j.jump, j.takeoff?.pts === pts ? 'takeoff' : 'landing');
     }} saveJSON={() => save(false)} saveCSV={() => save(true)} />

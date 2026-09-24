@@ -16,6 +16,22 @@ function fixture(count=10) {
     peaks:Array.from({length:count},(_,i)=>({frame:120+144*i,pts:.5+.6*i,y:.5}))};
   return {frames,peaks,base:autoReview(frames,peaks,'BOTH')};
 }
+
+function classBlock(html: string, className: string) {
+  const opening = [...html.matchAll(/<([a-z][\w-]*)\b[^>]*class="([^"]+)"[^>]*>/g)]
+    .find(match => match[2].split(/\s+/).includes(className));
+  if (!opening) throw new Error(`Missing ${className} block`);
+  const tag = opening[1];
+  const tags = new RegExp(`</?${tag}\\b[^>]*>`, 'g');
+  tags.lastIndex = opening.index! + opening[0].length;
+  let depth = 1;
+  for (let match = tags.exec(html); match; match = tags.exec(html)) {
+    depth += match[0].startsWith('</') ? -1 : 1;
+    if (depth === 0) return html.slice(opening.index, tags.lastIndex);
+  }
+  throw new Error(`Unclosed ${className} block`);
+}
+
 describe('recording RJ automatic candidates and confirmed review',()=>{
   it('offers candidates without registration and never calls them confirmed',()=>{
     const {base}=fixture();
@@ -28,9 +44,16 @@ describe('recording RJ automatic candidates and confirmed review',()=>{
     view.jumps.slice(1).forEach((j,i)=>{j.rsi=values[i];j.contactSeconds=j.heightM!/values[i];});
     view.meanRSI=values.reduce((sum,n)=>sum+n,0)/values.length;view.maxRSI=Math.max(...values);
     const html=renderToStaticMarkup(<RegisteredResults reviewed result={view} seek={()=>{}} saveJSON={()=>{}} saveCSV={()=>{}}/>).replaceAll('<!-- -->','');
-    expect(html).toContain('平均RSI（暫定・未確認含む 9 回）<strong>1.11');
-    expect(html).toContain('最大RSI（同じ 9 回）<strong>1.43');
-    expect(html).toContain('算出回数'); expect(html).toContain('9 / 9');
+    const hero=classBlock(html,'rj-rsi-hero');
+    const secondary=classBlock(html,'rj-rsi-secondary');
+    expect(hero).toContain('平均RSI');
+    expect(hero).toContain('1.11');
+    expect(hero).toContain('m/s');
+    expect(hero).toContain('暫定・未確認含む');
+    expect(hero).toContain('算出 9 / 9 回');
+    expect(hero).not.toContain('最大RSI');
+    expect(secondary).toContain('最大RSI');
+    expect(secondary).toContain('1.43');
     expect(html).toContain('手動確認済み：0 / 9 回');
     expect(html).toContain('確認済みRSIは未算出');
     expect(html).toContain('未確認の仮値');
@@ -64,10 +87,35 @@ describe('recording RJ automatic candidates and confirmed review',()=>{
     expect(analysis.validRSICount).toBe(9);expect(confirmed.count).toBe(1);
     expect(analysis.meanRSI!.toFixed(2)).not.toBe(confirmed.mean!.toFixed(2));
     const html=renderToStaticMarkup(<RegisteredResults reviewed result={analysis} seek={()=>{}} saveJSON={()=>{}} saveCSV={()=>{}}/>).replaceAll('<!-- -->','');
-    expect(html).toContain(`平均RSI（暫定・未確認含む 9 回）<strong>${analysis.meanRSI!.toFixed(2)}`);
-    expect(html).toContain(`最大RSI（同じ 9 回）<strong>${analysis.maxRSI!.toFixed(2)}`);
-    expect(html).toContain('手動確認済み：1 / 9 回');
-    expect(html).toContain(`確認済みRSI：平均 ${confirmed.mean!.toFixed(2)} ／ 最大 ${confirmed.max!.toFixed(2)} m/s。`);
+    const hero=classBlock(html,'rj-rsi-hero');
+    const secondary=classBlock(html,'rj-rsi-secondary');
+    const confirmedOnly=classBlock(html,'rj-partial-note');
+    expect(hero).toContain(analysis.meanRSI!.toFixed(2));
+    expect(hero).toContain('暫定・未確認含む');
+    expect(hero).toContain('算出 9 / 9 回');
+    expect(hero).not.toContain(confirmed.mean!.toFixed(2));
+    expect(secondary).toContain(analysis.maxRSI!.toFixed(2));
+    expect(confirmedOnly).toContain('手動確認済み：1 / 9 回');
+    expect(confirmedOnly).toContain(`確認済みRSI：平均 ${confirmed.mean!.toFixed(2)} ／ 最大 ${confirmed.max!.toFixed(2)} m/s。`);
+  });
+  it('marks the primary RSI as confirmed when every contributing jump is reviewed',()=>{
+    const {base,frames}=fixture();
+    const point=(pts:number)=>frames.reduce((a,b)=>Math.abs(a.pts-pts)<Math.abs(b.pts-pts)?a:b);
+    const edits=Object.fromEntries(base.jumps.flatMap(j=>[
+      [`${j.jump}:takeoff`,point(j.takeoff!.pts)],
+      [`${j.jump}:landing`,point(j.landing!.pts)],
+    ]));
+    const {analysis,error}=correctRegistered(base,edits,frames);
+    expect(error).toBeNull();
+    expect(reviewSummary(analysis).count).toBe(9);
+    const html=renderToStaticMarkup(<RegisteredResults reviewed result={analysis} seek={()=>{}} saveJSON={()=>{}} saveCSV={()=>{}}/>).replaceAll('<!-- -->','');
+    const hero=classBlock(html,'rj-rsi-hero');
+    expect(hero).toContain('平均RSI');
+    expect(hero).toContain(analysis.meanRSI!.toFixed(2));
+    expect(hero).toContain('確認済み');
+    expect(hero).toContain('算出 9 / 9 回');
+    expect(hero).not.toContain('暫定');
+    expect(html).not.toContain('未確認を含む9回の暫定平均・最大');
   });
   it('keeps recognized counts and excludes only the extra eleventh rebound',()=>{
     expect(fixture(5).base.jumps).toHaveLength(5);
