@@ -1,14 +1,19 @@
-/** Experimental, high-contrast dark-footwear silhouette only. Not a general
- * shoe segmenter. No RSI or desired duration is an input to this module. */
-export interface GrayImage { width: number; height: number; pixels: Uint8Array }
+/** Experimental, high-contrast footwear silhouette on a contrasting floor.
+ * No RSI or desired duration is an input to this module. */
+export interface GrayImage { width: number; height: number; pixels: Uint8Array; rgba?: Uint8ClampedArray }
 export interface FootBox { x: number; y: number; width: number; height: number }
 export interface FootEdge { ys: [number, number, number] | null; contrast: number; reason: string | null }
-export interface PixelRow { frame: number; pts: number; feet: [FootEdge, FootEdge] }
+export interface PixelRow {
+  frame: number; pts: number; feet: [FootEdge, FootEdge];
+  /** Matched frame and crop, retained so the whole recording can choose a
+   * stable shoe/ground polarity instead of switching at individual frames. */
+  darkFeet?: [FootEdge, FootEdge]; brightFeet?: [FootEdge, FootEdge];
+}
 export interface PixelBoundary {
   seed: number; pts: number | null; range: [number, number] | null;
   reason: string | null; error: number | null;
 }
-export const PIXEL_PARAMETERS = { version: 'dark-foot-edge-v1-experimental',
+export const PIXEL_PARAMETERS = { version: 'contrast-foot-edge-v2-experimental',
   minimumContrast: 35, thresholds: [.25, .35, .45], searchSeconds: .075,
   windows: [.08, .10, .12], maximumGapSeconds: .013, maximumSensitivitySeconds: .025,
   imageHeight: 960, minimumAirTravelPixels: 8, minimumEdgeSpeedPixelsPerSecond: 160, maximumFitErrorPixels: 3,
@@ -26,27 +31,40 @@ function solve(xs: number[][], ys: number[]): number[] | null {
   return a.map(r => r[4]);
 }
 
-/** A floor strip below the pose-localized shoe must be brighter than footwear.
- * Reject dark/occluded floors and masks clipped by the search box. */
-export function darkFootEdge(image: GrayImage, box: FootBox): FootEdge {
+/** Segment the pose-localized shoe against the floor immediately below it.
+ * For a light shoe, minimum RGB separates a white sole from green grass even
+ * when their gray levels are close. A component running into the floor strip
+ * is rejected, including painted lines that merge into the sole. */
+function footEdge(image: GrayImage, box: FootBox, polarity: 'DARK' | 'BRIGHT'): FootEdge {
   const fail = (reason: string, contrast = 0): FootEdge => ({ ys: null, contrast, reason });
-  const { width: w, height: h, pixels } = image;
-  if (![box.x, box.y, box.width, box.height].every(Number.isFinite) || pixels.length !== w * h) return fail('INVALID_IMAGE_OR_BOX');
+  const { width: w, height: h, pixels, rgba } = image;
+  if (![box.x, box.y, box.width, box.height].every(Number.isFinite) || pixels.length !== w * h
+    || (rgba && rgba.length !== w * h * 4)) return fail('INVALID_IMAGE_OR_BOX');
   const x0 = Math.floor(box.x), y0 = Math.floor(box.y), bw = Math.floor(box.width), bh = Math.floor(box.height);
   if (x0 < 0 || y0 < 0 || x0 + bw >= w || y0 + bh >= h || bw < 8 || bh < 12) return fail('FOOT_OUTSIDE_IMAGE');
+  const score = (index: number) => polarity === 'BRIGHT' && rgba
+    ? Math.min(rgba[index * 4], rgba[index * 4 + 1], rgba[index * 4 + 2]) : pixels[index];
   const floor: number[] = [], values: number[] = [];
   for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
-    const v = pixels[(y0 + y) * w + x0 + x];
+    const v = score((y0 + y) * w + x0 + x);
     if (y >= bh * .85) floor.push(v); else values.push(v);
   }
   values.sort((a, b) => a - b);
-  const dark = values[Math.floor(values.length * .1)], background = median(floor), contrast = background - dark;
+  // A shoe may occupy under a tenth of a 90 px crop when the two nearby
+  // search boxes have been split. The connected-component check below rejects
+  // isolated bright turf pixels selected by this upper quantile.
+  const foreground = values[Math.floor(values.length * (polarity === 'DARK' ? .1 : .95))];
+  const background = median(floor);
+  const contrast = (foreground - background) * (polarity === 'DARK' ? -1 : 1);
   if (contrast < PIXEL_PARAMETERS.minimumContrast) return fail('FOOT_FLOOR_CONTRAST_LOW', contrast);
   const ys: number[] = [];
   for (const ratio of PIXEL_PARAMETERS.thresholds) {
-    const threshold = dark + contrast * ratio;
+    const threshold = foreground + (background - foreground) * ratio;
     const mask = new Uint8Array(bw * bh);
-    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) mask[y * bw + x] = pixels[(y0 + y) * w + x0 + x] < threshold ? 1 : 0;
+    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
+      const v = score((y0 + y) * w + x0 + x);
+      mask[y * bw + x] = (polarity === 'DARK' ? v < threshold : v > threshold) ? 1 : 0;
+    }
     let component: number[] = [];
     for (let k = 0; k < mask.length; k++) {
       if (!mask[k]) continue;
@@ -77,6 +95,40 @@ export function darkFootEdge(image: GrayImage, box: FootBox): FootEdge {
     ys.push(y0 + last);
   }
   return { ys: ys as [number, number, number], contrast, reason: null };
+}
+
+/** A dark shoe against a brighter floor. Kept as an explicit diagnostic path. */
+export function darkFootEdge(image: GrayImage, box: FootBox): FootEdge {
+  return footEdge(image, box, 'DARK');
+}
+
+/** A light shoe against darker ground, optionally using RGB to distinguish
+ * white footwear from green turf at comparable gray brightness. */
+export function brightFootEdge(image: GrayImage, box: FootBox): FootEdge {
+  return footEdge(image, box, 'BRIGHT');
+}
+
+/** Choose the lower valid silhouette edge when both color polarities are
+ * present in one local search box (for example a dark sock above a white shoe).
+ * A failed path cannot contribute an edge to the motion fit. */
+export function adaptiveFootEdge(image: GrayImage, box: FootBox): FootEdge {
+  const dark = darkFootEdge(image, box), bright = brightFootEdge(image, box);
+  return selectFootEdge(dark, bright);
+}
+
+/** Choose between precomputed polarities for preview/diagnostics. Recording
+ * review still uses one stable polarity for all frames of the video. */
+export function selectFootEdge(dark: FootEdge, bright: FootEdge): FootEdge {
+  if (!dark.ys) return bright.ys ? bright : dark.contrast >= bright.contrast ? dark : bright;
+  if (!bright.ys) return dark;
+  // Turf shadows can themselves form a long connected dark component below
+  // a white shoe. Prefer the polarity with clearly stronger floor contrast;
+  // only use edge position when the two contrasts are comparable.
+  if (bright.contrast > dark.contrast * 1.25) return bright;
+  if (dark.contrast > bright.contrast * 1.25) return dark;
+  const darkEdge = median(dark.ys), brightEdge = median(bright.ys);
+  return brightEdge > darkEdge + 2 ? bright : darkEdge > brightEdge + 2 ? dark
+    : bright.contrast > dark.contrast ? bright : dark;
 }
 
 /** Continuous linear-support / quadratic-air change point. Each threshold

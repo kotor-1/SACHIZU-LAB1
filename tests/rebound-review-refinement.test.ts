@@ -4,7 +4,7 @@ import { reviewSummary, reviewedExport } from '../src/rebound/auto-review';
 import type { JumpMode } from '../src/rebound/lower-body';
 import { fitPixelBoundary, type PixelRow } from '../src/rebound/pixel-foot';
 import type { RegisteredAnalysis } from '../src/rebound/registered-template';
-import { missingPixelSeed, refineReview } from '../src/rebound/review-refinement';
+import { missingPixelOffsets, missingPixelSeed, refineReview } from '../src/rebound/review-refinement';
 
 const frames = Array.from({ length: 601 }, (_, frame) => ({ frame, pts: frame / 240 }));
 const takeoffFrame = (jump: number) => 72 + 156 * jump;
@@ -50,6 +50,32 @@ function oneTakeoffRows(): PixelRow[] {
 }
 
 describe('foot-pixel refinement of unconfirmed RJ review candidates', () => {
+  it('widens only the final missing landing search, without treating the offset as an event', () => {
+    const base = fixture();
+    expect(missingPixelOffsets(base, 2, 'landing')).toEqual([-.04, 0, .04, .08, .12]);
+    expect(missingPixelOffsets(base, 1, 'landing')).toEqual([-.04, 0, .04]);
+    expect(missingPixelOffsets(base, 2, 'takeoff')).toEqual([-.04, 0, .04]);
+  });
+
+  it.each(['DARK', 'BRIGHT'] as const)('uses one stable %s polarity across the recording', expected => {
+    const good = flightRows(2);
+    const missing: PixelRow['feet'] = [0, 1].map(() => ({ ys: null, contrast: 0, reason: 'FOOT_FLOOR_CONTRAST_LOW' })) as PixelRow['feet'];
+    const rows = good.map(row => ({ ...row,
+      darkFeet: expected === 'DARK' ? row.feet : missing,
+      brightFeet: expected === 'BRIGHT' ? row.feet : missing,
+    }));
+    const result = refineReview(fixture(), rows, frames, 'BOTH');
+    expect(result.footRefinement?.polarity).toBe(expected);
+    expect(result.footRefinement?.applied).toBe(6);
+    expect(result.footRefinement?.alternateApplied).toBe(0);
+    expect(result.jumps[1].takeoff?.source).toBe('PIXEL_REFINED');
+  });
+
+  it('preserves the established dark-shoe path when both polarity fits tie', () => {
+    const rows = flightRows(2).map(row => ({ ...row, darkFeet: row.feet, brightFeet: row.feet }));
+    expect(refineReview(fixture(), rows, frames, 'BOTH').footRefinement?.polarity).toBe('DARK');
+  });
+
   it('uses the last foot leaving and first foot landing for BOTH, with per-event diagnostics', () => {
     const r = refineReview(fixture(), flightRows(2), frames, 'BOTH');
     expect(r.footRefinement?.mode).toBe('BOTH');

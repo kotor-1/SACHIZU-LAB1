@@ -6,8 +6,9 @@ import type { PoseFrame } from './prediction-observations';
 import type { SubjectRegion } from './subject';
 import { createLowerSubjectSelector, type JumpMode } from './lower-body';
 import type { RegisteredAnalysis } from './registered-template';
-import { darkFootEdge, type FootEdge, type PixelRow } from './pixel-foot';
-import {missingPixelSeed} from './review-refinement';
+import { brightFootEdge, darkFootEdge, selectFootEdge, type FootEdge, type PixelRow } from './pixel-foot';
+import {missingPixelOffsets, missingPixelSeed} from './review-refinement';
+import { footBoxesForPair, footPoseUsable } from './foot-boxes';
 
 /** Second decode pass, no second pose inference. Only event neighbourhoods
  * receive pixel processing. VideoFrame lifetime stays bounded by the decoder. */
@@ -27,14 +28,15 @@ export async function collectPixelRows(file: File, poses: readonly PoseFrame[], 
     const nominal=j[kind]?[j[kind]!.pts]:[];
     if(j[kind]?.source==='MANUAL')return nominal;
     const seed=missingPixelSeed(base,poses,i,kind);
-    return seed===null?nominal:[...nominal,seed-.04,seed,seed+.04];
+    return seed===null?nominal:[...nominal,...missingPixelOffsets(base,i,kind).map(offset=>seed+offset)];
   }));
   const select = createLowerSubjectSelector(region, mode), rows: PixelRow[] = [];
+  const selectedByFrame = d.frames.map(f => select(poses[f.frameIndex].poses, f.pts));
   let lastYield = performance.now();
   try {
     if (!context) throw new Error('足元の画像を読み出せません。');
     for (const f of d.frames) {
-      check(); const selected = select(poses[f.frameIndex].poses, f.pts);
+      check(); const selected = selectedByFrame[f.frameIndex];
       const decoded = await untilAborted(decoder.decodeExactFrame(f.frameIndex), signal); check();
       if (decoded.status !== 'SUCCESS' || !decoded.bitmap || decoded.actualDecodedFrameIndex !== f.frameIndex) throw new Error('元動画のコマを正確に読み出せません。');
       if (seeds.some(t => Math.abs(t - f.pts) <= .19)) {
@@ -47,17 +49,22 @@ export async function collectPixelRows(file: File, poses: readonly PoseFrame[], 
         const rgba = context.getImageData(0, 0, canvas.width, canvas.height).data, pixels = new Uint8Array(canvas.width * canvas.height);
         for (let i = 0; i < pixels.length; i++) pixels[i] = (77 * rgba[i * 4] + 150 * rgba[i * 4 + 1] + 29 * rgba[i * 4 + 2]) >> 8;
         const p = selected[0];
-        const valid = (side: number) => [29 + side, 31 + side].every(i => p?.[i] && p[i].visibility >= .5 && Number.isFinite(p[i].x) && Number.isFinite(p[i].y));
-        const centers = [0, 1].map(side => valid(side) ? (p[29 + side].x + p[31 + side].x) / 2 * canvas.width : NaN);
-        const feet = ([0, 1] as const).map((side): FootEdge => {
+        const valid = (side: 0 | 1) => footPoseUsable(p,
+          selectedByFrame[f.frameIndex - 1]?.length === 1 ? selectedByFrame[f.frameIndex - 1][0] : null,
+          selectedByFrame[f.frameIndex + 1]?.length === 1 ? selectedByFrame[f.frameIndex + 1][0] : null, side);
+        const centers = ([0, 1] as const).map(side => valid(side) ? (p[29 + side].x + p[31 + side].x) / 2 * canvas.width : NaN);
+        const bottoms = ([0, 1] as const).map(side => valid(side) ? Math.max(p[29 + side].y, p[31 + side].y) * canvas.height : NaN);
+        const boxes = footBoxesForPair(centers as [number, number], bottoms as [number, number]);
+        const measure = (side: 0 | 1, polarity: 'DARK' | 'BRIGHT'): FootEdge => {
           if (selected.length !== 1 || !valid(side)) return { ys: null, contrast: 0, reason: 'FOOT_POSE_MISSING' };
-          // Even single-leg mode must not extract the other foot when its
-          // image overlaps the support foot's search box.
-          if (Number.isFinite(centers[0]) && Number.isFinite(centers[1]) && Math.abs(centers[0] - centers[1]) < 52) return { ys: null, contrast: 0, reason: 'FEET_OVERLAP' };
-          return darkFootEdge({ width: canvas.width, height: canvas.height, pixels }, {
-            x: centers[side] - 26, y: Math.max(p[29 + side].y, p[31 + side].y) * canvas.height - 25, width: 52, height: 90 });
-        }) as [FootEdge, FootEdge];
-        rows.push({ frame: f.frameIndex, pts: f.pts, feet });
+          if (!boxes[side]) return { ys: null, contrast: 0, reason: 'FEET_OVERLAP' };
+          const image = { width: canvas.width, height: canvas.height, pixels, rgba };
+          return polarity === 'DARK' ? darkFootEdge(image, boxes[side]) : brightFootEdge(image, boxes[side]);
+        };
+        const pair = (polarity: 'DARK' | 'BRIGHT'): [FootEdge, FootEdge] => [measure(0, polarity), measure(1, polarity)];
+        const darkFeet = pair('DARK'), brightFeet = pair('BRIGHT');
+        const feet: [FootEdge, FootEdge] = [selectFootEdge(darkFeet[0], brightFeet[0]), selectFootEdge(darkFeet[1], brightFeet[1])];
+        rows.push({ frame: f.frameIndex, pts: f.pts, feet, darkFeet, brightFeet });
       }
       if (performance.now() - lastYield > 40) { progress(Math.round((f.frameIndex + 1) / d.frames.length * 100)); await new Promise<void>(resolve => setTimeout(resolve, 0)); lastYield = performance.now(); }
     }

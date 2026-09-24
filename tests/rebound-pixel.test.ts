@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { darkFootEdge, fitPixelBoundary, type PixelRow } from '../src/rebound/pixel-foot';
+import { adaptiveFootEdge, brightFootEdge, darkFootEdge, fitPixelBoundary, type PixelRow } from '../src/rebound/pixel-foot';
 import { summarizePixelRefinement } from '../src/rebound/pixel-refinement';
 import type { RegisteredAnalysis } from '../src/rebound/registered-template';
 
@@ -50,6 +50,15 @@ describe('experimental foot-pixel refinement', () => {
     expect(r.reason).toBeNull(); expect(r.ys).toEqual([49, 49, 49]);
     image.pixels.fill(100); expect(darkFootEdge(image, { x: 20, y: 10, width: 50, height: 75 }).ys).toBeNull();
     expect(darkFootEdge(image, { x: -10, y: 10, width: 50, height: 75 }).ys).toBeNull();
+  });
+  it('chooses a light shoe over a lower, weaker dark patch in the same crop', () => {
+    const image = { width: 100, height: 120, pixels: new Uint8Array(12000).fill(120) };
+    for (let y = 20; y <= 49; y++) for (let x = 30; x <= 55; x++) image.pixels[y * 100 + x] = 240;
+    for (let y = 50; y <= 70; y++) for (let x = 30; x <= 55; x++) image.pixels[y * 100 + x] = 80;
+    const box = { x: 20, y: 10, width: 50, height: 95 };
+    expect(brightFootEdge(image, box).ys).toEqual([49, 49, 49]);
+    expect(darkFootEdge(image, box).ys).toEqual([70, 70, 70]);
+    expect(adaptiveFootEdge(image, box).ys).toEqual([49, 49, 49]);
   });
   it('preserves manual anchors and never fills missing feet from the old RSI', () => {
     const base = { jumps: [{ jump: 1, takeoff: { pts: .3, source: 'MANUAL' }, landing: { pts: .7, source: 'MANUAL' } },

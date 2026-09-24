@@ -10,6 +10,7 @@ export interface ReviewRefinementEvent {
 }
 export interface ReviewRefinement {
   version: string; mode: JumpMode; applied: number; attempted: number; events: ReviewRefinementEvent[];
+  polarity?: 'DARK' | 'BRIGHT'; alternateApplied?: number;
 }
 
 /** A search location, never an asserted contact/flight duration. Used only
@@ -24,10 +25,32 @@ export function missingPixelSeed(base:RegisteredAnalysis,frames:readonly FirstCo
   return period>=.25&&period<=1.2 ? peak.pts+(kind==='takeoff'?-1:1)*.32*period : null;
 }
 
+/** The last landing has no next apex to bracket it. Search farther after the
+ * prior-apex seed, but still require two agreeing independent fit starts on
+ * the actual image trace; no flight duration is assigned from this offset. */
+export function missingPixelOffsets(base: RegisteredAnalysis, index: number, kind: 'takeoff' | 'landing'): readonly number[] {
+  return kind === 'landing' && index === base.jumps.length - 1 ? [-.04, 0, .04, .08, .12] : [-.04, 0, .04];
+}
+
 /** Refine unconfirmed cursors only. This is neither a contact classifier nor
  * confirmation: reviewed RSI still requires the user's three event marks.
  * No manual reference, target RSI, or constant frame shift enters the fit. */
 export function refineReview(base: RegisteredAnalysis, rows: readonly PixelRow[], frames: readonly FirstContact[], mode: JumpMode): RegisteredAnalysis {
+  if (rows.length && rows.every(row => row.darkFeet && row.brightFeet)) {
+    const variant = (polarity: 'DARK' | 'BRIGHT') => refineReview(base,
+      rows.map(row => ({ frame: row.frame, pts: row.pts, feet: polarity === 'DARK' ? row.darkFeet! : row.brightFeet! })), frames, mode);
+    const dark = variant('DARK'), bright = variant('BRIGHT');
+    // A coherent boundary must survive both feet, three thresholds and three
+    // fit windows. Prefer the polarity satisfying more such checks throughout
+    // this recording, never a target jump height or RSI. Ties preserve the
+    // original dark-shoe behavior rather than choosing per frame.
+    const darkCount = dark.footRefinement?.applied ?? 0, brightCount = bright.footRefinement?.applied ?? 0;
+    const chosen = brightCount > darkCount ? bright : dark;
+    return { ...chosen, footRefinement: chosen.footRefinement && {
+      ...chosen.footRefinement, polarity: brightCount > darkCount ? 'BRIGHT' : 'DARK',
+      alternateApplied: brightCount > darkCount ? darkCount : brightCount,
+    } };
+  }
   const sides: (0|1)[] = mode === 'LEFT' ? [0] : mode === 'RIGHT' ? [1] : [0,1];
   const events: ReviewRefinementEvent[] = [];
   const validTimeline = frames.length > 0 && frames.every((f,i) => Number.isFinite(f.pts) && Number.isInteger(f.frame)
@@ -50,7 +73,7 @@ export function refineReview(base: RegisteredAnalysis, rows: readonly PixelRow[]
       if (!consistent(event.feet)) {
         const seed=missingPixelSeed(base,frames,i,kind);
         if(seed===null){event.reason='起点の候補がありません。映像で確認してください';continue;}
-        const alternatives=[-.04,0,.04].map(offset=>sides.map(side=>fitPixelBoundary(rows,side,seed+offset,kind)))
+        const alternatives=missingPixelOffsets(base,i,kind).map(offset=>sides.map(side=>fitPixelBoundary(rows,side,seed+offset,kind)))
           .filter(consistent);
         const times=alternatives.map(feet=>(kind==='takeoff'?Math.max:Math.min)(...feet.map(f=>f.pts!)));
         if(times.length<2||Math.max(...times)-Math.min(...times)>.025+1e-9){event.reason='足元の再探索で複数の画像候補が一致しません';continue;}
