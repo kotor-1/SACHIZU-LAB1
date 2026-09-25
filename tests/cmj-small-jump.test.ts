@@ -40,6 +40,20 @@ describe('small jumps (synthetic mechanics, not validation in children)', () => 
       expect(rows.map(p => stream.push(p)).filter(r => r?.analysis.heightCm != null)).toHaveLength(0);
     }
   });
+  it.each([20, 24])('estimates a 30 cm jump at %i Hz instead of clamping it near 20 cm', fps => {
+    const height = 30, v = Math.sqrt(2 * G * height / 100), scale = .003, prop = .2;
+    const depth = .5 * (v / prop) * prop * prop / scale;
+    const samples = Array.from({ length: Math.floor(2.2 * fps) + 1 }, (_, frame) => {
+      const pts = frame / fps; let y = 500;
+      const takeoff = .85;
+      if (pts > .45 && pts < takeoff - prop) y += depth * (1 - Math.cos(Math.PI * (pts - .45) / (takeoff - prop - .45))) / 2;
+      else if (pts >= takeoff - prop && pts < takeoff) y = 500 + depth - .5 * (v / prop) * (pts - (takeoff - prop)) ** 2 / scale;
+      else if (pts >= takeoff) y = Math.min(500, 500 + depth - .5 * v * prop / scale - v * (pts - takeoff) / scale + .5 * G * (pts - takeoff) ** 2 / scale);
+      return { frame, pts, comX: 480, comY: y, bodyScale: 400 };
+    });
+    const result = analyzeCOM(samples, 400);
+    expect(result.heightCm, result.reason).toBeCloseTo(height, 0);
+  });
   it('does not bridge a missing observation at the apex', () => {
     const samples = smallJump(10, 60), apex = samples.reduce((a, b) => a.comY < b.comY ? a : b);
     expect(analyzeCOM(samples.map(p => p === apex ? { ...p, comY: null } : p), 400).heightCm).toBeNull();

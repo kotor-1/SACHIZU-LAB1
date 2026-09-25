@@ -15,9 +15,10 @@ describe('camera clock separation', () => {
     const c = new CameraClock(); c.read(0, { mediaTime: 1 });
     expect(c.read(20, { mediaTime: 1.02 })).toMatchObject({ source: 'media', reset: true });
     expect(c.read(40, { mediaTime: 1.04 })).toMatchObject({ source: 'media', reset: false });
-    expect(c.read(60, { mediaTime: 1.04 })).toMatchObject({ measurementPts: null, reset: true });
+    expect(c.read(60, { mediaTime: 1.04 })).toMatchObject({ source: 'media', measurementPts: null, reset: false });
     c.read(80, { mediaTime: 1.08, captureTime: 70 });
     expect(c.read(100, { mediaTime: 1.1, captureTime: 90 })).toMatchObject({ source: 'media', reset: false });
-    expect(c.read(120, { mediaTime: 1.1, captureTime: 110 })).toMatchObject({ source: 'capture', reset: true });
+    expect(c.read(120, { mediaTime: 1.1, captureTime: 110 })).toMatchObject({ source: 'media', measurementPts: null, reset: false });
+    expect(c.read(140, { mediaTime: 1.1, captureTime: 130 })).toMatchObject({ source: 'capture', measurementPts: .13, reset: true });
   });
 });

@@ -17,6 +17,7 @@ export class COMStream {
   private apexY = Infinity;
   private apexPts = 0;
   private recovered: number | null = null;
+  private recoveryMisses = 0;
   private lastPts: number | null = null;
   private id = 0;
   private standingNoise = 0;
@@ -61,9 +62,12 @@ export class COMStream {
       const rose = this.baseline - this.apexY > Math.max(.015 * this.scale, this.standingNoise * 6);
       const returned = rose && p.pts - this.apexPts >= .16 && p.comY >= this.baseline - .02 * this.scale;
       if (returned) {
-        this.recovered ??= p.pts; this.phase = 'RECOVERING';
+        this.recovered ??= p.pts; this.recoveryMisses = 0; this.phase = 'RECOVERING';
         if (p.pts - this.recovered >= .12) { const r = this.finish(p.pts); this.reset(); return r; }
-      } else { this.recovered = null; this.phase = 'MOVING'; }
+      } else if (this.recovered !== null && this.recoveryMisses < 2 && p.comY >= this.baseline - .05 * this.scale) {
+        // One noisy frame after landing must not erase an otherwise complete jump.
+        this.recoveryMisses++; this.phase = 'RECOVERING';
+      } else { this.recovered = null; this.recoveryMisses = 0; this.phase = 'MOVING'; }
       if (p.pts - this.started > 3) { const r = this.finish(p.pts, 'MOVEMENT_NOT_RESOLVED'); this.reset(); return r; }
     }
     return null;
@@ -78,5 +82,5 @@ export class COMStream {
     if (reason) analysis = { ...analysis, status: 'UNAVAILABLE', reason, heightCm: null, velocityMps: null, sensitivityCm: null };
     return { id: ++this.id, analysis, detectedAtPts: pts };
   }
-  private reset() { this.phase = 'PREPARING'; this.samples = []; this.recovered = null; }
+  private reset() { this.phase = 'PREPARING'; this.samples = []; this.recovered = null; this.recoveryMisses = 0; }
 }

@@ -104,6 +104,15 @@ describe('COM stream movement segmentation', () => {
     for (const p of jump()) { const r = interrupted.push(p.pts === 1 ? { ...p, comY: null } : p); if (r) failures.push(r); }
     expect(failures[0]?.analysis).toMatchObject({ heightCm: null, reason: 'COM_TRACKING_LOST' });
   });
+  it('still publishes after a single noisy frame once the jumper has returned', () => {
+    const stream = new COMStream(); const results: COMResult[] = [];
+    for (const p of jump()) {
+      const noisy = p.pts > 1.55 && Math.abs(p.pts * 10 - Math.round(p.pts * 10)) < .02 ? { ...p, comY: 485 } : p;
+      const r = stream.push(noisy); if (r) results.push(r);
+    }
+    expect(results).toHaveLength(1);
+    expect(results[0].analysis.heightCm).toBeCloseTo(3 ** 2 / (2 * G) * 100, 0);
+  });
   it('retains a missing preparatory observation without filling it or losing the complete jump', () => {
     const stream = new COMStream(); const results: COMResult[] = [];
     for (const p of jump()) { const r = stream.push(Math.abs(p.pts - .55) < .001 ? { ...p, comY: null } : p); if (r) results.push(r); }

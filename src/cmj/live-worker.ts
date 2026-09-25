@@ -5,7 +5,7 @@ import { LiveProfile } from './live-profile';
 // Built as one classic-worker bundle so the MediaPipe WASM loader can use
 // importScripts. No camera/network frames are sent outside this browser.
 const scope = self as unknown as { postMessage: (value: unknown) => void; onmessage: ((event: MessageEvent) => void) | null };
-let pose: MobileCMJPose, stream = new COMStream(), warmed = false;
+let pose: MobileCMJPose, stream = new COMStream(), warmed = false, emptyGpu = 0;
 let profile = new LiveProfile();
 const status = (message: string) => scope.postMessage({ status: message });
 async function initialize(delegate: 'CPU' | 'GPU', variant: 'full' | 'lite' = 'full') {
@@ -16,7 +16,7 @@ scope.onmessage = async ({ data }) => {
   const { id } = data;
   try {
     if (data.type === 'init') {
-      pose?.dispose(); stream = new COMStream(); profile = new LiveProfile(); warmed = false;
+      pose?.dispose(); stream = new COMStream(); profile = new LiveProfile(); warmed = false; emptyGpu = 0;
       try { await initialize('GPU'); }
       catch { pose?.dispose(); await initialize('CPU'); }
       scope.postMessage({ id, result: { ready: true } }); return;
@@ -37,6 +37,13 @@ scope.onmessage = async ({ data }) => {
         r = pose.estimate(image, data.frame, data.inferencePts);
       }
       warmed = true;
+      // A GPU delegate can initialize and still return no person. Switch once
+      // to CPU before any jump is accepted, instead of tracking an empty scene.
+      if (pose.backend === 'GPU' && r.landmarks.length === 0 && ++emptyGpu >= 15) {
+        emptyGpu = 0; pose.dispose(); await initialize('CPU'); pose.warm(image);
+        r = pose.estimate(image, data.frame, data.inferencePts);
+        stream = new COMStream(); profile = new LiveProfile();
+      } else if (r.landmarks.length > 0) emptyGpu = 0;
       const choice = profile.observe(r.inferenceMs, r.landmarks.length);
       if (choice === 'lite') {
         const backend = pose.backend;

@@ -65,8 +65,9 @@ function fitCOM(samples: readonly COMSample[], baselineScale: number, short: boo
     const minimumSide = short ? 2 : 3;
     if (arcRows.length < (short ? 5 : 7) || arcRows.filter(p => p.pts < apex.pts).length < minimumSide ||
       arcRows.filter(p => p.pts > apex.pts).length < minimumSide) {
-      if (short) continue;
-      return fail('INSUFFICIENT_ARC_SAMPLES');
+      // A short post-apex window can be unobservable at live frame rates
+      // without the longer windows being under-sampled. Skip it.
+      continue;
     }
     const local = samples.filter(p => p.pts >= bottom.pts - .05 && p.pts <= apex.pts + post + 1e-6);
     if (local.some(p => p.comY === null || p.comX === null || p.bodyScale === null) ||
@@ -110,7 +111,6 @@ function fitCOM(samples: readonly COMSample[], baselineScale: number, short: boo
       const rmse = Math.sqrt(design.reduce((sum, row, i) => sum + (row.reduce((s, x, j) => s + x * fit[j], 0) - observations[i].comY!) ** 2, 0) / observations.length);
       if (rmse > baselineScale * .008) continue;
       const heightCm = v * v / (2 * G) * 100;
-      if (short && heightCm > 20) continue;
       fits.push({ postApexSeconds: post, transitionPts: boundary, apexPts: fittedApex,
         velocityMps: v, heightCm, metersPerUnit: scale, rmseUnits: rmse, arcRmseUnits: arc.rmse,
         transitionSensitivityCm: [heightCm, heightCm], resampledHeightsCm: [] });
@@ -144,6 +144,7 @@ function fitCOM(samples: readonly COMSample[], baselineScale: number, short: boo
     }
     result.candidates.push(best);
   }
+  if (!result.candidates.length) return fail(short ? 'INSUFFICIENT_SHORT_ARC_EVIDENCE' : 'INSUFFICIENT_ARC_SAMPLES');
   if (short && result.candidates.length < 2) return fail('INSUFFICIENT_SHORT_ARC_EVIDENCE');
   const heights = result.candidates.map(p => p.heightCm);
   const height = median(heights);
