@@ -17,6 +17,22 @@ describe('experimental foot-pixel refinement', () => {
       expect(r.reason).toBeNull(); expect(r.pts).toBeCloseTo(1, 2);
     }
   });
+  it('uses the median of all nine accepted conditions without privileging a threshold', () => {
+    for (const kind of ['takeoff', 'landing'] as const) {
+      const channels = [1 - 2 / 240, 1, 1 + 1 / 240].map(event => rows(kind, event));
+      for (const order of [[0, 1, 2], [2, 0, 1], [1, 2, 0], [2, 1, 0]]) {
+        const data = rows(kind).map((row, i) => ({ ...row, feet: row.feet.map((foot, side) => ({ ...foot,
+          ys: order.map(channel => channels[channel][i].feet[side].ys![0]) as [number, number, number],
+        })) as PixelRow['feet'] }));
+        const fit = fitPixelBoundary(data, 0, 1, kind);
+        expect(fit.reason).toBeNull();
+        expect(fit.conditionPts).toHaveLength(9);
+        expect(fit.pts).toBeCloseTo(1, 6);
+        expect(fit.pts).toBe([...fit.conditionPts!].sort((a, b) => a - b)[4]);
+        expect(data.some(r => r.pts === fit.pts)).toBe(true);
+      }
+    }
+  });
   it('accepts sensitivity exactly at 25 ms despite floating point rounding, but rejects the next source frame', () => {
     const channels = [.975, .9875, 1].map(event => rows('takeoff', event));
     const atLimit = rows('takeoff').map((row, i) => ({ ...row,

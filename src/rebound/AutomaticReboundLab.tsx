@@ -73,6 +73,8 @@ export default function AutomaticReboundLab() {
       if (!current()) return;
       setPoses(selected); setResult(report); setProgress(100);
       setExportData({ ...report, file: { name: file.name, size: file.size }, mode, frames: collected.length,
+        environment: { userAgent: navigator.userAgent, secureContext: window.isSecureContext,
+          videoDecoder: typeof VideoDecoder !== 'undefined' },
         source: 'AUTOMATIC_PIXEL_FOOT', analysis: refined, seeds: base, pixelRows: rows });
       setMessage(report.meanRSI === null ? '解析が完了しました。算出できなかった理由を表示しています。' : '解析が完了しました。手動確認・入力なしの自動推定結果です。');
     } catch (e) {
@@ -86,7 +88,7 @@ export default function AutomaticReboundLab() {
   }
   return <main className="rj-lab rj-public">
     <header><a href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><span>SACHIZU LAB</span></header>
-    <div className="rj-title"><span>REBOUND JUMP · AUTO</span><h1>RJ · 入力なし自動解析</h1><p>動画を選ぶ → 解析する → 平均RSI。身長・基準物・枠・離地や着地の手動登録は不要です。</p></div>
+    <div className="rj-title"><span>REBOUND JUMP · AUTO · v3</span><h1>RJ · 入力なし自動解析</h1><p>動画を選ぶ → 解析する → 平均RSI。身長・基準物・枠・離地や着地の手動登録は不要です。</p></div>
     <section className="rj-capture"><h2>動画を選ぶ</h2>
       <input type="file" accept="video/*" aria-label="RJ動画を選ぶ" disabled={busy} onChange={e => { const f = e.target.files?.[0]; if (f) { clear(); setFile(f); setUrl(URL.createObjectURL(f)); setMessage('動画を選択しました。自動解析を開始できます。'); } }} />
       <label className="rj-protocol">種目<select aria-label="RJの種目" value={mode} disabled={busy} onChange={e => { clear(); setMode(e.target.value as JumpMode); }}><option value="BOTH">両足RJ</option><option value="RIGHT">右足RJ</option><option value="LEFT">左足RJ</option></select></label>

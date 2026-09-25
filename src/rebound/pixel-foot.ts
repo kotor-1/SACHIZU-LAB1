@@ -13,8 +13,10 @@ export interface PixelBoundary {
   seed: number; pts: number | null; range: [number, number] | null;
   reason: string | null; error: number | null;
   model?: 'CURVED_SUPPORT';
+  /** Sensitivity checks share pixels; these are not independent measurements. */
+  conditionPts?: number[];
 }
-export const PIXEL_PARAMETERS = { version: 'contrast-foot-edge-v2-experimental',
+export const PIXEL_PARAMETERS = { version: 'contrast-foot-edge-v3-median-experimental',
   minimumContrast: 35, thresholds: [.25, .35, .45], searchSeconds: .075,
   windows: [.08, .10, .12], maximumGapSeconds: .013, maximumSensitivitySeconds: .025,
   imageHeight: 960, minimumAirTravelPixels: 8, minimumEdgeSpeedPixelsPerSecond: 160, maximumFitErrorPixels: 3,
@@ -150,7 +152,6 @@ function fitBoundaryModel(rows: readonly PixelRow[], side: 0 | 1, seed: number, 
   if (!Number.isFinite(seed) || rows.some((r, i) => !Number.isFinite(r.pts) || (i > 0 && r.pts <= rows[i - 1].pts))) return fail('INVALID_TIMELINE');
   const direction = kind === 'takeoff' ? 1 : -1;
   const estimates: number[] = [], errors: number[] = [];
-  let nominal = NaN;
   for (const window of PIXEL_PARAMETERS.windows) for (let channel = 0; channel < 3; channel++) {
     const local = rows.filter(r => Math.abs(r.pts - seed) <= window);
     if (local.length < 18 || local.some((r, i) => !r.feet[side].ys || !r.feet[side].ys!.every(Number.isFinite) || (i > 0 && r.pts - local[i - 1].pts > PIXEL_PARAMETERS.maximumGapSeconds))) return fail('PIXEL_TRACKING_GAP');
@@ -186,9 +187,13 @@ function fitBoundaryModel(rows: readonly PixelRow[], side: 0 | 1, seed: number, 
     if (Math.abs(best.time - seed) > PIXEL_PARAMETERS.searchSeconds - .006) return { ...base, error: best.error, range: [best.time, best.time], reason: 'SEARCH_EDGE' };
     if (best.error > PIXEL_PARAMETERS.maximumFitErrorPixels) return { ...base, error: best.error, range: [best.time, best.time], reason: 'SOLE_MOTION_MISMATCH' };
     estimates.push(best.time); errors.push(best.error);
-    if (window === .08 && channel === 1) nominal = best.time;
   }
   const range: [number, number] = [Math.min(...estimates), Math.max(...estimates)];
   if (range[1] - range[0] > PIXEL_PARAMETERS.maximumSensitivitySeconds + 1e-9) return { ...base, range, reason: 'THRESHOLD_OR_WINDOW_DISAGREEMENT' };
-  return { ...base, pts: nominal, range, error: Math.max(...errors) };
+  // All nine conditions already passed the same unchanged quality gates.
+  // Use their median source-frame timestamp instead of privileging the
+  // shortest window's middle threshold. Averaging would invent a non-frame
+  // timestamp. This reduces dependence on one threshold/window, not image
+  // uncertainty or the need for external validation.
+  return { ...base, pts: median(estimates), range, error: Math.max(...errors), conditionPts: estimates };
 }

@@ -48,6 +48,6 @@ export function refineAutomaticReview(base: RegisteredAnalysis, rows: readonly P
   }
   const corrected = correctRegistered({ ...original, jumps }, {}, frames);
   if (corrected.error) return original;
-  return { ...corrected.analysis, footRefinement: { ...original.footRefinement, version: 'automatic-curved-support-v2', events,
+  return { ...corrected.analysis, footRefinement: { ...original.footRefinement, version: 'automatic-median-support-v3', events,
     applied: events.filter(e => e.applied).length } };
 }

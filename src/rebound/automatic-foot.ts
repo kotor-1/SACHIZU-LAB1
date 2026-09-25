@@ -42,7 +42,8 @@ export function automaticFootResult(analysis: RegisteredAnalysis) {
   const accepted = jumps.filter(j => j.rsi !== null);
   const heights = jumps.flatMap(j => j.heightM === null ? [] : [j.heightM]);
   const expected = Math.max(0, jumps.length - 1);
-  return { version: 'rj-automatic-foot-v2', validated: false as const, manualEventInputsUsed: false,
+  return { version: 'rj-automatic-foot-v3', validated: false as const, manualEventInputsUsed: false,
+    boundarySelection: 'MEDIAN_OF_NINE_ACCEPTED_CONDITIONS',
     manualLengthInputsUsed: false, referenceRSIUsed: false, policy: 'IMAGE_SUPPORTED_EVENTS_ONLY',
     recognizedJumps: analysis.detected, expectedRSICount: expected, acceptedRSICount: accepted.length,
     acceptedJumpNumbers: accepted.map(j => j.jump), partial: accepted.length < expected,
