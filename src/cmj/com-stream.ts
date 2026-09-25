@@ -40,6 +40,8 @@ export class COMStream {
         if (p.pts - this.started <= 3) return null;
         const failed = this.finish(p.pts, 'COM_TRACKING_OR_SAMPLE_GAP'); this.reset(); return failed;
       }
+      // One lost pose while waiting must not erase a baseline that was already accepted.
+      if (this.phase === 'READY' && gap <= STREAM_BREAK_SECONDS) return null;
       this.reset(); return null;
     }
     this.samples.push(p);
@@ -66,10 +68,14 @@ export class COMStream {
       // Candidate detection, NOT a height acceptance threshold. Small rises
       // above standing jitter still have to pass the physical estimator.
       const rose = this.baseline - this.apexY > Math.max(.015 * this.scale, this.standingNoise * 6);
-      const returned = rose && p.pts - this.apexPts >= .16 && p.comY >= this.baseline - .02 * this.scale;
+      const rise = this.baseline - this.apexY;
+      // Landing posture is rarely the exact standing line: arms and knees leave
+      // the COM several percent away. Most of the rise coming back is the landing.
+      const descended = rise > 0 && p.comY - this.apexY >= rise * .75;
+      const returned = rose && p.pts - this.apexPts >= .16 && descended;
       if (returned) {
         this.recovered ??= p.pts; this.recoveryMisses = 0; this.phase = 'RECOVERING';
-        if (p.pts - this.recovered >= .12) { const r = this.finish(p.pts); this.reset(); return r; }
+        if (p.pts - this.recovered >= .12) { const r = this.finish(p.pts); this.rearm(); return r; }
       } else if (this.recovered !== null && this.recoveryMisses < 2 && p.comY >= this.baseline - .05 * this.scale) {
         // One noisy frame after landing must not erase an otherwise complete jump.
         this.recoveryMisses++; this.phase = 'RECOVERING';
@@ -87,6 +93,13 @@ export class COMStream {
     let analysis = analyzeCOM(this.samples, this.scale);
     if (reason) analysis = { ...analysis, status: 'UNAVAILABLE', reason, heightCm: null, velocityMps: null, sensitivityCm: null };
     return { id: ++this.id, analysis, detectedAtPts: pts };
+  }
+  private rearm() {
+    const recent = this.samples.filter(s => s.comY !== null && s.pts >= this.apexPts && Math.abs(s.comY! - this.baseline) <= .1 * this.scale);
+    if (recent.length >= 3) this.baseline = median(recent.map(s => s.comY!));
+    const keepFrom = (this.lastPts ?? 0) - .4;
+    this.samples = this.samples.filter(s => s.pts >= keepFrom && s.comY !== null);
+    this.phase = 'READY'; this.recovered = null; this.recoveryMisses = 0; this.apexY = Infinity;
   }
   private reset() { this.phase = 'PREPARING'; this.samples = []; this.recovered = null; this.recoveryMisses = 0; }
 }

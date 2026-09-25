@@ -40,6 +40,14 @@ describe('small jumps (synthetic mechanics, not validation in children)', () => 
       expect(rows.map(p => stream.push(p)).filter(r => r?.analysis.heightCm != null)).toHaveLength(0);
     }
   });
+  it('measures every jump in a row, including one that lands away from the standing line', () => {
+    const one = (offset: number, land: number) => smallJump(30, 30).map(p => (
+      { ...p, frame: p.frame + Math.round(offset * 100), pts: p.pts + offset, comY: p.pts >= 1.35 ? land : p.comY }));
+    const samples = [...one(0, 500), ...one(2.2, 480)];
+    const stream = new COMStream();
+    const results = samples.map(p => stream.push(p)).filter(r => r?.analysis.heightCm != null);
+    expect(results.map(r => Math.round(r!.analysis.heightCm!))).toEqual([30, 30]);
+  });
   it('becomes ready and measures a jump despite real standing sway', () => {
     const height = 30, fps = 30, v = Math.sqrt(2 * G * height / 100), scale = .003, prop = .2, takeoff = 1.6, dip = 1.1;
     const depth = .5 * (v / prop) * prop * prop / scale;
