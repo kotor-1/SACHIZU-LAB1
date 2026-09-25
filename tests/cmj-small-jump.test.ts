@@ -40,6 +40,45 @@ describe('small jumps (synthetic mechanics, not validation in children)', () => 
       expect(rows.map(p => stream.push(p)).filter(r => r?.analysis.heightCm != null)).toHaveLength(0);
     }
   });
+  it('becomes ready and measures a jump despite real standing sway', () => {
+    const height = 30, fps = 30, v = Math.sqrt(2 * G * height / 100), scale = .003, prop = .2, takeoff = 1.6, dip = 1.1;
+    const depth = .5 * (v / prop) * prop * prop / scale;
+    let seed = 11;
+    const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647 - .5;
+    const samples = Array.from({ length: Math.floor(3.2 * fps) + 1 }, (_, frame) => {
+      const pts = frame / fps; let y = 500;
+      if (pts > dip && pts < takeoff - prop) y += depth * (1 - Math.cos(Math.PI * (pts - dip) / (takeoff - prop - dip))) / 2;
+      else if (pts >= takeoff - prop && pts < takeoff) y = 500 + depth - .5 * (v / prop) * (pts - (takeoff - prop)) ** 2 / scale;
+      else if (pts >= takeoff) y = Math.min(500, 500 + depth - .5 * v * prop / scale - v * (pts - takeoff) / scale + .5 * G * (pts - takeoff) ** 2 / scale);
+      // About 1.5% COM and 4% body-extent frame jitter while standing, as
+      // measured on the front-view camera clip.
+      const standing = pts < dip;
+      return { frame, pts, comX: 480, comY: y + (standing ? 6.4 * random() : 0), bodyScale: 400 + (standing ? 17 * random() : 0) };
+    });
+    const stream = new COMStream();
+    const results = samples.map(p => stream.push(p)).filter(r => r !== null);
+    expect(results).toHaveLength(1);
+    expect(results[0].analysis.heightCm, results[0].analysis.reason).toBeCloseTo(height, 0);
+  });
+  it('detects jumps when phone inference intervals vary between 35 and 95 ms', () => {
+    let seed = 7;
+    const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (const height of [10, 30]) {
+      const v = Math.sqrt(2 * G * height / 100), scale = .003, prop = .2, takeoff = 1.6, dip = 1.1;
+      const depth = .5 * (v / prop) * prop * prop / scale;
+      const samples = [];
+      for (let pts = 0, frame = 0; pts < 3.2; pts += .035 + random() * .06, frame++) {
+        let y = 500;
+        if (pts > dip && pts < takeoff - prop) y += depth * (1 - Math.cos(Math.PI * (pts - dip) / (takeoff - prop - dip))) / 2;
+        else if (pts >= takeoff - prop && pts < takeoff) y = 500 + depth - .5 * (v / prop) * (pts - (takeoff - prop)) ** 2 / scale;
+        else if (pts >= takeoff) y = Math.min(500, 500 + depth - .5 * v * prop / scale - v * (pts - takeoff) / scale + .5 * G * (pts - takeoff) ** 2 / scale);
+        samples.push({ frame, pts, comX: 480, comY: y + (random() - .5) * 1.2, bodyScale: 400 });
+      }
+      const stream = new COMStream();
+      const results = samples.map(p => stream.push(p)).filter(r => r !== null);
+      expect(results, `${height} cm`).toHaveLength(1);
+    }
+  });
   it.each([15])('measures a 30 cm jump from a steady %i Hz live cadence', fps => {
     const height = 30, v = Math.sqrt(2 * G * height / 100), scale = .003, prop = .2, takeoff = 1.4, dip = 1;
     const depth = .5 * (v / prop) * prop * prop / scale;

@@ -1,8 +1,11 @@
-import { analyzeCOM, exceedsSampleGap, type COMAnalysis } from './com-analysis';
+import { analyzeCOM, type COMAnalysis } from './com-analysis';
 import type { COMSample } from './center-of-mass';
 
 export type COMPhase = 'PREPARING' | 'READY' | 'MOVING' | 'RECOVERING';
 export interface COMResult { id: number; analysis: COMAnalysis; detectedAtPts: number }
+// Segmentation only. Height still requires the estimator's shorter gap limit
+// inside the propulsion/airborne window.
+const STREAM_BREAK_SECONDS = .25;
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
 
 /** Movement segmentation uses COM displacement, not toe-ground thresholds.
@@ -21,7 +24,6 @@ export class COMStream {
   private lastPts: number | null = null;
   private id = 0;
   private standingNoise = 0;
-  private intervals: number[] = [];
 
   push(p: COMSample): COMResult | null {
     if (!Number.isFinite(p.pts) || (this.lastPts !== null && p.pts <= this.lastPts)) throw new Error('NON_MONOTONIC_STREAM');
@@ -29,7 +31,7 @@ export class COMStream {
     this.lastPts = p.pts;
     const active = this.phase === 'MOVING' || this.phase === 'RECOVERING';
     if (p.comY === null || p.comX === null || p.bodyScale === null ||
-      !Number.isFinite(p.comY) || !Number.isFinite(p.comX) || !Number.isFinite(p.bodyScale) || this.brokenInterval(gap)) {
+      !Number.isFinite(p.comY) || !Number.isFinite(p.comX) || !Number.isFinite(p.bodyScale) || gap > STREAM_BREAK_SECONDS) {
       this.samples.push(p);
       if (active) {
         // Retain the missing observation for the estimator's measurement-window
@@ -42,13 +44,16 @@ export class COMStream {
     }
     this.samples.push(p);
     if (this.phase === 'PREPARING') {
-      this.samples = this.samples.filter(s => p.pts - s.pts <= 1);
+      this.samples = this.samples.filter(s => p.pts - s.pts <= .5);
       if (this.samples.length < 8 || p.pts - this.samples[0].pts < this.preparationSeconds) return null;
       const ys = this.samples.map(s => s.comY!);
       const scales = this.samples.map(s => s.bodyScale!);
       this.scale = median(scales);
-      if (Math.max(...ys) - Math.min(...ys) > .012 * this.scale ||
-        Math.max(...scales) - Math.min(...scales) > .04 * this.scale) return null;
+      // Real standing pose output sways about 1-1.6% of body extent in COM and
+      // about 4% in head-to-foot extent within 0.5 s. Readiness is only
+      // segmentation; height acceptance is decided by the physical estimator.
+      if (Math.max(...ys) - Math.min(...ys) > .03 * this.scale ||
+        Math.max(...scales) - Math.min(...scales) > .08 * this.scale) return null;
       this.baseline = median(ys);
       this.standingNoise = 1.4826 * median(ys.map(y => Math.abs(y - this.baseline)));
       this.phase = 'READY';
@@ -83,13 +88,5 @@ export class COMStream {
     if (reason) analysis = { ...analysis, status: 'UNAVAILABLE', reason, heightCm: null, velocityMps: null, sensitivityCm: null };
     return { id: ++this.id, analysis, detectedAtPts: pts };
   }
-  private brokenInterval(gap: number): boolean {
-    if (!(gap > 0)) return false;
-    const times = [0];
-    for (const dt of [...this.intervals.slice(-12), gap]) times.push(times.at(-1)! + dt);
-    const hole = exceedsSampleGap(times);
-    if (!hole) { this.intervals.push(gap); if (this.intervals.length > 24) this.intervals.shift(); }
-    return hole;
-  }
-  private reset() { this.phase = 'PREPARING'; this.samples = []; this.recovered = null; this.recoveryMisses = 0; this.intervals = []; }
+  private reset() { this.phase = 'PREPARING'; this.samples = []; this.recovered = null; this.recoveryMisses = 0; }
 }

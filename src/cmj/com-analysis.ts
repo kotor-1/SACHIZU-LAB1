@@ -15,17 +15,10 @@ export interface COMAnalysis {
   samples: readonly COMSample[];
 }
 export const MAX_COM_GAP_SECONDS = .12;
-/** A steady live interval is the camera rate. A hole is much longer than that rate. */
+/** Live phones deliver irregular inference intervals; the fit uses actual
+ * timestamps, so only a hole long enough to hide motion withholds height. */
 export function exceedsSampleGap(times: readonly number[]): boolean {
-  const gaps: number[] = [];
-  for (let i = 1; i < times.length; i++) {
-    const gap = times[i] - times[i - 1];
-    if (gap > MAX_COM_GAP_SECONDS) return true;
-    gaps.push(gap);
-  }
-  if (gaps.length < 4) return false;
-  const medianGap = [...gaps].sort((a, b) => a - b)[Math.floor(gaps.length / 2)];
-  return gaps.some(gap => gap > Math.max(.05, medianGap * 2.5));
+  return times.some((t, i) => i > 0 && t - times[i - 1] > MAX_COM_GAP_SECONDS);
 }
 const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 
