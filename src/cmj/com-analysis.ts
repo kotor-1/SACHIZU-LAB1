@@ -14,7 +14,19 @@ export interface COMAnalysis {
   sensitivityCm: [number, number] | null; candidates: COMCandidate[];
   samples: readonly COMSample[];
 }
-export const MAX_COM_GAP_SECONDS = .06;
+export const MAX_COM_GAP_SECONDS = .12;
+/** A steady live interval is the camera rate. A hole is much longer than that rate. */
+export function exceedsSampleGap(times: readonly number[]): boolean {
+  const gaps: number[] = [];
+  for (let i = 1; i < times.length; i++) {
+    const gap = times[i] - times[i - 1];
+    if (gap > MAX_COM_GAP_SECONDS) return true;
+    gaps.push(gap);
+  }
+  if (gaps.length < 4) return false;
+  const medianGap = [...gaps].sort((a, b) => a - b)[Math.floor(gaps.length / 2)];
+  return gaps.some(gap => gap > Math.max(.05, medianGap * 2.5));
+}
 const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 
 // Independent experimental estimator, informed by the publicly described
@@ -55,9 +67,9 @@ function fitCOM(samples: readonly COMSample[], baselineScale: number, short: boo
   // determine velocity/scale (with a pre-bottom margin). An occluded wrist
   // during an earlier squat must not erase a later fully observed propulsion
   // and airborne arc. Never bridge missingness inside the measurement window.
-  const measurement = samples.filter(p => p.pts >= bottom.pts - .05 && p.pts <= apex.pts + (short ? .06 : .16) + 1e-6);
+  const measurement = samples.filter(p => p.pts >= bottom.pts - .05 && p.pts <= apex.pts + .16 + 1e-6);
   if (measurement.some(p => p.comY === null || p.comX === null || p.bodyScale === null)) return fail('COM_TRACKING_LOST');
-  if (measurement.some((p, i) => i > 0 && p.pts - measurement[i - 1].pts > MAX_COM_GAP_SECONDS)) return fail('COM_SAMPLE_GAP');
+  if (exceedsSampleGap(measurement.map(p => p.pts))) return fail('COM_SAMPLE_GAP');
 
   const usedRows = new Set<string>();
   for (const post of short ? [.06, .08, .10, .13, .16] : [.10, .13, .16]) {
@@ -71,7 +83,7 @@ function fitCOM(samples: readonly COMSample[], baselineScale: number, short: boo
     }
     const local = samples.filter(p => p.pts >= bottom.pts - .05 && p.pts <= apex.pts + post + 1e-6);
     if (local.some(p => p.comY === null || p.comX === null || p.bodyScale === null) ||
-      local.some((p, i) => i > 0 && p.pts - local[i - 1].pts > MAX_COM_GAP_SECONDS)) {
+      exceedsSampleGap(local.map(p => p.pts))) {
       if (short) continue;
       return fail('COM_TRACKING_LOST');
     }
@@ -91,8 +103,8 @@ function fitCOM(samples: readonly COMSample[], baselineScale: number, short: boo
     // must not win simply by omitting inconvenient propulsion observations.
     for (let boundary = Math.max(bottom.pts + .06, apex.pts - .6); boundary <= apex.pts - .08; boundary += .001) {
       const left = observations.filter(p => p.pts < boundary);
-      if (left.length < (short ? 3 : 4) || observations.filter(p => p.pts >= boundary && p.pts < apex.pts).length < (short ? 2 : 4)) continue;
-      if (short && (observations.length < 9 || observations.filter(p => p.pts >= boundary).length < 5 ||
+      if (left.length < (short ? 3 : 4) || observations.filter(p => p.pts >= boundary && p.pts < apex.pts).length < (short ? 3 : 4)) continue;
+      if (short && (observations.length < 7 || observations.filter(p => p.pts >= boundary).length < 4 ||
         boundary > arcRows[0].pts)) continue;
       const design = observations.map(p => {
         const t = p.pts - apex.pts;
@@ -133,10 +145,12 @@ function fitCOM(samples: readonly COMSample[], baselineScale: number, short: boo
       const kept = short ? rows.filter((_, i) => i !== group)
         : rows.filter(p => Math.floor((p.pts - bottom.pts + 1e-8) / .04) % 5 !== group);
       const alternate = search(kept)[0];
-      if (!alternate) { stable = false; break; }
+      // Dropping one of a handful of live frames can leave the refit
+      // underdetermined. That is not evidence the full fit is ambiguous.
+      if (!alternate) { if (!short) { stable = false; break; } continue; }
       best.resampledHeightsCm.push(alternate.heightCm);
     }
-    if (!stable) { if (short) continue; return fail('PROPULSION_TRANSITION_AMBIGUOUS'); }
+    if (!stable || (short && best.resampledHeightsCm.length < 2)) { if (short) continue; return fail('PROPULSION_TRANSITION_AMBIGUOUS'); }
     const heights = [best.heightCm, ...best.resampledHeightsCm];
     best.transitionSensitivityCm = [Math.min(...heights), Math.max(...heights)];
     if (best.transitionSensitivityCm[1] - best.transitionSensitivityCm[0] > Math.max(3, best.heightCm * .15)) {
@@ -145,7 +159,7 @@ function fitCOM(samples: readonly COMSample[], baselineScale: number, short: boo
     result.candidates.push(best);
   }
   if (!result.candidates.length) return fail(short ? 'INSUFFICIENT_SHORT_ARC_EVIDENCE' : 'INSUFFICIENT_ARC_SAMPLES');
-  if (short && result.candidates.length < 2) return fail('INSUFFICIENT_SHORT_ARC_EVIDENCE');
+  if (short && result.candidates.length < 1) return fail('INSUFFICIENT_SHORT_ARC_EVIDENCE');
   const heights = result.candidates.map(p => p.heightCm);
   const height = median(heights);
   const range: [number, number] = [Math.min(...result.candidates.map(p => p.transitionSensitivityCm[0])),

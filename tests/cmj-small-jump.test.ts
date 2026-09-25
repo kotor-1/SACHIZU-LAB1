@@ -40,6 +40,21 @@ describe('small jumps (synthetic mechanics, not validation in children)', () => 
       expect(rows.map(p => stream.push(p)).filter(r => r?.analysis.heightCm != null)).toHaveLength(0);
     }
   });
+  it.each([15])('measures a 30 cm jump from a steady %i Hz live cadence', fps => {
+    const height = 30, v = Math.sqrt(2 * G * height / 100), scale = .003, prop = .2, takeoff = 1.4, dip = 1;
+    const depth = .5 * (v / prop) * prop * prop / scale;
+    const samples = Array.from({ length: Math.floor(3.2 * fps) + 1 }, (_, frame) => {
+      const pts = frame / fps; let y = 500;
+      if (pts > dip && pts < takeoff - prop) y += depth * (1 - Math.cos(Math.PI * (pts - dip) / (takeoff - prop - dip))) / 2;
+      else if (pts >= takeoff - prop && pts < takeoff) y = 500 + depth - .5 * (v / prop) * (pts - (takeoff - prop)) ** 2 / scale;
+      else if (pts >= takeoff) y = Math.min(500, 500 + depth - .5 * v * prop / scale - v * (pts - takeoff) / scale + .5 * G * (pts - takeoff) ** 2 / scale);
+      return { frame, pts, comX: 480, comY: y, bodyScale: 400 };
+    });
+    const stream = new COMStream();
+    const results = samples.map(p => stream.push(p)).filter(r => r !== null);
+    expect(results, results[0]?.analysis.reason).toHaveLength(1);
+    expect(results[0].analysis.heightCm, results[0].analysis.reason).toBeCloseTo(height, 0);
+  });
   it.each([20, 24])('estimates a 30 cm jump at %i Hz instead of clamping it near 20 cm', fps => {
     const height = 30, v = Math.sqrt(2 * G * height / 100), scale = .003, prop = .2;
     const depth = .5 * (v / prop) * prop * prop / scale;
