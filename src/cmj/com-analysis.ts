@@ -143,21 +143,27 @@ function fitCOM(samples: readonly COMSample[], baselineScale: number, short: boo
       if (!alternate) { if (!short) { stable = false; break; } continue; }
       best.resampledHeightsCm.push(alternate.heightCm);
     }
-    if (!stable || (short && best.resampledHeightsCm.length < 2)) { if (short) continue; return fail('PROPULSION_TRANSITION_AMBIGUOUS'); }
+    if (!stable) { if (short) continue; return fail('PROPULSION_TRANSITION_AMBIGUOUS'); }
+    if (short && best.resampledHeightsCm.length < 2) continue;
     const heights = [best.heightCm, ...best.resampledHeightsCm];
     best.transitionSensitivityCm = [Math.min(...heights), Math.max(...heights)];
-    if (best.transitionSensitivityCm[1] - best.transitionSensitivityCm[0] > Math.max(3, best.heightCm * .15)) {
-      result.candidates.push(best); return fail('PROPULSION_TRANSITION_AMBIGUOUS');
-    }
+    // Block deletion on a noisy live pose often spreads by more than 15% even
+    // when every full window finds the same takeoff. Keep the full-data fit.
+    // Window-to-window agreement below decides whether to publish.
     result.candidates.push(best);
   }
   if (!result.candidates.length) return fail(short ? 'INSUFFICIENT_SHORT_ARC_EVIDENCE' : 'INSUFFICIENT_ARC_SAMPLES');
   if (short && result.candidates.length < 1) return fail('INSUFFICIENT_SHORT_ARC_EVIDENCE');
   const heights = result.candidates.map(p => p.heightCm);
   const height = median(heights);
+  const centers: [number, number] = [Math.min(...heights), Math.max(...heights)];
+  if (heights.length >= 2 && centers[1] - centers[0] > Math.max(4, height * .2)) return fail('FIT_WINDOWS_DISAGREE');
+  if (heights.length < 2) {
+    const only = result.candidates[0].transitionSensitivityCm;
+    if (only[1] - only[0] > Math.max(3, height * .15)) return fail('PROPULSION_TRANSITION_AMBIGUOUS');
+  }
   const range: [number, number] = [Math.min(...result.candidates.map(p => p.transitionSensitivityCm[0])),
     Math.max(...result.candidates.map(p => p.transitionSensitivityCm[1]))];
-  if (range[1] - range[0] > Math.max(4, height * .2)) return fail('FIT_WINDOWS_DISAGREE');
   return { ...result, status: 'EXPERIMENTAL_ESTIMATE', heightCm: height,
     velocityMps: Math.sqrt(2 * G * height / 100), sensitivityCm: range };
 }

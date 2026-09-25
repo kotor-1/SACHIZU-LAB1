@@ -116,6 +116,14 @@ describe('small jumps (synthetic mechanics, not validation in children)', () => 
     const result = analyzeCOM(samples, 400);
     expect(result.heightCm, result.reason).toBeCloseTo(height, 0);
   });
+  it('publishes a noisy 44 Hz jump when the full windows agree', () => {
+    const samples = smallJump(30, 44, 2);
+    const result = analyzeCOM(samples, 400);
+    expect(Math.abs(result.heightCm! - 30), result.reason).toBeLessThan(2);
+    const stream = new COMStream();
+    const published = samples.map(p => stream.push(p)).filter(r => r?.analysis.heightCm != null);
+    expect(published).toHaveLength(1);
+  });
   it('does not bridge a missing observation at the apex', () => {
     const samples = smallJump(10, 60), apex = samples.reduce((a, b) => a.comY < b.comY ? a : b);
     expect(analyzeCOM(samples.map(p => p === apex ? { ...p, comY: null } : p), 400).heightCm).toBeNull();
