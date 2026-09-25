@@ -12,6 +12,7 @@ export interface PixelRow {
 export interface PixelBoundary {
   seed: number; pts: number | null; range: [number, number] | null;
   reason: string | null; error: number | null;
+  model?: 'CURVED_SUPPORT';
 }
 export const PIXEL_PARAMETERS = { version: 'contrast-foot-edge-v2-experimental',
   minimumContrast: 35, thresholds: [.25, .35, .45], searchSeconds: .075,
@@ -20,15 +21,16 @@ export const PIXEL_PARAMETERS = { version: 'contrast-foot-edge-v2-experimental',
 } as const;
 const median = (a: number[]) => { const b = [...a].sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : NaN; };
 function solve(xs: number[][], ys: number[]): number[] | null {
-  const a = Array.from({ length: 4 }, (_, i) => [...Array.from({ length: 4 }, (_, j) => xs.reduce((s, x) => s + x[i] * x[j], 0)), xs.reduce((s, x, k) => s + x[i] * ys[k], 0)]);
-  for (let i = 0; i < 4; i++) {
-    let pivot = i; for (let j = i + 1; j < 4; j++) if (Math.abs(a[j][i]) > Math.abs(a[pivot][i])) pivot = j;
+  const n = xs[0].length;
+  const a = Array.from({ length: n }, (_, i) => [...Array.from({ length: n }, (_, j) => xs.reduce((s, x) => s + x[i] * x[j], 0)), xs.reduce((s, x, k) => s + x[i] * ys[k], 0)]);
+  for (let i = 0; i < n; i++) {
+    let pivot = i; for (let j = i + 1; j < n; j++) if (Math.abs(a[j][i]) > Math.abs(a[pivot][i])) pivot = j;
     if (Math.abs(a[pivot][i]) < 1e-9) return null;
     [a[i], a[pivot]] = [a[pivot], a[i]];
-    const v = a[i][i]; for (let j = i; j <= 4; j++) a[i][j] /= v;
-    for (let k = 0; k < 4; k++) if (k !== i) { const f = a[k][i]; for (let j = i; j <= 4; j++) a[k][j] -= f * a[i][j]; }
+    const v = a[i][i]; for (let j = i; j <= n; j++) a[i][j] /= v;
+    for (let k = 0; k < n; k++) if (k !== i) { const f = a[k][i]; for (let j = i; j <= n; j++) a[k][j] -= f * a[i][j]; }
   }
-  return a.map(r => r[4]);
+  return a.map(r => r[n]);
 }
 
 /** Segment the pose-localized shoe against the floor immediately below it.
@@ -134,7 +136,16 @@ export function selectFootEdge(dark: FootEdge, bright: FootEdge): FootEdge {
 /** Continuous linear-support / quadratic-air change point. Each threshold
  * and window must agree; no copying a duration from the registered cycle. */
 export function fitPixelBoundary(rows: readonly PixelRow[], side: 0 | 1, seed: number, kind: 'takeoff' | 'landing'): PixelBoundary {
-  const base: PixelBoundary = { seed, pts: null, range: null, reason: null, error: null };
+  return fitBoundaryModel(rows, side, seed, kind, false);
+}
+
+/** Curved support silhouette (shoe rotation/deformation), retaining a distinct
+ * velocity change at the boundary. Does not assume the moving edge is COM. */
+export function fitCurvedPixelBoundary(rows: readonly PixelRow[], side: 0 | 1, seed: number, kind: 'takeoff' | 'landing'): PixelBoundary {
+  return fitBoundaryModel(rows, side, seed, kind, true);
+}
+function fitBoundaryModel(rows: readonly PixelRow[], side: 0 | 1, seed: number, kind: 'takeoff' | 'landing', curved: boolean): PixelBoundary {
+  const base: PixelBoundary = { seed, pts: null, range: null, reason: null, error: null, ...(curved ? { model: 'CURVED_SUPPORT' as const } : {}) };
   const fail = (reason: string): PixelBoundary => ({ ...base, reason });
   if (!Number.isFinite(seed) || rows.some((r, i) => !Number.isFinite(r.pts) || (i > 0 && r.pts <= rows[i - 1].pts))) return fail('INVALID_TIMELINE');
   const direction = kind === 'takeoff' ? 1 : -1;
@@ -152,12 +163,22 @@ export function fitPixelBoundary(rows: readonly PixelRow[], side: 0 | 1, seed: n
       const support = span.filter(q => direction * (q.pts - r.pts) <= 0);
       const air = span.filter(q => direction * (q.pts - r.pts) > 0);
       if (support.length < 5 || air.length < 5) continue;
-      const xs = span.map(q => { const t = (q.pts - seed) / window, a = Math.max(0, direction * (q.pts - r.pts) / window); return [1, t, a, a * a]; });
-      const ys = span.map(q => q.feet[side].ys![channel]), params = solve(xs, ys);
-      if (!params || Math.abs(params[1] / window) > 120 || -params[2] / window < PIXEL_PARAMETERS.minimumEdgeSpeedPixelsPerSecond) continue;
+      const xs = span.map(q => { const t = (q.pts - seed) / window, a = Math.max(0, direction * (q.pts - r.pts) / window); return curved ? [1, t, a, a * a, t * t] : [1, t, a, a * a]; });
+      const ys = span.map(q => q.feet[side].ys![channel]);
+      const params = solve(xs, ys);
+      const boundaryT = (r.pts - seed) / window;
+      if (!params || Math.abs((params[1] + 2 * (params[4] ?? 0) * boundaryT) / window) > 120 || -params[2] / window < PIXEL_PARAMETERS.minimumEdgeSpeedPixelsPerSecond) continue;
       const maxAir = Math.max(...xs.map(x => x[2]));
-      if (-params[2] * maxAir - params[3] * maxAir ** 2 < PIXEL_PARAMETERS.minimumAirTravelPixels || params[1] * direction + params[2] + 2 * params[3] * maxAir > 0) continue;
+      if (-params[2] * maxAir - params[3] * maxAir ** 2 < PIXEL_PARAMETERS.minimumAirTravelPixels || (params[1] + 2 * (params[4] ?? 0) * (boundaryT + direction * maxAir)) * direction + params[2] + 2 * params[3] * maxAir > 0) continue;
       const error = Math.sqrt(span.reduce((sum, _q, i) => sum + (ys[i] - xs[i].reduce((s, x, j) => s + x * params[j], 0)) ** 2, 0) / span.length);
+      if (curved) {
+        // Additional flexibility must explain an actual change, not merely
+        // a smooth bend. Require at least half the residual of a no-change
+        // quadratic on the identical frames. Engineering gate, not a p-value.
+        const noChangeX = xs.map(x => [1, x[1], x[1] ** 2]), noChange = solve(noChangeX, ys);
+        const noChangeError = noChange ? Math.sqrt(ys.reduce((s, y, i) => s + (y - noChangeX[i].reduce((v, x, j) => v + x * noChange[j], 0)) ** 2, 0) / ys.length) : 0;
+        if (error > noChangeError * .5) continue;
+      }
       candidates.push({ time: r.pts, error });
     }
     if (!candidates.length) return fail('NO_MOTION_CHANGE');

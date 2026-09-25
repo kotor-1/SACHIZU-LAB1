@@ -7,8 +7,8 @@ import type { BoundaryCorrections } from './registered-corrections';
 
 /** Foot-height bands only seed the review cursor. These are NOT verified
  * contact events; never place their RSI in the confirmed aggregate. */
-export function autoReview(frames: readonly PoseFrame[], peaks: SignalResult, mode: JumpMode, first = 0): RegisteredAnalysis {
-  const chosen = peaks.detected > 11 ? first > 0 ? peaks.peaks.slice(first - 1, first + 9) : []
+export function autoReview(frames: readonly PoseFrame[], peaks: SignalResult, mode: JumpMode, first = 0, allRecognized = false): RegisteredAnalysis {
+  const chosen = allRecognized ? peaks.peaks : peaks.detected > 11 ? first > 0 ? peaks.peaks.slice(first - 1, first + 9) : []
     : peaks.peaks.slice(0, peaks.detected === 11 ? 10 : peaks.detected);
   const result: RegisteredAnalysis = { version: 'rj-auto-review-v1', validated: false, registration: null,
     reason: chosen.length ? null : peaks.detected > 11 ? '解析する10回の範囲を選んでください。' : peaks.reason === 'FRAME_RATE_TOO_LOW'
