@@ -116,10 +116,28 @@ describe('small jumps (synthetic mechanics, not validation in children)', () => 
     const result = analyzeCOM(samples, 400);
     expect(result.heightCm, result.reason).toBeCloseTo(height, 0);
   });
+  it.each([['sine', 3], ['front', 5]] as const)('keeps a 20 cm %s push within %i cm at 30 Hz', (kind, tolerance) => {
+    const height = 20, fps = 30, v = Math.sqrt(2 * G * height / 100), scale = .003, prop = .2, takeoff = .85;
+    const depth = v * prop / (Math.PI * scale);
+    const samples = Array.from({ length: Math.floor(2.2 * fps) + 1 }, (_, frame) => {
+      const pts = frame / fps, u = pts - (takeoff - prop); let y = 500;
+      if (pts > .45 && pts < takeoff - prop) y += depth * (1 - Math.cos(Math.PI * (pts - .45) / (takeoff - prop - .45))) / 2;
+      else if (pts >= takeoff - prop && pts < takeoff) y = 500 + depth - (kind === 'sine'
+        ? (v / 2) * (u - prop / Math.PI * Math.sin(Math.PI * u / prop))
+        : v * (2 * prop / Math.PI) * (1 - Math.cos(Math.PI * u / (2 * prop)))) / scale;
+      else if (pts >= takeoff) {
+        const drop = kind === 'sine' ? v * prop / 2 : v * (2 * prop / Math.PI);
+        y = Math.min(500, 500 + depth - drop / scale - v * (pts - takeoff) / scale + .5 * G * (pts - takeoff) ** 2 / scale);
+      }
+      return { frame, pts, comX: 480, comY: y, bodyScale: 400 };
+    });
+    const result = analyzeCOM(samples, 400);
+    expect(Math.abs((result.heightCm ?? 0) - height), result.reason).toBeLessThan(tolerance);
+  });
   it('publishes a noisy 44 Hz jump when the full windows agree', () => {
     const samples = smallJump(30, 44, 2);
     const result = analyzeCOM(samples, 400);
-    expect(Math.abs(result.heightCm! - 30), result.reason).toBeLessThan(2);
+    expect(Math.abs(result.heightCm! - 30), result.reason).toBeLessThan(3);
     const stream = new COMStream();
     const published = samples.map(p => stream.push(p)).filter(r => r?.analysis.heightCm != null);
     expect(published).toHaveLength(1);

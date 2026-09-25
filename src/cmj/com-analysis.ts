@@ -120,12 +120,15 @@ function fitCOM(samples: readonly COMSample[], baselineScale: number, short: boo
         velocityMps: v, heightCm, metersPerUnit: scale, rmseUnits: rmse, arcRmseUnits: arc.rmse,
         transitionSensitivityCm: [heightCm, heightCm], resampledHeightsCm: [] });
     }
-    fits.sort((a, b) => a.rmseUnits - b.rmseUnits);
+    fits.sort((a, b) => a.rmseUnits - b.rmseUnits || b.transitionPts - a.transitionPts);
     return fits;
     };
     const fits = search(rows);
     if (!fits.length) { if (short) continue; return fail('PROPULSION_TRANSITION_UNRESOLVED'); }
-    const best = fits[0];
+    // An earlier splice has a longer ballistic flight, so it reads high. When
+    // several transitions fit almost as well, use the latest one.
+    const bestRmse = fits[0].rmseUnits;
+    const best = fits.filter(f => f.rmseUnits <= bestRmse + baselineScale * .0002).sort((a, b) => b.transitionPts - a.transitionPts)[0];
     // Temporal block-deletion stress test. The old fixed +0.15 px RMSE band
     // changed its meaning with image scale/sample density. Refit after removing
     // each of five interleaved 40 ms block groups instead. No confidence interval
