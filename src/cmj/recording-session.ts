@@ -11,6 +11,8 @@ import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 
 export interface RecordingOptions {
   analysis?: 'CMJ' | 'OBSERVATIONS';
+  /** RJ observation comparison only; CMJ keeps Full. */
+  observationModel?: 'full' | 'heavy';
   onSample?: (sample: COMSample) => void;
   selectPose?: PoseSelector;
   onPose?: (poses: NormalizedLandmark[][], frame: number, pts: number) => void;
@@ -33,7 +35,7 @@ export async function measureRecording(file: File, canvas: HTMLCanvasElement, si
     throw new Error('30秒以内・3600フレーム以内の動画を選んでください。');
   const rotation = trackRotation((d.videoTrack as typeof d.videoTrack & { matrix?: ArrayLike<number> }).matrix);
   const decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
-  const pose = new MobileCMJPose('full', options.selectPose);
+  const pose = new MobileCMJPose(options.analysis === 'OBSERVATIONS' ? options.observationModel ?? 'full' : 'full', options.selectPose);
   let recovery: MobileCMJPose | null = null, recoveryCanvas: HTMLCanvasElement | null = null;
   let retried = 0, recovered = 0;
   const abortDecode = () => decoder.dispose();

@@ -3,7 +3,7 @@ import { measureRecording } from '../src/cmj/recording-session';
 import type { SessionUpdate } from '../src/cmj/video-session';
 import { untilAborted } from '../src/cmj/session-lifecycle';
 
-const fake = vi.hoisted(() => ({ decode: vi.fn(), dispose: vi.fn(), estimate: vi.fn(), close: vi.fn(), cache: vi.fn(), init: vi.fn() }));
+const fake = vi.hoisted(() => ({ decode: vi.fn(), dispose: vi.fn(), estimate: vi.fn(), close: vi.fn(), cache: vi.fn(), init: vi.fn(), model: vi.fn() }));
 vi.mock('../src/frame-engine/mp4-demuxer', () => ({ demuxMP4: vi.fn(async () => ({
   frames: [0, .012, .033, .048].map((pts, frameIndex) => ({ pts, frameIndex })),
   videoTrack: {}, rawSamples: [],
@@ -12,7 +12,8 @@ vi.mock('../src/cmj/sequential-decoder', () => ({ SequentialRecordingDecoder: cl
   decodeExactFrame = fake.decode; dispose = fake.dispose; diagnostics = {};
 } }));
 vi.mock('../src/cmj/mobile-pose', () => ({ MobileCMJPose: class {
-  variant = 'full'; initialize = fake.init; estimate = fake.estimate; dispose = fake.close;
+  constructor(readonly variant = 'full') { fake.model(variant); }
+  initialize = fake.init; estimate = fake.estimate; dispose = fake.close;
 } }));
 
 const input = { size: 1000, name: 'jump.mp4' } as File;
@@ -25,6 +26,16 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('recorded source-frame analysis', () => {
+  it('uses Heavy only for an explicit observation comparison, retaining Full for CMJ', async () => {
+    for (const analysis of ['OBSERVATIONS', 'CMJ'] as const) {
+      const updates: SessionUpdate[] = [];
+      await measureRecording(input, canvas(), new AbortController().signal, s => updates.push(s), undefined,
+        { analysis, observationModel: 'heavy' });
+      const expected = analysis === 'OBSERVATIONS' ? 'heavy' : 'full';
+      expect(fake.model).toHaveBeenLastCalledWith(expected);
+      expect(updates.at(-1)?.poseModel).toBe(expected);
+    }
+  });
   it('exposes exact observations without running CMJ analysis in RJ mode', async () => {
     const samples = vi.fn(), poses = vi.fn(), updates: SessionUpdate[] = [];
     await measureRecording(input, canvas(), new AbortController().signal, s => updates.push(s), undefined,

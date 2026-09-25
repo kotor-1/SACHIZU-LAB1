@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { measureRecording, supportsExactRecording } from '../cmj/recording-session';
-import { drawPose } from '../cmj/pose-drawing';
-import { createLowerSubjectSelector, type JumpMode } from './lower-body';
+import { supportsExactRecording } from '../cmj/recording-session';
+import { type JumpMode } from './lower-body';
 import type { PoseFrame } from './prediction-observations';
-import { automaticFootSeeds, automaticFootResult, AUTOMATIC_REGION, type AutomaticFootResult } from './automatic-foot';
-import { collectPixelRows } from './pixel-recording';
-import { refineAutomaticReview } from './automatic-foot-refinement';
+import { type AutomaticFootResult } from './automatic-foot';
+import { runAutomaticFoot, type AutomaticRun } from './automatic-run';
+import { comparePoseModels, type PoseComparison } from './model-comparison';
+import PoseModelComparison from './PoseModelComparison';
 import PoseReplay from './PoseReplay';
 import './rebound.css';
 
@@ -37,46 +37,40 @@ export default function AutomaticReboundLab() {
   const [progress, setProgress] = useState(0), [message, setMessage] = useState('動画を選んで解析してください。');
   const [aspect, setAspect] = useState(9 / 16), [poses, setPoses] = useState<PoseFrame[]>([]);
   const [result, setResult] = useState<AutomaticFootResult | null>(null), [exportData, setExportData] = useState<object | null>(null);
+  const [comparison, setComparison] = useState<PoseComparison | null>(null);
+  const [comparisonRuns, setComparisonRuns] = useState<AutomaticRun[]>([]);
+  const [shownModel, setShownModel] = useState<'full' | 'heavy'>('full');
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   useEffect(() => {
     const hidden = () => { if (document.hidden) owner.current?.abort(); };
     document.addEventListener('visibilitychange', hidden);
     return () => { owner.current?.abort(); owner.current = null; document.removeEventListener('visibilitychange', hidden); };
   }, []);
-  const clear = () => { setResult(null); setExportData(null); setPoses([]); setProgress(0); };
-  async function start() {
-    if (!file || !canvas.current || busy) return;
+  const clear = () => { setResult(null); setExportData(null); setPoses([]); setProgress(0); setComparison(null); setComparisonRuns([]); setShownModel('full'); };
+  async function start(compare = false) {
+    if (!file || !canvas.current || busy || owner.current) return;
     if (!supportsExactRecording(file)) { setMessage('MOV/MP4の元動画と、元フレーム解析に対応したブラウザが必要です。'); return; }
     const control = new AbortController(); owner.current = control;
     const current = () => owner.current === control && !control.signal.aborted;
     clear(); setBusy(true); video.current?.pause();
-    const collected: PoseFrame[] = [], select = createLowerSubjectSelector(AUTOMATIC_REGION, mode);
-    let raw: PoseFrame['poses'] = [];
     try {
-      await measureRecording(file, canvas.current, control.signal, state => {
+      const models = compare ? ['full', 'heavy'] as const : ['full'] as const;
+      const runs: AutomaticRun[] = [];
+      for (const [i, model] of models.entries()) {
+        runs.push(await runAutomaticFoot(file, canvas.current, mode, model, control.signal, (p, text) => {
+          if (!current()) return;
+          setProgress(Math.round((i * 100 + p) / models.length));
+          if (canvas.current?.height) setAspect(canvas.current.width / canvas.current.height);
+          setMessage(`${compare ? `${i + 1}/2モデル ${model === 'full' ? 'Full' : 'Heavy'}：` : ''}${text}`);
+        }));
         if (!current()) return;
-        setProgress(state.totalFrames ? Math.round(state.processedFrames / state.totalFrames * 70) : 0);
-        if (canvas.current?.height) setAspect(canvas.current.width / canvas.current.height);
-        setMessage('1/2 骨格から跳躍と足元を探しています。');
-      }, text => { if (current()) setMessage(text); }, {
-        analysis: 'OBSERVATIONS', selectPose: (p, pts) => { raw = p; return select(p, pts); },
-        onPose: (p, frame, pts) => { collected.push({ frame, pts, poses: raw }); const ctx = canvas.current?.getContext('2d'); if (ctx) drawPose(ctx, p, frame, pts); },
-      });
+      }
+      const first = runs[0];
+      const compared = compare ? comparePoseModels(first.report, runs[1].report) : null;
       if (!current()) return;
-      const { selected, base } = automaticFootSeeds(collected, mode);
-      setMessage('2/2 足元の画像から離地・着地を自動判定しています。');
-      const rows = base.reason ? [] : await collectPixelRows(file, collected, AUTOMATIC_REGION, base, control.signal,
-        p => { if (current()) setProgress(70 + Math.round(p * .25)); }, mode);
-      if (!current()) return;
-      const refined = rows.length ? refineAutomaticReview(base, rows, collected, mode) : base;
-      const report = automaticFootResult(refined);
-      if (!current()) return;
-      setPoses(selected); setResult(report); setProgress(100);
-      setExportData({ ...report, file: { name: file.name, size: file.size }, mode, frames: collected.length,
-        environment: { userAgent: navigator.userAgent, secureContext: window.isSecureContext,
-          videoDecoder: typeof VideoDecoder !== 'undefined' },
-        source: 'AUTOMATIC_PIXEL_FOOT', analysis: refined, seeds: base, pixelRows: rows });
-      setMessage(report.meanRSI === null ? '解析が完了しました。算出できなかった理由を表示しています。' : '解析が完了しました。手動確認・入力なしの自動推定結果です。');
+      setPoses(first.poses); setResult(first.report); setProgress(100);
+      setComparison(compared); setComparisonRuns(compare ? runs : []); setExportData(compared ?? first.report);
+      setMessage(compared ? '比較が完了しました。FullとHeavyの採用回数・追跡・解析時間を確認してください。' : first.report.meanRSI === null ? '解析が完了しました。算出できなかった理由を表示しています。' : '解析が完了しました。手動確認・入力なしの自動推定結果です。');
     } catch (e) {
       if (owner.current === control) setMessage(control.signal.aborted ? '解析を停止しました。途中の値は表示しません。' : e instanceof Error ? e.message : String(e));
     } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
@@ -84,15 +78,19 @@ export default function AutomaticReboundLab() {
   function save() {
     if (!exportData) return;
     const objectURL = URL.createObjectURL(new Blob([JSON.stringify(exportData)], { type: 'application/json' }));
-    const a = document.createElement('a'); a.href = objectURL; a.download = 'rebound-automatic.json'; a.click(); setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
+    const a = document.createElement('a'); a.href = objectURL; a.download = comparison ? 'rebound-model-comparison.json' : 'rebound-automatic.json'; a.click(); setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
   }
   return <main className="rj-lab rj-public">
     <header><a href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><span>SACHIZU LAB</span></header>
-    <div className="rj-title"><span>REBOUND JUMP · AUTO · v3</span><h1>RJ · 入力なし自動解析</h1><p>動画を選ぶ → 解析する → 平均RSI。身長・基準物・枠・離地や着地の手動登録は不要です。</p></div>
+    <div className="rj-title"><span>REBOUND JUMP · AUTO · v3</span><h1>RJ · 入力なし自動解析</h1><p>動画を選ぶ → 解析する → 平均RSI。身長・基準物・枠・離地や着地の手動登録は不要です。</p><p>モデル比較テスト v1：Full / Heavy</p></div>
     <section className="rj-capture"><h2>動画を選ぶ</h2>
       <input type="file" accept="video/*" aria-label="RJ動画を選ぶ" disabled={busy} onChange={e => { const f = e.target.files?.[0]; if (f) { clear(); setFile(f); setUrl(URL.createObjectURL(f)); setMessage('動画を選択しました。自動解析を開始できます。'); } }} />
       <label className="rj-protocol">種目<select aria-label="RJの種目" value={mode} disabled={busy} onChange={e => { clear(); setMode(e.target.value as JumpMode); }}><option value="BOTH">両足RJ</option><option value="RIGHT">右足RJ</option><option value="LEFT">左足RJ</option></select></label>
       <p>固定カメラ・1人の全身と足元・120/240fpsの元動画を使ってください。靴と床の境界が見える向きで撮影してください。録画解析です（リアルタイムではありません）。</p>
+      {comparison && <label>骨格・下の詳細結果のモデル<select aria-label="表示する姿勢モデル" value={shownModel} onChange={e => {
+        const model = e.target.value as 'full' | 'heavy', run = comparisonRuns.find(r => r.report.poseModel === model);
+        if (run) { video.current?.pause(); setShownModel(model); setPoses(run.poses); setResult(run.report); }
+      }}><option value="full">Full（現行）</option><option value="heavy">Heavy（比較用）</option></select></label>}
       <div className="rj-viewer" style={{ maxWidth: Math.min(720, aspect * 520), aspectRatio: aspect, marginInline: 'auto' }}>
         <video ref={video} src={url || undefined} controls={!!file && !busy} playsInline muted hidden={busy} onLoadedMetadata={e => { const v = e.currentTarget; if (v.videoHeight) setAspect(v.videoWidth / v.videoHeight); }} />
         <canvas ref={canvas} hidden={!busy} aria-label="RJの解析映像・骨格・推定重心" />
@@ -100,10 +98,16 @@ export default function AutomaticReboundLab() {
       </div>
     </section>
     <button className="rj-button" disabled={!file || busy} onClick={() => void start()}>入力なしで自動解析</button>
+    <section className="rj-capture"><h2>姿勢モデルを比較する</h2>
+      <p>同じ動画をFull→Heavyの順に2回解析します。Heavyは初回約30MBの追加受信があり、数分以上かかる場合があります。画面を開いたままお待ちください。途中で停止できます。身長・手動時刻の入力は不要です。</p>
+      <button className="rj-button rj-secondary" disabled={!file || busy} onClick={() => void start(true)}>FullとHeavyを比較</button>
+    </section>
     {busy && <><progress max={100} value={progress} aria-label="解析の進捗" /><button className="rj-button rj-secondary" onClick={() => owner.current?.abort()}>解析を停止</button></>}
     <p role="status">{busy ? `${progress}% · ` : ''}{message}</p>
+    {comparison && <PoseModelComparison comparison={comparison} />}
+    {comparison && <h2>{shownModel === 'full' ? 'Full（現行）' : 'Heavy（比較用）'}の詳細結果</h2>}
     {result && <AutomaticReboundResults result={result} />}
-    {exportData && <button className="rj-button" onClick={save}>自動解析結果・診断をJSON保存</button>}
+    {exportData && <button className="rj-button" onClick={save}>{comparison ? 'Full・Heavy比較をJSON保存' : '自動解析結果・診断をJSON保存'}</button>}
     <footer>動画は端末内で処理 · 150MB / 30秒 / 3600フレーム以内 · 靴・路面・撮影条件を揃えて比較してください。</footer>
   </main>;
 }

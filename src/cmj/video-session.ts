@@ -18,7 +18,7 @@ export interface SessionUpdate {
   skippedCameraFrames?: number;
   totalFrames?: number;
   acquisition?: 'EXACT_FRAMES' | 'PLAYBACK' | 'LIVE';
-  poseModel?: 'lite' | 'full';
+  poseModel?: 'lite' | 'full' | 'heavy';
   profileReason?: string;
   processingMs?: number;
   quality?: { poseFrames: number; validFrames: number; reasons: Record<string, number>; retriedFrames?: number; recoveredFrames?: number };

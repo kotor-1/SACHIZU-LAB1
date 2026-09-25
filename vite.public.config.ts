@@ -11,7 +11,7 @@ export default defineConfig({
   plugins: [react(), {
     name: 'public-model-allowlist',
     generateBundle() {
-      for (const name of ['pose_landmarker_lite.task', 'pose_landmarker_full.task', 'README.md']) {
+      for (const name of ['pose_landmarker_lite.task', 'pose_landmarker_full.task', 'pose_landmarker_heavy.task', 'README.md']) {
         this.emitFile({ type: 'asset', fileName: `models/cmj/${name}`, source: readFileSync(resolve(import.meta.dirname, 'public/models/cmj', name)) });
       }
       this.emitFile({ type: 'asset', fileName: '.nojekyll', source: '' });

@@ -9,7 +9,10 @@ const noSimdWasm = new URL('../../node_modules/@mediapipe/tasks-vision/wasm/visi
 const noSimdLoader = new URL('../../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_nosimd_internal.js', import.meta.url).href;
 export const MOBILE_MODEL_SHA256 = '59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a';
 export const RECORDING_MODEL_SHA256 = '5134a3aad27a58b93da0088d431f366da362b44e3ccfbe3462b3827a839011b1';
-// At most Lite + Full (15 MB); never cache videos or failed/partial downloads.
+export const HEAVY_MODEL_SHA256 = '64437af838a65d18e5ba7a0d39b465540069bc8aae8308de3e318aad31fcbc7b';
+export type PoseVariant = 'lite' | 'full' | 'heavy';
+export const POSE_MODEL_HASHES = { lite: MOBILE_MODEL_SHA256, full: RECORDING_MODEL_SHA256, heavy: HEAVY_MODEL_SHA256 };
+// Heavy is loaded only for an explicit RJ comparison. No videos are cached.
 const verifiedModels = new Map<string, Uint8Array<ArrayBuffer>>();
 export type PoseSelector = (poses: NormalizedLandmark[][], pts: number) => NormalizedLandmark[][];
 export function mobileSample(points: readonly NormalizedLandmark[][], frame: number, pts: number): Sample {
@@ -22,7 +25,7 @@ export function mobileSample(points: readonly NormalizedLandmark[][], frame: num
   return { frame, pts, hipY: (p[23].y + p[24].y) * 480, footY: Math.max(p[31].y, p[32].y) * 960 };
 }
 export class MobileCMJPose {
-  constructor(readonly variant: 'lite' | 'full' = 'lite', private selectPose?: PoseSelector, private delegate: 'CPU' | 'GPU' = 'CPU') {}
+  constructor(readonly variant: PoseVariant = 'lite', private selectPose?: PoseSelector, private delegate: 'CPU' | 'GPU' = 'CPU') {}
   private model: PoseLandmarker | null = null;
   get backend(): 'CPU' | 'GPU' { return this.delegate; }
   async initialize(signal: AbortSignal, status: (message: string) => void = () => {}) {
@@ -36,7 +39,7 @@ export class MobileCMJPose {
       bytes = await downloadModel(`${import.meta.env.BASE_URL}models/cmj/pose_landmarker_${this.variant}.task`, signal, status);
       check(); status('受信した姿勢モデルを検証しています。');
       const digest = await crypto.subtle.digest('SHA-256', bytes);
-      if (Array.from(new Uint8Array(digest), v => v.toString(16).padStart(2, '0')).join('') !== (this.variant === 'lite' ? MOBILE_MODEL_SHA256 : RECORDING_MODEL_SHA256))
+      if (Array.from(new Uint8Array(digest), v => v.toString(16).padStart(2, '0')).join('') !== POSE_MODEL_HASHES[this.variant])
         throw new Error('姿勢モデルの整合性を確認できませんでした。');
       check(); verifiedModels.set(this.variant, bytes);
     }
