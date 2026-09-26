@@ -5,14 +5,14 @@ import { createLowerSubjectSelector, lowerBodySamples } from './lower-body';
 import { detectLowerPeaks, type Apex } from './waveform-fit';
 import { extractHybridCycle, fractionRSI, HYBRID_SETTINGS } from './hybrid-physics';
 
-export const TOE_CYCLE_VERSION = 'rj-toe-constrained-cycle-v1-research';
+export const TOE_CYCLE_VERSION = 'rj-toe-constrained-cycle-v2-research';
 /** Frozen engineering hypotheses, NOT experimentally validated tolerances.
  * Toe kinematics are not whole-body COM kinematics. No frame is classified as
  * contact/takeoff and no event timestamps are emitted. The internal fraction
  * still represents an assumed aerial/support duration ratio. */
 export const TOE_CYCLE_SETTINGS = {
   fractionMin: .2, fractionMax: .85, fractionStep: .005,
-  phaseMin: -.05, phaseMax: .05, phaseStep: .025,
+  phaseMin: -.15, phaseMax: .15, phaseStep: .0125,
   minimumCoverage: .95, maximumGapSeconds: .025, minimumSamples: 20,
   minimumSpanOverLeg: .04, maximumNormalizedError: .15,
   huberResidual: .05, profileNoise: .03, maximumFootFractionDifference: .15,
@@ -121,9 +121,10 @@ export function fitToeCycle(samples: readonly ToeSample[], a: Apex, b: Apex): To
     data.push({ t, y, w, span });
   }
   const left: { fraction: number; error: number }[] = [], right: { fraction: number; error: number }[] = [];
+  const phaseSteps = Math.round((TOE_CYCLE_SETTINGS.phaseMax - TOE_CYCLE_SETTINGS.phaseMin) / TOE_CYCLE_SETTINGS.phaseStep);
   for (const base of pelvis.points) {
     let best: ToePoint | null = null, leftError = Infinity, rightError = Infinity;
-    for (let k = 0; k <= 4; k++) {
+    for (let k = 0; k <= phaseSteps; k++) {
       const phase = TOE_CYCLE_SETTINGS.phaseMin + k * TOE_CYCLE_SETTINGS.phaseStep;
       const e0 = waveformError(data[0], base.fraction, phase), e1 = waveformError(data[1], base.fraction, phase);
       leftError = Math.min(leftError, e0); rightError = Math.min(rightError, e1);
@@ -156,6 +157,7 @@ export function toeCycleResult(profile: ToeCycleFit) {
   return { value: best.rsi, fraction: best.fraction, waveformError: best.error,
     profileRange: [Math.min(...near.map(p => p.rsi)), Math.max(...near.map(p => p.rsi))] as [number, number],
     boundary: best.fraction <= HYBRID_SETTINGS.fractionMin + 1e-8 || best.fraction >= HYBRID_SETTINGS.fractionMax - 1e-8,
+    phaseBoundary: best.phase <= TOE_CYCLE_SETTINGS.phaseMin + 1e-8 || best.phase >= TOE_CYCLE_SETTINGS.phaseMax - 1e-8,
     toeError: best.toeError, pelvisError: best.pelvisError, phase: best.phase };
 }
 
@@ -176,6 +178,7 @@ export function toeCycleReport(poses: readonly PoseFrame[], sourceVideoSHA256: s
     acceptedCycles: accepted.length, acceptedCycleIds: accepted.map(c => c.id),
     mean: average(accepted.map(c => c.result!.value)), partial: accepted.length < cycles.length,
     boundaryCycles: accepted.filter(c => c.result!.boundary).map(c => c.id),
+    phaseBoundaryCycles: accepted.filter(c => c.result!.phaseBoundary).map(c => c.id),
     meanProfileRange: accepted.length ? [average(accepted.map(c => c.result!.profileRange[0]))!, average(accepted.map(c => c.result!.profileRange[1]))!] as [number, number] : null,
     cycles, samples };
 }

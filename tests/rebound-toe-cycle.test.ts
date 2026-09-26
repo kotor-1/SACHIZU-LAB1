@@ -11,12 +11,12 @@ import {
 
 // Same-form synthetic trajectories check numerical implementation only. They
 // are not independent evidence that toes or pelvis obey this physical model.
-function cycle(fraction = .6, rightFraction = fraction, period = .6): ToeSample[] {
+function cycle(fraction = .6, rightFraction = fraction, period = .6, toePhase = 0): ToeSample[] {
   return Array.from({ length: 145 }, (_, frame) => ({
     frame, pts: frame / 144 * period, comX: 300,
     comY: 400 + 1200 * hybridDisplacement(frame / 144, fraction, 'HALF_SINE'), bodyScale: 200,
-    leftToeY: 600 + 70 * toeCycleDepth(frame / 144, fraction),
-    rightToeY: 620 + 90 * toeCycleDepth(frame / 144, rightFraction),
+    leftToeY: 600 + 70 * toeCycleDepth(frame / 144, fraction, toePhase),
+    rightToeY: 620 + 90 * toeCycleDepth(frame / 144, rightFraction, toePhase),
   }));
 }
 const apex = (pts: number, frame: number): Apex => ({ pts, frame, y: 400 });
@@ -69,6 +69,35 @@ describe('continuous bilateral toe-constrained cycle: implementation, not accura
     expect(profile.rightBestFraction).toBeCloseTo(fraction, 10);
     expect(result!.profileRange[0]).toBeLessThanOrEqual(result!.value);
     expect(result!.profileRange[1]).toBeGreaterThanOrEqual(result!.value);
+  });
+
+  it.each([-.15, -.075, -.0125, 0, .0125, .075, .15])(
+    'keeps the known aerial fraction when common toe phase is %s cycles', phase => {
+      const profile = fit(cycle(.6, .6, .6, phase)), result = toeCycleResult(profile);
+      expect(profile.reason).toBeNull();
+      expect(result?.phase).toBeCloseTo(phase, 10);
+      expect(result?.fraction).toBeCloseTo(.6, 10);
+      expect(result?.value).toBeCloseTo(fractionRSI(.6, .6), 10);
+      expect(result?.waveformError).toBeLessThan(1e-10);
+      // The old ±.05 range clipped phase .075 and changed fraction to .63.
+      // Recovery tests a search-range restriction, not real-video accuracy.
+    },
+  );
+
+  it.each([
+    { phase: -.15, period: .25, scale: .5 },
+    { phase: .15, period: .25, scale: 1.5 },
+    { phase: -.15, period: 1.2, scale: 1.5 },
+    { phase: .15, period: 1.2, scale: .5 },
+  ])('uses dimensionless phase at duration and phase bounds: %j', ({ phase, period, scale }) => {
+    const rows = cycle(.6, .6, period, phase).map(s => ({ ...s,
+      comX: s.comX! * scale + 10, comY: s.comY! * scale + 40, bodyScale: s.bodyScale! * scale,
+      leftToeY: s.leftToeY! * scale + 60, rightToeY: s.rightToeY! * scale - 20 }));
+    const profile = fitToeCycle(rows, apex(0, 0), apex(period, 144)), result = toeCycleResult(profile);
+    expect(profile.reason).toBeNull(); expect(result?.fraction).toBeCloseTo(.6, 10);
+    expect(result?.phase).toBeCloseTo(phase, 10);
+    expect(result!.phase * period).toBeCloseTo(phase * period, 10);
+    expect(result?.value).toBeCloseTo(fractionRSI(period, .6), 10);
   });
 
   it('preserves independent positive image scale, offsets and linear drift', () => {

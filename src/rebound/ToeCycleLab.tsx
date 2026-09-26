@@ -29,17 +29,18 @@ export function ToeCycleResults({ report: r, pelvisMean }: { report: Report; pel
       <p>RSI予測 · {r.partial ? '算出できた周期の平均' : '全周期平均'}</p>
       <strong data-testid="toe-cycle-rsi">{fmt(r.mean)} <small>m/s</small></strong>
       <p>算出 {r.acceptedCycles} / {r.totalCycles} 周期 · 認識 {r.detected} 頂点</p>
-      <p>骨盤＋つま先の連続軌跡 · 試験版</p>
+      <p>骨盤＋つま先の連続軌跡 · 試験版 v2</p>
     </div>
     {r.mean === null && <p role="alert" className="rj-warning">{reasons[r.reason ?? ''] ?? r.reason ?? 'この動画では予測を算出できませんでした。下の各周期の理由を確認してください。'} 数値を0や過去の平均で補っていません。</p>}
     {r.partial && <p className="rj-warning">全周期の平均ではありません。算出周期：{r.acceptedCycleIds.join('・') || 'なし'}。</p>}
     <p>身長入力・手動のコマ指定は不要です。離地・着地を1コマずつ確定せず、つま先が上下する軌跡全体から内部の時間割合を推定します。</p>
     <p className="rj-warning">精度未検証の予測です。つま先の動きと全身重心の動きは同じではありません。接地に相当する時間もモデル内部の推定で、測定器の実測値ではありません。</p>
     {!!r.boundaryCycles.length && <p className="rj-warning">探索範囲の端に達した周期：{r.boundaryCycles.join('・')}。この平均は特に不安定な可能性があります。</p>}
+    {!!r.phaseBoundaryCycles.length && <p className="rj-warning">骨盤とつま先のタイミング差が探索範囲の端に達した周期：{r.phaseBoundaryCycles.join('・')}。時間割合を十分に絞れていない可能性があります。</p>}
     <details><summary>各周期の値・算出できなかった理由</summary>
       <div style={{ overflowX: 'auto' }}><table className="rj-table"><thead><tr><th>頂点間</th><th>周期 秒</th><th>RSI予測</th><th>状態</th></tr></thead><tbody>
         {r.cycles.map(c => <tr key={c.id}><th>{c.id}→{c.id + 1}</th><td>{fmt(c.period, 3)}</td><td>{fmt(c.result?.value)}</td>
-          <td>{c.reason ? reasons[c.reason] ?? c.reason : c.result?.boundary ? '探索範囲の端・要注意' : 'モデル予測'}</td></tr>)}
+          <td>{c.reason ? reasons[c.reason] ?? c.reason : c.result?.boundary || c.result?.phaseBoundary ? '探索範囲の端・要注意' : 'モデル予測'}</td></tr>)}
       </tbody></table></div>
     </details>
     <details><summary>モデル候補の幅・今回の確認ポイント</summary>

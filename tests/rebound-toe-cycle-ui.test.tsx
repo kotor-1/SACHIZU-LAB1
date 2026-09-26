@@ -33,4 +33,12 @@ describe('continuous toe-cycle result presentation', () => {
     expect(component).not.toMatch(/collectPixelRows|refineAutomaticReview|automaticFootResult/);
     expect(component).toContain('cached.current?.file === file');
   });
+  it('shows the model revision and warns when the timing search hits its limit', () => {
+    const base = toeCycleReport([], 'test', 'test.mov');
+    const report = { ...base, phaseBoundaryCycles: [2, 4] };
+    const html = renderToStaticMarkup(<ToeCycleResults report={report} pelvisMean={null} />);
+    expect(html).toContain('試験版 v2');
+    expect(html).toContain('骨盤とつま先のタイミング差が探索範囲の端に達した周期：2・4');
+    expect(html).toContain('時間割合を十分に絞れていない可能性');
+  });
 });
