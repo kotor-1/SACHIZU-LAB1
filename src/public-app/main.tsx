@@ -5,6 +5,7 @@ import './public.css';
 const CMJ = lazy(() => import('../cmj/CMJLab'));
 const Sprint = lazy(() => import('../sprint10/Sprint10Lab'));
 const RJ = lazy(() => import('../rebound/AutomaticReboundLab'));
+const RJToeCycle = lazy(() => import('../rebound/ToeCycleLab'));
 const home = import.meta.env.BASE_URL;
 class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -25,5 +26,5 @@ function Home() {
 }
 const lab = new URLSearchParams(location.search).get('lab');
 createRoot(document.getElementById('root')!).render(<Boundary><Suspense fallback={<p role="status" className="public-loading">解析画面を読み込み中…</p>}>
-  {lab === 'cmj' ? <CMJ /> : lab === 'rj' ? <RJ /> : lab === 'sprint10' ? <Sprint /> : <Home />}
+  {lab === 'cmj' ? <CMJ /> : lab === 'rj' ? <RJ /> : lab === 'rj-toe-cycle' ? <RJToeCycle /> : lab === 'sprint10' ? <Sprint /> : <Home />}
 </Suspense></Boundary>);

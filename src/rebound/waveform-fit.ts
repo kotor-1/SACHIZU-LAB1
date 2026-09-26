@@ -27,7 +27,7 @@ const valid = (s: COMSample) => s.comY !== null && s.comX !== null && s.bodyScal
   [s.comY, s.comX, s.bodyScale].every(Number.isFinite);
 const emptyMetrics = (): Candidate['metrics'] => ({ mean: null, max: null, median: null, pooled: null, trimmed: null, last3: null });
 
-export function detectLowerPeaks(samples: readonly COMSample[], signal: SignalId): SignalResult {
+export function detectLowerPeaks(samples: readonly COMSample[], signal: SignalId, countPolicy: 'REFERENCE_TEN' | 'ALL' = 'REFERENCE_TEN'): SignalResult {
   const result: SignalResult = { signal, detected: 0, peaks: [], excluded: [], validFrames: samples.filter(valid).length, totalFrames: samples.length };
   const fail = (reason: string) => ({ ...result, reason });
   if (samples.length < 30) return fail('INSUFFICIENT_SAMPLES');
@@ -61,6 +61,8 @@ export function detectLowerPeaks(samples: readonly COMSample[], signal: SignalId
     }
   }
   result.detected = result.peaks.length;
+  // Opt-in for whole-recording research; retain legacy reference semantics.
+  if (countPolicy === 'ALL') return result;
   if (result.detected === 11) result.excluded = [result.peaks[10].frame];
   if (result.detected !== 10 && result.detected !== 11) return fail('JUMP_COUNT_MISMATCH');
   return result;
