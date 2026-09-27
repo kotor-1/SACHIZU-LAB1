@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { readFileSync } from 'node:fs';
-import { ToeCycleResults } from '../src/rebound/ToeCycleLab';
+import { ToeCycleResults, TOE_CYCLE_PRESENTATION_VERSION } from '../src/rebound/ToeCycleLab';
 import { toeCycleReport } from '../src/rebound/toe-cycle-research';
 
 describe('continuous toe-cycle result presentation', () => {
@@ -41,25 +41,38 @@ describe('continuous toe-cycle result presentation', () => {
     expect(html).toContain('骨盤とつま先のタイミング差が探索範囲の端に達した周期：2・4');
     expect(html).toContain('時間割合を十分に絞れていない可能性');
   });
-  it('puts the setting-dependent range in the headline and keeps the optimum secondary', () => {
+  it('puts the average RSI first and leaves the candidate range only in closed details', () => {
     const base = toeCycleReport([], 'test', 'test.mov');
     const report = { ...base, mean: 1.3602501729526453, totalCycles: 10, acceptedCycles: 10,
       meanProfileRange: [.884534319108584, 2.4094902846166955] as [number, number] };
     const html = renderToStaticMarkup(<ToeCycleResults report={report} pelvisMean={null} />);
-    expect(html).toMatch(/<strong[^>]+data-testid="toe-cycle-range"[^>]*>0.88～2.41/);
-    expect(html).toContain('各周期の最適候補の平均（参考）');
-    expect(html).toContain('<span data-testid="toe-cycle-rsi">1.36 m/s</span>');
-    expect(html).toContain('全周期を計算できても、RSIの正確さを確認した意味ではありません');
-    expect(html).toContain('表示 v3 · 推定モデルは試験版 v2のまま');
-    expect(html).toContain('この幅は信頼区間・実測誤差の上限ではありません');
-    expect(html).not.toMatch(/<strong[^>]*>1.36/);
+    const headline = html.slice(0, html.indexOf('</div>'));
+    expect(headline).toContain('平均RSI（推定）');
+    expect(headline).toContain('<strong data-testid="toe-cycle-rsi">1.36 <small>m/s</small></strong>');
+    expect(headline).toContain('計算できた周期 10 / 10');
+    expect(headline).not.toContain('候補幅'); expect(headline).not.toContain('0.88～2.41');
+    expect(html).toMatch(/<details><summary>推定の詳細（候補幅）<\/summary><p>モデル設定による候補幅：<span data-testid="toe-cycle-range">0.88～2.41 m\/s<\/span>/);
+    expect(html).toContain('信頼区間・誤差保証ではありません');
+    expect(html).toContain('精度未検証の予測です');
+    expect(html).not.toContain('表示 v3'); expect(html).not.toContain('選手の能力を比較');
+    expect(html).not.toContain('各周期の最適候補の平均（参考）');
   });
-  it('shows a range for each cycle instead of only the optimum', () => {
+  it('shows a single RSI per cycle instead of a candidate range', () => {
     const base = toeCycleReport([], 'test', 'test.mov');
     const report = { ...base, cycles: [{ id: 1, period: .58, reason: null,
       result: { value: 1.453, profileRange: [.969, 2.559], boundary: false, phaseBoundary: false } }] } as typeof base;
     const html = renderToStaticMarkup(<ToeCycleResults report={report} pelvisMean={null} />);
-    expect(html).toContain('RSI候補幅 / 参考値');
-    expect(html).toContain('0.97～2.56<br/>参考 1.45');
+    expect(html).toContain('RSI推定 m/s');
+    expect(html).toContain('<td>0.580</td><td>1.45</td>');
+    expect(html).not.toContain('0.97～2.56'); expect(html).not.toContain('参考 1.45');
+  });
+  it('changes only presentation revision and preserves saved-JSON recalculation and source provenance', () => {
+    expect(TOE_CYCLE_PRESENTATION_VERSION).toBe('rj-toe-cycle-presentation-v4');
+    const component = readFileSync('src/rebound/ToeCycleLab.tsx', 'utf8');
+    expect(component).toContain('parseToeCycleImport(text, selected.size)');
+    expect(component).toContain("origin: 'SAVED_JSON'");
+    expect(component).toContain("sourceVideoVerified: observation.origin === 'VIDEO'");
+    expect(component).toContain("version: 'rj-toe-cycle-export-v1'");
+    expect(component).toContain('toeCycleReport(observation.poses, observation.hash, observation.filename)');
   });
 });

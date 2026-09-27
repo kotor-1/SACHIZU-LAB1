@@ -12,7 +12,7 @@ import './rebound.css';
 type Report = ReturnType<typeof toeCycleReport>;
 type Observation = { file: File | null; filename: string; sourceBytes: number; hash: string;
   poses: PoseFrame[]; origin: 'VIDEO' | 'SAVED_JSON' };
-export const TOE_CYCLE_PRESENTATION_VERSION = 'rj-toe-cycle-presentation-v3';
+export const TOE_CYCLE_PRESENTATION_VERSION = 'rj-toe-cycle-presentation-v4';
 const fmt = (v: number | null | undefined, digits = 2) => v == null ? '—' : v.toFixed(digits);
 const reasons: Record<string, string> = {
   TRACKING_GAP: 'つま先の追跡が不足', TOE_TRACKING_GAP: 'つま先の追跡が不足',
@@ -30,31 +30,24 @@ const reasons: Record<string, string> = {
 export function ToeCycleResults({ report: r, pelvisMean }: { report: Report; pelvisMean: number | null }) {
   return <section aria-label="つま先軌跡によるRJ予測結果">
     <div className="rj-auto-headline">
-      <p>RSI予測 · モデル設定による候補幅</p>
-      <strong data-testid="toe-cycle-range" style={{ fontSize: 'clamp(28px, 7vw, 56px)', overflowWrap: 'anywhere' }}>
-        {r.meanProfileRange ? `${fmt(r.meanProfileRange[0])}～${fmt(r.meanProfileRange[1])}` : '—'} <small>m/s</small>
-      </strong>
-      <p>この幅は信頼区間・実測誤差の上限ではありません。選手の能力を比較できる精度は確認できていません。</p>
-      <p>各周期の最適候補の平均（参考）：<span data-testid="toe-cycle-rsi">{fmt(r.mean)} m/s</span></p>
+      <p>平均RSI（推定）</p>
+      <strong data-testid="toe-cycle-rsi">{fmt(r.mean)} <small>m/s</small></strong>
       <p>計算できた周期 {r.acceptedCycles} / {r.totalCycles} · 認識 {r.detected} 頂点</p>
-      <p>全周期を計算できても、RSIの正確さを確認した意味ではありません。</p>
-      <p>表示 v3 · 推定モデルは試験版 v2のまま</p>
     </div>
     {r.mean === null && <p role="alert" className="rj-warning">{reasons[r.reason ?? ''] ?? r.reason ?? 'この動画では予測を算出できませんでした。下の各周期の理由を確認してください。'} 数値を0や過去の平均で補っていません。</p>}
     {r.partial && <p className="rj-warning">全周期の平均ではありません。算出周期：{r.acceptedCycleIds.join('・') || 'なし'}。</p>}
-    <p>身長入力・手動のコマ指定は不要です。離地・着地を1コマずつ確定せず、つま先が上下する軌跡全体から内部の時間割合を推定します。</p>
     <p className="rj-warning">精度未検証の予測です。つま先の動きと全身重心の動きは同じではありません。接地に相当する時間もモデル内部の推定で、測定器の実測値ではありません。</p>
     {!!r.boundaryCycles.length && <p className="rj-warning">探索範囲の端に達した周期：{r.boundaryCycles.join('・')}。この平均は特に不安定な可能性があります。</p>}
     {!!r.phaseBoundaryCycles.length && <p className="rj-warning">骨盤とつま先のタイミング差が探索範囲の端に達した周期：{r.phaseBoundaryCycles.join('・')}。時間割合を十分に絞れていない可能性があります。</p>}
     <details><summary>各周期の値・算出できなかった理由</summary>
-      <div style={{ overflowX: 'auto' }}><table className="rj-table"><thead><tr><th>頂点間</th><th>周期 秒</th><th>RSI候補幅 / 参考値</th><th>状態</th></tr></thead><tbody>
-        {r.cycles.map(c => <tr key={c.id}><th>{c.id}→{c.id + 1}</th><td>{fmt(c.period, 3)}</td><td>{c.result ? <>{fmt(c.result.profileRange[0])}～{fmt(c.result.profileRange[1])}<br />参考 {fmt(c.result.value)}</> : '—'}</td>
+      <div style={{ overflowX: 'auto' }}><table className="rj-table"><thead><tr><th>頂点間</th><th>周期 秒</th><th>RSI推定 m/s</th><th>状態</th></tr></thead><tbody>
+        {r.cycles.map(c => <tr key={c.id}><th>{c.id}→{c.id + 1}</th><td>{fmt(c.period, 3)}</td><td>{fmt(c.result?.value)}</td>
           <td>{c.reason ? reasons[c.reason] ?? c.reason : c.result?.boundary || c.result?.phaseBoundary ? '探索範囲の端・要注意' : 'モデル予測'}</td></tr>)}
       </tbody></table></div>
     </details>
-    <details><summary>モデル候補の幅・今回の確認ポイント</summary>
-      <p>各周期の候補下限・上限を平均した範囲：{fmt(r.meanProfileRange?.[0])}～{fmt(r.meanProfileRange?.[1])} m/s。モデル設定に依存する幅で、信頼区間・誤差保証ではありません。</p>
-      <p>まず認識した頂点数が動画の跳躍回数と合うか、算出周期がいくつかを確認してください。同じ動画で再解析し、保存したJSONと一緒に結果を比較できます。</p>
+    <details><summary>推定の詳細（候補幅）</summary>
+      <p>モデル設定による候補幅：<span data-testid="toe-cycle-range">{r.meanProfileRange ? `${fmt(r.meanProfileRange[0])}～${fmt(r.meanProfileRange[1])}` : '—'} m/s</span>。</p>
+      <p>各周期の候補下限・上限を平均した範囲です。信頼区間・誤差保証ではありません。推定モデル：試験版 v2。</p>
     </details>
     <details><summary>従来の骨盤モデルとの違い</summary>
       <p>同じ骨格データの従来モデル：{fmt(pelvisMean)} m/s。新方式と採用周期が異なる場合があります。高い方を正解として選んだり、両者を混ぜたりしていません。</p>
@@ -143,7 +136,7 @@ export default function ToeCycleLab() {
         result, pelvisComparison: baseline, inputProvenance: { kind: observation.origin, sourceVideoVerified: observation.origin === 'VIDEO' },
         observationModel: 'full', manualInputsUsed: false, videoUploaded: false, poses: observation.poses,
         environment: { userAgent: navigator.userAgent, sourceFrames: observation.poses.length, sourceBytes: observation.sourceBytes } });
-      setMessage(`解析完了（${Math.round((performance.now() - started) / 1000)}秒）${reused ? ' · 骨格の再取得なし' : ''}。${result.mean === null ? '算出できなかった理由を確認してください。' : '候補幅と参考値を表示しました。精度確認ではありません。'}`);
+      setMessage(`解析完了（${Math.round((performance.now() - started) / 1000)}秒）${reused ? ' · 骨格の再取得なし' : ''}。${result.mean === null ? '算出できなかった理由を確認してください。' : '平均RSIを表示しました。精度未検証の推定値です。'}`);
     } catch (e) {
       if (owner.current === control) setMessage(control.signal.aborted ? '停止しました。途中の結果は表示しません。' : e instanceof Error ? e.message : String(e));
     } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
@@ -156,7 +149,7 @@ export default function ToeCycleLab() {
   }
   return <main className="rj-lab rj-public">
     <header><a href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><span>SACHIZU LAB · RJ TEST</span></header>
-    <div className="rj-title"><span>RJ · 連続軌跡モデル</span><h1>両足RJ · 自動予測</h1><p>動画または保存済みJSONから、モデルの候補幅と参考値を確認します。身長・基準物・接地や離地の手動指定は不要です。</p></div>
+    <div className="rj-title"><span>RJ · 連続軌跡モデル</span><h1>両足RJ · 自動予測</h1><p>動画または保存済みJSONから、平均RSIを推定します。身長・基準物・手動のコマ指定は不要です。</p></div>
     <section className="rj-capture"><h2>動画を選ぶ</h2>
       <input ref={videoInput} type="file" accept="video/*" aria-label="つま先軌跡RJの動画を選ぶ" disabled={busy} onChange={e => {
         const f = e.target.files?.[0] ?? null; cached.current = null; clear(); setSavedSource(null); setFile(f); setUrl(f ? URL.createObjectURL(f) : '');
