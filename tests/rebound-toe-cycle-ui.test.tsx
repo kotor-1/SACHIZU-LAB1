@@ -37,7 +37,8 @@ describe('continuous toe-cycle result presentation', () => {
     const base = toeCycleReport([], 'test', 'test.mov');
     const report = { ...base, phaseBoundaryCycles: [2, 4] };
     const html = renderToStaticMarkup(<ToeCycleResults report={report} pelvisMean={null} />);
-    expect(html).toContain('試験版 v2');
+    expect(html).toContain('試験版 v3');
+    expect(html).toContain('計算モデル v3 · 左右別の軌跡を使用');
     expect(html).toContain('骨盤とつま先のタイミング差が探索範囲の端に達した周期：2・4');
     expect(html).toContain('時間割合を十分に絞れていない可能性');
   });
@@ -66,8 +67,8 @@ describe('continuous toe-cycle result presentation', () => {
     expect(html).toContain('<td>0.580</td><td>1.45</td>');
     expect(html).not.toContain('0.97～2.56'); expect(html).not.toContain('参考 1.45');
   });
-  it('changes only presentation revision and preserves saved-JSON recalculation and source provenance', () => {
-    expect(TOE_CYCLE_PRESENTATION_VERSION).toBe('rj-toe-cycle-presentation-v4');
+  it('identifies the new model while preserving saved-JSON recalculation and source provenance', () => {
+    expect(TOE_CYCLE_PRESENTATION_VERSION).toBe('rj-toe-cycle-presentation-v5');
     const component = readFileSync('src/rebound/ToeCycleLab.tsx', 'utf8');
     expect(component).toContain('parseToeCycleImport(text, selected.size)');
     expect(component).toContain("origin: 'SAVED_JSON'");

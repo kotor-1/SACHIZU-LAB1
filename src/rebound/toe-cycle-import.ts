@@ -9,7 +9,7 @@ const MAX_FRAMES = 3600;
 const MAX_DURATION_SECONDS = 30;
 const MAX_SOURCE_BYTES = 150 * 1024 * 1024;
 const EXPORT_VERSION = 'rj-toe-cycle-export-v1';
-const RESULT_VERSIONS = ['rj-toe-constrained-cycle-v1-research', 'rj-toe-constrained-cycle-v2-research'] as const;
+const RESULT_VERSIONS = ['rj-toe-constrained-cycle-v1-research', 'rj-toe-constrained-cycle-v2-research', 'rj-toe-constrained-cycle-v3-research'] as const;
 type SavedResultVersion = typeof RESULT_VERSIONS[number];
 
 export type ToeCycleImportErrorCode = 'IMPORT_TOO_LARGE' | 'IMPORT_INVALID_BYTE_LENGTH' |

@@ -12,7 +12,7 @@ import './rebound.css';
 type Report = ReturnType<typeof toeCycleReport>;
 type Observation = { file: File | null; filename: string; sourceBytes: number; hash: string;
   poses: PoseFrame[]; origin: 'VIDEO' | 'SAVED_JSON' };
-export const TOE_CYCLE_PRESENTATION_VERSION = 'rj-toe-cycle-presentation-v4';
+export const TOE_CYCLE_PRESENTATION_VERSION = 'rj-toe-cycle-presentation-v5';
 const fmt = (v: number | null | undefined, digits = 2) => v == null ? '—' : v.toFixed(digits);
 const reasons: Record<string, string> = {
   TRACKING_GAP: 'つま先の追跡が不足', TOE_TRACKING_GAP: 'つま先の追跡が不足',
@@ -23,6 +23,7 @@ const reasons: Record<string, string> = {
   LEFT_TOE_INSUFFICIENT_MOTION: '左つま先の上下動が小さい', RIGHT_TOE_INSUFFICIENT_MOTION: '右つま先の上下動が小さい',
   TOE_WAVEFORM_MISMATCH: 'つま先の軌跡がモデルと合わない', TOES_DISAGREE: '左右のつま先で推定が一致しない',
   TOE_WAVEFORM_UNIDENTIFIABLE: 'つま先の軌跡から時間割合を絞れない', LOWER_SCALE_UNAVAILABLE: '下肢の追跡が不足',
+  BILATERAL_FLIGHT_UNRESOLVED: '左右の軌跡から共通の空中区間を推定できない',
   LOWER_POINTS_UNAVAILABLE: '下肢の追跡が不足', INSUFFICIENT_SAMPLES: '動画のコマ数が不足',
   PELVIS_TRACKING_GAP: '骨盤の追跡が不足', PELVIS_WAVEFORM_MISMATCH: '骨盤の軌跡がモデルと合わない',
   PELVIS_SUBJECT_DRIFT: '対象者の横移動が大きい', PELVIS_INSUFFICIENT_EXCURSION: '骨盤の上下動が小さい',
@@ -33,6 +34,7 @@ export function ToeCycleResults({ report: r, pelvisMean }: { report: Report; pel
       <p>平均RSI（推定）</p>
       <strong data-testid="toe-cycle-rsi">{fmt(r.mean)} <small>m/s</small></strong>
       <p>計算できた周期 {r.acceptedCycles} / {r.totalCycles} · 認識 {r.detected} 頂点</p>
+      <p data-testid="toe-cycle-model">計算モデル v3 · 左右別の軌跡を使用</p>
     </div>
     {r.mean === null && <p role="alert" className="rj-warning">{reasons[r.reason ?? ''] ?? r.reason ?? 'この動画では予測を算出できませんでした。下の各周期の理由を確認してください。'} 数値を0や過去の平均で補っていません。</p>}
     {r.partial && <p className="rj-warning">全周期の平均ではありません。算出周期：{r.acceptedCycleIds.join('・') || 'なし'}。</p>}
@@ -47,7 +49,8 @@ export function ToeCycleResults({ report: r, pelvisMean }: { report: Report; pel
     </details>
     <details><summary>推定の詳細（候補幅）</summary>
       <p>モデル設定による候補幅：<span data-testid="toe-cycle-range">{r.meanProfileRange ? `${fmt(r.meanProfileRange[0])}～${fmt(r.meanProfileRange[1])}` : '—'} m/s</span>。</p>
-      <p>各周期の候補下限・上限を平均した範囲です。信頼区間・誤差保証ではありません。推定モデル：試験版 v2。</p>
+      <p>各周期の候補下限・上限を平均した範囲です。信頼区間・誤差保証ではありません。推定モデル：試験版 v3。</p>
+      <p>左右のつま先に同じ動きを仮定せず、別々に当てはめた空中区間の共通部分を計算に使います。候補幅には左右の時間割合とタイミング差の両方を含めます。数値が低くなることだけで精度が高いとは判断できません。</p>
     </details>
     <details><summary>従来の骨盤モデルとの違い</summary>
       <p>同じ骨格データの従来モデル：{fmt(pelvisMean)} m/s。新方式と採用周期が異なる場合があります。高い方を正解として選んだり、両者を混ぜたりしていません。</p>
@@ -149,7 +152,7 @@ export default function ToeCycleLab() {
   }
   return <main className="rj-lab rj-public">
     <header><a href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><span>SACHIZU LAB · RJ TEST</span></header>
-    <div className="rj-title"><span>RJ · 連続軌跡モデル</span><h1>両足RJ · 自動予測</h1><p>動画または保存済みJSONから、平均RSIを推定します。身長・基準物・手動のコマ指定は不要です。</p></div>
+    <div className="rj-title"><span>RJ · 連続軌跡モデル v3</span><h1>両足RJ · 自動予測</h1><p>動画または保存済みJSONから、平均RSIを推定します。身長・基準物・手動のコマ指定は不要です。</p></div>
     <section className="rj-capture"><h2>動画を選ぶ</h2>
       <input ref={videoInput} type="file" accept="video/*" aria-label="つま先軌跡RJの動画を選ぶ" disabled={busy} onChange={e => {
         const f = e.target.files?.[0] ?? null; cached.current = null; clear(); setSavedSource(null); setFile(f); setUrl(f ? URL.createObjectURL(f) : '');

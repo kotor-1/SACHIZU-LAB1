@@ -22,7 +22,7 @@ function failure(text: string, code: ToeCycleImportErrorCode, bytes?: number) {
 function altered(change: (value: Saved) => void) { const value = saved(); change(value); return JSON.stringify(value); }
 
 describe('saved toe-cycle observation import, without trusting stored results', () => {
-  it.each(['rj-toe-constrained-cycle-v1-research', 'rj-toe-constrained-cycle-v2-research'])(
+  it.each(['rj-toe-constrained-cycle-v1-research', 'rj-toe-constrained-cycle-v2-research', 'rj-toe-constrained-cycle-v3-research'])(
     'accepts %s observations and returns no saved result or video verification', version => {
       const input = saved(version), text = JSON.stringify(input), result = parseToeCycleImport(text, new TextEncoder().encode(text).byteLength);
       expect(result).toEqual({ filename: input.result.filename, sourceBytes: 1024, sourceVideoSHA256: 'a'.repeat(64),

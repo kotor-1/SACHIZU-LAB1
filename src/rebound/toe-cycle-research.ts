@@ -4,8 +4,9 @@ import type { PoseFrame } from './prediction-observations';
 import { createLowerSubjectSelector, lowerBodySamples } from './lower-body';
 import { detectLowerPeaks, type Apex } from './waveform-fit';
 import { extractHybridCycle, fractionRSI, HYBRID_SETTINGS } from './hybrid-physics';
+import { bilateralFlightLobe, bilateralFlightFraction, bilateralFlightRange } from './bilateral-flight';
 
-export const TOE_CYCLE_VERSION = 'rj-toe-constrained-cycle-v2-research';
+export const TOE_CYCLE_VERSION = 'rj-toe-constrained-cycle-v3-research';
 /** Frozen engineering hypotheses, NOT experimentally validated tolerances.
  * Toe kinematics are not whole-body COM kinematics. No frame is classified as
  * contact/takeoff and no event timestamps are emitted. The internal fraction
@@ -21,9 +22,13 @@ export interface ToeSample extends COMSample { leftToeY: number | null; rightToe
 interface Data { t: number[]; y: number[]; w: number[]; span: number }
 export interface ToePoint { fraction: number; rsi: number; error: number; toeError: number;
   pelvisError: number; phase: number; leftError: number; rightError: number }
+export interface ToeFootPoint { fraction: number; phase: number; error: number }
 export interface ToeCycleFit {
+  // points retains the previous synchronized-foot fit for auditing only.
   points: ToePoint[]; reason: string | null; coverage: [number, number];
   spansOverLeg: [number, number]; leftBestFraction: number | null; rightBestFraction: number | null;
+  period: number | null; footPoints: [ToeFootPoint[], ToeFootPoint[]];
+  commonProfileRange: [number, number] | null;
 }
 const average = (x: readonly number[]) => x.length ? x.reduce((a, b) => a + b, 0) / x.length : null;
 const quantile = (x: readonly number[], q: number) => [...x].sort((a, b) => a - b)[Math.floor((x.length - 1) * q)];
@@ -91,7 +96,7 @@ function waveformError(data: Data, fraction: number, phase: number): number {
 
 export function fitToeCycle(samples: readonly ToeSample[], a: Apex, b: Apex): ToeCycleFit {
   const out: ToeCycleFit = { points: [], reason: null, coverage: [0, 0], spansOverLeg: [0, 0],
-    leftBestFraction: null, rightBestFraction: null };
+    leftBestFraction: null, rightBestFraction: null, period: null, footPoints: [[], []], commonProfileRange: null };
   const fail = (reason: string) => ({ ...out, reason });
   if (samples.some((s, i) => !Number.isFinite(s.pts) || s.pts < 0 || !Number.isInteger(s.frame) || s.frame < 0 ||
     (i > 0 && (s.pts <= samples[i - 1].pts || s.frame <= samples[i - 1].frame)))) return fail('INVALID_TIMELINE');
@@ -99,6 +104,7 @@ export function fitToeCycle(samples: readonly ToeSample[], a: Apex, b: Apex): To
     (s.bodyScale !== null && !(s.bodyScale > 0)))) return fail('INVALID_OBSERVATIONS');
   const period = b.pts - a.pts;
   if (!(period >= .25 && period <= 1.2)) return fail('PERIOD_OUT_OF_RANGE');
+  out.period = period;
   const pelvis = extractHybridCycle(samples, a, b);
   if (pelvis.reason) return fail('PELVIS_' + pelvis.reason);
   const all = samples.filter(s => s.pts >= a.pts && s.pts <= b.pts);
@@ -118,19 +124,35 @@ export function fitToeCycle(samples: readonly ToeSample[], a: Apex, b: Apex): To
     out.spansOverLeg[side] = span / leg;
     if (!(span >= TOE_CYCLE_SETTINGS.minimumSpanOverLeg * leg)) return fail(side === 0 ? 'LEFT_TOE_INSUFFICIENT_MOTION' : 'RIGHT_TOE_INSUFFICIENT_MOTION');
     const w = t.map((_, j) => ((t[j + 1] ?? t[j]) - (t[j - 1] ?? t[j])) / 2);
+    // A large linear drift is not jumping. The fit removes that drift, so
+    // require the existing minimum excursion after removing it as well.
+    const sw = w.reduce((a, b) => a + b, 0);
+    const mt = t.reduce((s, v, i) => s + w[i] * v, 0) / sw;
+    const my = y.reduce((s, v, i) => s + w[i] * v, 0) / sw;
+    const tt = t.reduce((s, v, i) => s + w[i] * (v - mt) ** 2, 0);
+    const slope = t.reduce((s, v, i) => s + w[i] * (v - mt) * (y[i] - my), 0) / tt;
+    const detrended = y.map((v, i) => v - my - slope * (t[i] - mt));
+    if (quantile(detrended, .95) - quantile(detrended, .05) < TOE_CYCLE_SETTINGS.minimumSpanOverLeg * leg)
+      return fail(side === 0 ? 'LEFT_TOE_INSUFFICIENT_MOTION' : 'RIGHT_TOE_INSUFFICIENT_MOTION');
     data.push({ t, y, w, span });
   }
-  const left: { fraction: number; error: number }[] = [], right: { fraction: number; error: number }[] = [];
+  const surfaces: [ToeFootPoint[], ToeFootPoint[]] = [[], []];
   const phaseSteps = Math.round((TOE_CYCLE_SETTINGS.phaseMax - TOE_CYCLE_SETTINGS.phaseMin) / TOE_CYCLE_SETTINGS.phaseStep);
   for (const base of pelvis.points) {
-    let best: ToePoint | null = null, leftError = Infinity, rightError = Infinity;
+    let best: ToePoint | null = null;
+    const footBest: [ToeFootPoint | null, ToeFootPoint | null] = [null, null];
     for (let k = 0; k <= phaseSteps; k++) {
       const phase = TOE_CYCLE_SETTINGS.phaseMin + k * TOE_CYCLE_SETTINGS.phaseStep;
       const e0 = waveformError(data[0], base.fraction, phase), e1 = waveformError(data[1], base.fraction, phase);
-      leftError = Math.min(leftError, e0); rightError = Math.min(rightError, e1);
+      [e0, e1].forEach((error, side) => {
+        if (!Number.isFinite(error)) return;
+        const point = { fraction: base.fraction, phase, error };
+        surfaces[side].push(point);
+        if (!footBest[side] || error < footBest[side]!.error) footBest[side] = point;
+      });
       const toeError = Math.sqrt((e0 * e0 + e1 * e1) / 2);
-      // Equal normalized residual contribution; the model cannot be adjusted
-      // using the manual-app target. Both toes share the same fraction/phase.
+      // Preserve the v2 synchronized fit as a diagnostic. V3 does not use
+      // its shared fraction/phase to calculate the headline RSI.
       const error = Math.sqrt((toeError * toeError + base.error * base.error) / 2);
       if (Number.isFinite(error) && (!best || error < best.error)) best = {
         fraction: base.fraction, rsi: fractionRSI(period, base.fraction), error, toeError,
@@ -138,27 +160,45 @@ export function fitToeCycle(samples: readonly ToeSample[], a: Apex, b: Apex): To
       };
     }
     if (best) out.points.push(best);
-    if (Number.isFinite(leftError)) left.push({ fraction: base.fraction, error: leftError });
-    if (Number.isFinite(rightError)) right.push({ fraction: base.fraction, error: rightError });
+    footBest.forEach((p, side) => { if (p) out.footPoints[side].push(p); });
   }
   if (!out.points.length) return fail('TOE_WAVEFORM_UNIDENTIFIABLE');
-  out.leftBestFraction = left.reduce((a, b) => a.error <= b.error ? a : b).fraction;
-  out.rightBestFraction = right.reduce((a, b) => a.error <= b.error ? a : b).fraction;
+  if (out.footPoints.some(points => !points.length)) return fail('TOE_WAVEFORM_UNIDENTIFIABLE');
+  const feet = out.footPoints.map(points => points.reduce((a, b) => a.error <= b.error ? a : b));
+  out.leftBestFraction = feet[0].fraction;
+  out.rightBestFraction = feet[1].fraction;
   const best = out.points.reduce((a, b) => a.error <= b.error ? a : b);
   if (best.leftError > TOE_CYCLE_SETTINGS.maximumNormalizedError || best.rightError > TOE_CYCLE_SETTINGS.maximumNormalizedError) return fail('TOE_WAVEFORM_MISMATCH');
   if (Math.abs(out.leftBestFraction - out.rightBestFraction) > TOE_CYCLE_SETTINGS.maximumFootFractionDifference + 1e-8) return fail('TOES_DISAGREE');
+  const common = bilateralFlightFraction(feet[0], feet[1]);
+  if (common === null) return fail('BILATERAL_FLIGHT_UNRESOLVED');
+  // Include phase as well as duration alternatives in the sensitivity range.
+  // Full surfaces are transient: only per-fraction optima are exported, so
+  // long recordings do not balloon beyond the bounded JSON import size.
+  const near = surfaces.map((points, side) => points.filter(p =>
+    p.error ** 2 <= feet[side].error ** 2 + TOE_CYCLE_SETTINGS.profileNoise ** 2));
+  const range = bilateralFlightRange(near[0], near[1], TOE_CYCLE_SETTINGS.maximumFootFractionDifference);
+  if (!range) return fail('BILATERAL_FLIGHT_UNRESOLVED');
+  const lower = Math.min(common, range[0]), upper = Math.max(common, range[1]);
+  out.commonProfileRange = [fractionRSI(period, lower), fractionRSI(period, upper)];
   return out;
 }
 
 export function toeCycleResult(profile: ToeCycleFit) {
-  if (profile.reason || !profile.points.length) return null;
-  const best = profile.points.reduce((a, b) => a.error <= b.error ? a : b);
-  const near = profile.points.filter(p => p.error ** 2 <= best.error ** 2 + TOE_CYCLE_SETTINGS.profileNoise ** 2);
-  return { value: best.rsi, fraction: best.fraction, waveformError: best.error,
-    profileRange: [Math.min(...near.map(p => p.rsi)), Math.max(...near.map(p => p.rsi))] as [number, number],
-    boundary: best.fraction <= HYBRID_SETTINGS.fractionMin + 1e-8 || best.fraction >= HYBRID_SETTINGS.fractionMax - 1e-8,
-    phaseBoundary: best.phase <= TOE_CYCLE_SETTINGS.phaseMin + 1e-8 || best.phase >= TOE_CYCLE_SETTINGS.phaseMax - 1e-8,
-    toeError: best.toeError, pelvisError: best.pelvisError, phase: best.phase };
+  if (profile.reason || !profile.points.length || profile.period === null || !profile.commonProfileRange || profile.footPoints.some(p => !p.length)) return null;
+  const feet = profile.footPoints.map(points => points.reduce((a, b) => a.error <= b.error ? a : b));
+  const common = bilateralFlightLobe(feet[0], feet[1]);
+  if (!common) return null;
+  const previous = profile.points.reduce((a, b) => a.error <= b.error ? a : b);
+  const toeError = Math.hypot(feet[0].error, feet[1].error) / Math.SQRT2;
+  return { value: fractionRSI(profile.period, common.fraction), fraction: common.fraction, waveformError: toeError,
+    profileRange: profile.commonProfileRange,
+    boundary: feet.some(p => p.fraction <= HYBRID_SETTINGS.fractionMin + 1e-8 || p.fraction >= HYBRID_SETTINGS.fractionMax - 1e-8),
+    phaseBoundary: feet.some(p => p.phase <= TOE_CYCLE_SETTINGS.phaseMin + 1e-8 || p.phase >= TOE_CYCLE_SETTINGS.phaseMax - 1e-8),
+    toeError, phase: common.phase,
+    footFractions: [feet[0].fraction, feet[1].fraction] as [number, number],
+    footPhases: [feet[0].phase, feet[1].phase] as [number, number],
+    previousSynchronizedValue: previous.rsi };
 }
 
 export function toeCycleReport(poses: readonly PoseFrame[], sourceVideoSHA256: string, filename: string) {
@@ -172,6 +212,8 @@ export function toeCycleReport(poses: readonly PoseFrame[], sourceVideoSHA256: s
   return { version: TOE_CYCLE_VERSION, filename, sourceVideoSHA256,
     validated: false, manualInputsUsed: false, observedContactEventsUsed: false, populationCorrectionUsed: false,
     internallyEstimatedSupportFraction: true, signal: 'PELVIS_WITH_CONTINUOUS_BILATERAL_TOE_TRAJECTORIES' as const,
+    footCombination: 'INTERSECTION_OF_INDEPENDENT_TOE_LOBES' as const,
+    profileRangeMethod: 'INDEPENDENT_FOOT_DURATION_AND_PHASE_GRID_SENSITIVITY' as const,
     aggregation: 'MEAN_OF_CALCULABLE_ADJACENT_APEX_CYCLES' as const,
     settings: TOE_CYCLE_SETTINGS, detected: found.detected, peaks: found.peaks,
     reason: found.reason ?? (found.detected < 2 ? 'INSUFFICIENT_PEAKS' : null), totalCycles: cycles.length,

@@ -156,6 +156,13 @@ describe('continuous bilateral toe-constrained cycle: implementation, not accura
     expect(toeCycleResult(profile)).toBeNull();
   });
 
+  it('does not mistake a monotonic drift with negligible oscillation for a jump', () => {
+    const rows = cycle().map(s => ({ ...s, leftToeY: 500 + 80 * s.pts + 1e-6 * toeCycleDepth(s.pts / .6, .6) }));
+    const profile = fit(rows);
+    expect(profile.reason).toBe('LEFT_TOE_INSUFFICIENT_MOTION');
+    expect(toeCycleResult(profile)).toBeNull();
+  });
+
   it('rejects nonfinite observations, invalid period, and missing or negative body scale', () => {
     for (const value of [NaN, Infinity, -Infinity]) {
       expect(toeCycleResult(fit(cycle().map(s => ({ ...s, leftToeY: value }))))).toBeNull();
