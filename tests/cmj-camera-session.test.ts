@@ -63,4 +63,22 @@ describe('live camera rotation', () => {
     expect(fake.push).not.toHaveBeenCalled();
     video.dispatchEvent(new Event('ended')); await pending;
   });
+  it('assigns unique result IDs across stream resets on camera rotation', async () => {
+    const win = Object.assign(new EventTarget(), { screen: {} }); vi.stubGlobal('window', win);
+    vi.stubGlobal('document', { createElement: () => ({ width: 0, height: 0, getContext: () => ({ drawImage: fake.draw }) }) });
+    let next!: VideoFrameRequestCallback;
+    const video = Object.assign(new EventTarget(), { videoWidth: 480, videoHeight: 640, playbackRate: 1,
+      requestVideoFrameCallback: (fn: VideoFrameRequestCallback) => { next = fn; return 1; },
+      cancelVideoFrameCallback: vi.fn(), play: vi.fn(async () => {}), pause: vi.fn() });
+    fake.push.mockReturnValue({ id: 1, analysis: { heightCm: 30 } });
+    const updates: SessionUpdate[] = [];
+    const pending = measureVideo(video as unknown as HTMLVideoElement, 'camera', new AbortController().signal, s => updates.push(s));
+    await vi.waitFor(() => expect(next).toBeTypeOf('function'));
+    next(1000, { mediaTime: 1 } as VideoFrameCallbackMetadata);
+    next(1050, { mediaTime: 1.05 } as VideoFrameCallbackMetadata);
+    win.dispatchEvent(new Event('orientationchange'));
+    next(1100, { mediaTime: 1.1 } as VideoFrameCallbackMetadata);
+    expect(updates.at(-1)?.results.map(result => result.id)).toEqual([1, 2]);
+    video.dispatchEvent(new Event('ended')); await pending;
+  });
 });

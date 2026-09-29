@@ -1,18 +1,39 @@
-/** Choose once, before readiness. Never splice different models into a jump.
- * 25 ms is an inference budget, not a guaranteed camera sampling rate. */
+export type LiveProfileReason = 'CHECKING_FULL' | 'FULL_WITHIN_BUDGET' | 'FULL_SLOW_SWITCH_PENDING' | 'LITE_FOR_SPEED';
+export interface LiveProfileObservation {
+  /** Previous accepted frame: snapshot start through the worker reply. This
+   * includes copying/transfer, not camera cadence or time waiting for a frame. */
+  previousProcessingMs?: number | null;
+  /** Only before preparation or after a completed movement. */
+  canSwitch?: boolean;
+}
+/** A one-way Full -> Lite profile. A slow frame alone cannot change models;
+ * repeated full-path processing costs are checked without splicing a jump.
+ * 25 ms remains a processing budget, not a promise of a camera frame rate. */
 export class LiveProfile {
   private times: number[] = [];
+  private lite = false;
+  private pendingLite = false;
   ready = false;
-  reason: 'CHECKING_FULL' | 'FULL_WITHIN_BUDGET' | 'LITE_FOR_SPEED' = 'CHECKING_FULL';
-  observe(inferenceMs: number, people: number): 'wait' | 'ready' | 'lite' {
-    if (this.ready) return 'ready';
-    if (people !== 1 || !Number.isFinite(inferenceMs) || inferenceMs < 0) return 'wait';
-    this.times.push(inferenceMs);
-    if (this.times.length < 12) return 'wait';
-    this.ready = true;
-    const sorted = [...this.times].sort((a, b) => a - b);
-    const median = (sorted[5] + sorted[6]) / 2;
-    this.reason = median <= 25 ? 'FULL_WITHIN_BUDGET' : 'LITE_FOR_SPEED';
-    return median <= 25 ? 'ready' : 'lite';
+  reason: LiveProfileReason = 'CHECKING_FULL';
+  resetTiming() { this.times = []; }
+  observe(inferenceMs: number, people: number, observation: LiveProfileObservation = {}): 'wait' | 'ready' | 'lite' {
+    if (this.lite) return 'ready';
+    if (people !== 1 || !Number.isFinite(inferenceMs) || inferenceMs < 0) return this.ready ? 'ready' : 'wait';
+    const canSwitch = observation.canSwitch ?? !this.ready;
+    const previous = observation.previousProcessingMs;
+    const cost = previous != null && Number.isFinite(previous) && previous >= 0 ? Math.max(inferenceMs, previous) : inferenceMs;
+    this.times.push(cost);
+    if (this.times.length > 12) this.times.shift();
+    if (this.times.length === 12) {
+      const sorted = [...this.times].sort((a, b) => a - b);
+      this.pendingLite ||= (sorted[5] + sorted[6]) / 2 > 25;
+      this.ready = true;
+      this.reason = this.pendingLite ? 'FULL_SLOW_SWITCH_PENDING' : 'FULL_WITHIN_BUDGET';
+    }
+    if (this.pendingLite && canSwitch) {
+      this.lite = true; this.pendingLite = false; this.reason = 'LITE_FOR_SPEED';
+      return 'lite';
+    }
+    return this.ready ? 'ready' : 'wait';
   }
 }

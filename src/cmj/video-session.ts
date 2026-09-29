@@ -1,5 +1,5 @@
 import { MobileCMJPose } from './mobile-pose';
-import { COMStream, type COMPhase, type COMResult } from './com-stream';
+import { COMStream, type COMPhase, type COMResult, type COMStreamDiagnostics } from './com-stream';
 import { untilAborted } from './session-lifecycle';
 import { CameraClock } from './camera-clock';
 
@@ -20,6 +20,9 @@ export interface SessionUpdate {
   acquisition?: 'EXACT_FRAMES' | 'PLAYBACK' | 'LIVE';
   poseModel?: 'lite' | 'full' | 'heavy';
   profileReason?: string;
+  modelWarmingUp?: boolean;
+  streamDiagnostics?: COMStreamDiagnostics;
+  frameProcessingMs?: number;
   processingMs?: number;
   quality?: { poseFrames: number; validFrames: number; reasons: Record<string, number>; retriedFrames?: number; recoveredFrames?: number };
   decodeDiagnostics?: { submittedSamples: number; emittedFrames: number; maxRetainedFrames: number; configureCount: number };
@@ -85,16 +88,18 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
       const error = () => { clean(); reject(new Error('動画を再生できません。この端末が対応する録画形式を選んでください。')); };
       const seek = () => { clean(); reject(new Error('再生位置が変わったため計測を終了しました。最初から再計測してください。')); };
       const ended = () => {
-        const final = stream.end(); if (final) results.push(final);
+        const diagnostics = stream.diagnostics;
+        const final = stream.end(); if (final) results.push({ ...final, id: (results.at(-1)?.id ?? 0) + 1 });
         update({ phase: 'PREPARING', results: [...results], backend: pose.backend, processedFrames: frame,
           sourcePts: lastPts, inferenceMs: averageMs, playbackRate: video.playbackRate, slowDevice: false, landmarks: [], com: null, observationReason: null,
           acquisition: mode === 'camera' ? 'LIVE' : 'PLAYBACK', poseModel: pose.variant,
+          streamDiagnostics: diagnostics,
           quality: { poseFrames, validFrames, reasons: Object.fromEntries(observationFailures) } });
         clean(); resolve({ resultCount: results.length,
           estimateCount: results.filter(result => result.analysis.heightCm !== null).length,
           reason: results.length ? results.at(-1)!.analysis.reason ?? null : (validFrames < frame / 2
             ? [...observationFailures].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'COM_TRACKING_LOST'
-            : prepared ? 'NO_JUMP_DETECTED' : 'PREPARATION_NOT_CONFIRMED') });
+            : diagnostics?.observationReason ?? (prepared ? 'NO_JUMP_DETECTED' : 'PREPARATION_NOT_CONFIRMED')) });
       };
       const next = (now: number, meta: VideoFrameCallbackMetadata) => {
         try {
@@ -112,7 +117,7 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
             averageMs = averageMs ? .8 * averageMs + .2 * r.inferenceMs : r.inferenceMs;
             const found = timing ? timing.measurementPts === null ? null
               : stream.push({ ...r.comSample, pts: timing.measurementPts }) : stream.push(r.comSample);
-            if (found) results.push(found);
+            if (found) results.push({ ...found, id: (results.at(-1)?.id ?? 0) + 1 });
             if (stream.phase === 'READY') prepared = true;
             if (mode === 'file') video.playbackRate = Math.max(.1, Math.min(1, 20 / Math.max(1, averageMs)));
             if (mode === 'camera' && averageMs > 40) slowSince ??= pts;
@@ -127,7 +132,9 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
               playbackRate: video.playbackRate, slowDevice: mode === 'camera' && effectiveFps !== null ? effectiveFps < 40 : slowSince !== null && pts - slowSince > 1,
               effectiveFps, maxGapMs,
               landmarks: r.landmarks.length === 1 ? r.landmarks[0] : [],
-              observationReason: timing && timing.measurementPts === null ? 'CAMERA_TIME_UNAVAILABLE' : r.comSample.reason ?? null,
+              observationReason: timing && timing.measurementPts === null ? 'CAMERA_TIME_UNAVAILABLE'
+                : r.comSample.reason ?? stream.observationReason ?? null,
+              streamDiagnostics: stream.diagnostics,
               detectedPeople: r.landmarks.length,
               cameraTiming: timing ? timing.source ?? 'unavailable' : undefined,
               acquisition: mode === 'camera' ? 'LIVE' : 'PLAYBACK',

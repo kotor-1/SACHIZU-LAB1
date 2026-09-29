@@ -3,7 +3,7 @@ import { LiveWorkerClient } from '../src/cmj/live-worker-client';
 import { measureLive } from '../src/cmj/live-session';
 import type { SessionUpdate } from '../src/cmj/video-session';
 
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 function worker() {
   return { onmessage: null as ((event: { data: unknown }) => void) | null,
     onerror: null as ((event: { preventDefault: () => void }) => void) | null,
@@ -72,4 +72,52 @@ it('discards a result from the old orientation and resets before processing the 
   resolve(frameResult); await Promise.resolve(); expect(update).not.toHaveBeenCalled();
   env.emit(1100); await Promise.resolve(); expect(client.request.mock.calls.at(-1)?.[0]).toMatchObject({ reset: true });
   resolve(frameResult); await Promise.resolve(); control.abort(); await aborted;
+});
+
+it('shows a concrete pose failure during profiling and retains it when ending without a result', async () => {
+  const env = environment(), updates: SessionUpdate[] = [];
+  const client = { request: vi.fn(async () => ({ ...frameResult, phase: 'PREPARING', warmingUp: true })), dispose: vi.fn() };
+  const pending = measureLive(env.video as unknown as HTMLVideoElement, client as unknown as LiveWorkerClient,
+    new AbortController().signal, s => updates.push(s));
+  env.emit(1000); await Promise.resolve(); await Promise.resolve();
+  env.emit(1100); await Promise.resolve(); await Promise.resolve();
+  expect(updates.at(-1)).toMatchObject({ observationReason: 'POSE_NOT_UNIQUE', modelWarmingUp: true });
+  env.video.dispatchEvent(new Event('ended'));
+  await expect(pending).resolves.toMatchObject({ resultCount: 0, reason: 'POSE_NOT_UNIQUE' });
+});
+
+it('supplies snapshot-to-response cost and clears it across model changes and rotations', async () => {
+  const env = environment(), control = new AbortController(), updates: SessionUpdate[] = [];
+  let time = 0; vi.spyOn(performance, 'now').mockImplementation(() => time);
+  let response = { ...frameResult, profileChanged: false };
+  const client = { request: vi.fn(async (_message: unknown) => { time += 55; return response; }), dispose: vi.fn() };
+  const pending = measureLive(env.video as unknown as HTMLVideoElement, client as unknown as LiveWorkerClient,
+    control.signal, s => updates.push(s));
+  const aborted = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  const emit = async (ms: number) => { env.emit(ms); await Promise.resolve(); await Promise.resolve(); };
+  await emit(1000); await emit(1100); await emit(1200); await emit(1300);
+  expect(client.request.mock.calls[0][0]).toMatchObject({ previousProcessingMs: null });
+  expect(client.request.mock.calls[1][0]).toMatchObject({ previousProcessingMs: null });
+  expect(client.request.mock.calls[2][0]).toMatchObject({ previousProcessingMs: null });
+  expect(client.request.mock.calls[3][0]).toMatchObject({ previousProcessingMs: 55 });
+  expect(updates.at(-1)?.frameProcessingMs).toBe(55);
+  response = { ...frameResult, profileChanged: true }; await emit(1400);
+  response = { ...frameResult, profileChanged: false }; await emit(1500);
+  expect(client.request.mock.calls.at(-1)?.[0]).toMatchObject({ previousProcessingMs: null });
+  await emit(1600); env.win.dispatchEvent(new Event('orientationchange')); await emit(1700);
+  expect(client.request.mock.calls.at(-1)?.[0]).toMatchObject({ reset: true, previousProcessingMs: null });
+  control.abort(); await aborted;
+});
+
+it('retains the interruption reason when a new movement ends after an earlier successful result', async () => {
+  const env = environment();
+  let response: unknown = { ...frameResult, found: { id: 1, analysis: { heightCm: 24, reason: null } } };
+  const client = { request: vi.fn(async () => response), dispose: vi.fn() };
+  const pending = measureLive(env.video as unknown as HTMLVideoElement, client as unknown as LiveWorkerClient,
+    new AbortController().signal, () => {});
+  env.emit(1000); await Promise.resolve(); await Promise.resolve();
+  response = { ...frameResult, phase: 'MOVING' };
+  env.emit(1100); await Promise.resolve(); await Promise.resolve();
+  env.video.dispatchEvent(new Event('ended'));
+  await expect(pending).resolves.toMatchObject({ estimateCount: 1, resultCount: 1, reason: 'RECORDING_ENDED_BEFORE_RECOVERY' });
 });

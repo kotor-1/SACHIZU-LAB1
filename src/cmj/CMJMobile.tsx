@@ -6,6 +6,7 @@ import { waitForCurrentFrame } from './media-ready';
 import { untilAborted } from './session-lifecycle';
 import { cameraConstraints, cameraDimensions } from './camera-geometry';
 import { recordCamera } from './camera-recording';
+import { cameraStopReason, displayedResult, isPreviousResult, CMJ_LIVE_VERSION } from './session-diagnostics';
 import './mobile-ui.css';
 
 const phases = { PREPARING: '姿勢を確認しています', READY: '準備OK。ジャンプしてください', MOVING: '重心の動きを追跡中', RECOVERING: 'ジャンプの軌道を確認中' };
@@ -93,7 +94,7 @@ export default function CMJMobile() {
         liveSnapshot.current = next;
         // Begin only after model warm-up, before readiness/jumping. Model download
         // time must not consume the short recording window.
-        if (keepRecording && !recorderAttempted && camera.current) {
+        if (keepRecording && !next.modelWarmingUp && !recorderAttempted && camera.current) {
           recorderAttempted = true;
           try {
             backup.current = recordCamera(camera.current, () => {
@@ -136,11 +137,19 @@ export default function CMJMobile() {
       }
       if (owner.current !== control || control.signal.aborted) return;
       setProblem(summary.estimateCount === 0);
-      setFailureReason(summary.estimateCount ? null : summary.reason);
-      setMessage(summary.estimateCount ? `${summary.estimateCount}回の解析が完了しました。` : comFeedback(summary.reason));
+      setFailureReason(summary.reason);
+      setMessage(summary.estimateCount ? `${summary.estimateCount}回の解析が完了しました。${summary.reason ? ` ${comFeedback(summary.reason)}` : ''}` : comFeedback(summary.reason));
     } catch (e) {
       if (owner.current !== control) return;
-      if (control.signal.aborted) setMessage(limited ? '録画の上限に達したため計測を停止しました。' : '計測を停止しました。');
+      if (control.signal.aborted) {
+        const stopped = limited ? '録画の上限に達したため計測を停止しました。' : '計測を停止しました。';
+        const snapshot = sourceMode === 'camera' ? liveSnapshot.current : null;
+        if (sourceMode === 'camera' && (!snapshot?.results.some(r => r.analysis.heightCm !== null) ||
+          snapshot.phase === 'MOVING' || snapshot.phase === 'RECOVERING')) {
+          const reason = cameraStopReason(snapshot);
+          setProblem(true); setFailureReason(reason); setMessage(`${stopped} ${comFeedback(reason)}`);
+        } else setMessage(stopped);
+      }
       else { setProblem(true); setMessage(e instanceof Error ? e.message : String(e)); setFailureReason(e instanceof Error ? e.message : String(e)); }
     } finally {
       const recording = backup.current;
@@ -165,7 +174,10 @@ export default function CMJMobile() {
       liveBeforeRefinement: refining ? liveSnapshot.current : undefined,
       diagnostics: { reason: failureReason, message, quality: state?.quality, processedFrames: state?.processedFrames,
         cameraTiming: state?.cameraTiming, detectedPeople: state?.detectedPeople,
-        liveVersion: 'full-first-v4', profileReason: state?.profileReason,
+        liveVersion: CMJ_LIVE_VERSION, profileReason: state?.profileReason,
+        phase: state?.phase, observationReason: state?.observationReason,
+        modelWarmingUp: state?.modelWarmingUp, streamDiagnostics: state?.streamDiagnostics,
+        frameProcessingMs: state?.frameProcessingMs,
         processingThread: state?.processingThread, backend: state?.backend, effectiveFps: state?.effectiveFps,
         maxGapMs: state?.maxGapMs, skippedCameraFrames: state?.skippedCameraFrames,
         browser: navigator.userAgent, videoDecoder: typeof VideoDecoder !== 'undefined', secureContext: window.isSecureContext },
@@ -174,7 +186,7 @@ export default function CMJMobile() {
     link.href = objectURL; link.download = 'jump-analysis.json'; link.click();
     setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
   }
-  const latest = activeResult === null ? state?.results.at(-1) : state?.results.find(r => r.id === activeResult);
+  const latest = displayedResult(state, activeResult);
   const height = latest?.analysis.heightCm, successful = state?.results.filter(r => r.analysis.heightCm !== null) ?? [];
   const lastAttempt = state?.results.at(-1);
   const rejected = mode === 'camera' && lastAttempt?.analysis.heightCm === null ? lastAttempt : null;
@@ -182,7 +194,8 @@ export default function CMJMobile() {
   const hasSource = mode === 'file' ? !!file : busy || !!state;
   const statusText = message || (state && busy ? mode === 'camera' && state.detectedPeople === 0
     ? '身体を検出できません。頭から足先まで映して、明るい場所で正面を向いてください。'
-    : state.observationReason ? comFeedback(state.observationReason)
+    : state.observationReason ? state.observationReason === 'PREPARATION_NOT_CONFIRMED'
+      ? '準備姿勢を確認中です。全身を映して1秒ほど静止してください。' : comFeedback(state.observationReason)
     : rejected && state.phase === 'READY' ? '直前の動きは高さを確定できませんでした。撮影条件を確認して次のジャンプへ進んでください。'
     : mode === 'file' && state.phase === 'READY' ? '準備姿勢を確認しました。続けて動きを解析します。' : phases[state.phase]
     : mode === 'camera' ? 'カメラを起動して、全身をフレームに入れてください。' : file ? '準備ができました。動画を解析してください。' : '撮影したジャンプ動画を読み込んでください。');
@@ -212,7 +225,7 @@ export default function CMJMobile() {
             x2={state.landmarks[b].x * dimensions.w} y2={state.landmarks[b].y * dimensions.h} strokeWidth={dimensions.w / 220} />)}
           {state.com && <circle cx={state.com.x * dimensions.w} cy={state.com.y * dimensions.h} r={dimensions.w / 70} />}</svg>}
         <div className="cmj-viewer-top"><span><i className={busy ? 'is-live' : ''} />{busy ? mode === 'file' ? 'ANALYZING' : 'LIVE' : 'CMJ / 両脚ジャンプ'}</span>{busy && state && <span>{state.sourcePts.toFixed(2)} s</span>}</div>
-        {showHeight && <div className="cmj-score-overlay"><span>JUMP HEIGHT</span><strong>{height.toFixed(1)}<small>cm</small></strong><em>重心速度からの推定値</em></div>}
+        {showHeight && <div className="cmj-score-overlay"><span>{isPreviousResult(state, latest?.id) ? `直近の成立結果（${latest?.id}回目）` : 'JUMP HEIGHT'}</span><strong>{height.toFixed(1)}<small>cm</small></strong><em>重心速度からの推定値</em></div>}
         {busy && !showHeight && <div className="cmj-stage-caption">{cancelling ? '停止中…' : rejected && state?.phase === 'READY' ? '要確認' : state?.phase === 'READY' ? 'Ready' : 'Tracking'}<span>{mode === 'file' ? progress === null ? '動画を確認しています' : `${progress}% 解析済み` : 'ジャンプの前後は静止してください'}</span></div>}
       </div>
       {busy && mode === 'file' && <div className="cmj-progress"><div role="progressbar" aria-label="動画の解析" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress ?? undefined} style={{ width: `${progress ?? 3}%` }} /></div>}
@@ -237,7 +250,8 @@ export default function CMJMobile() {
       {refining && <p className="cmj-inline-note">カメラ録画の再解析です。結果と診断JSONに撮影中の解析とは区別して記録します。</p>}
       {state?.slowDevice && <p className="cmj-inline-note">ライブ解析の実効速度が不足しています。小さいジャンプの計測に不利な状態です。録画を残す設定を外し、他のアプリを閉じて試してください。数値の確定を優先して判定を緩めることはしません。</p>}
       {mode === 'camera' && state && <div className="cmj-inline-note"><span>{state.processedFrames}コマ解析済み · {state.detectedPeople ?? 0}人検出</span>
-        <p>{state.effectiveFps == null ? '実効速度を確認中' : `実効 ${state.effectiveFps.toFixed(0)} fps`}{state.maxGapMs == null ? '' : ` · 最大コマ間隔 ${state.maxGapMs.toFixed(0)} ms`} · {state.processingThread === 'worker' ? '別スレッド' : '互換処理'} / {state.backend} / {state.poseModel === 'full' ? 'Full' : 'Lite'} · v4</p>
+        <p>{state.effectiveFps == null ? '実効速度を確認中' : `実効 ${state.effectiveFps.toFixed(0)} fps`}{state.maxGapMs == null ? '' : ` · 最大コマ間隔 ${state.maxGapMs.toFixed(0)} ms`} · {state.processingThread === 'worker' ? '別スレッド' : '互換処理'} / {state.backend} / {state.poseModel === 'full' ? 'Full' : 'Lite'} · ライブv5</p>
+        <p>{phases[state.phase]}{state.modelWarmingUp ? ' · モデル準備中' : ''} · 重心取得 {state.quality?.validFrames ?? 0} / {state.processedFrames}コマ</p>
         <button className="cmj-secondary" onClick={download}>カメラ診断を保存</button></div>}
       {state?.acquisition === 'PLAYBACK' && <p className="cmj-inline-note">この動画は互換モードで解析しています。映像の間隔が不足する場合は数値を確定しません。</p>}
       {state?.acquisition === 'EXACT_FRAMES' && <p className="cmj-inline-note">再生速度とは独立して、元のフレームを省略せず解析します。画面の動きは解析の進み具合です。</p>}

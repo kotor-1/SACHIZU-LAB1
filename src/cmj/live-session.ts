@@ -1,11 +1,10 @@
 import { CameraClock } from './camera-clock';
 import { LiveWorkerClient } from './live-worker-client';
-import type { MobileCMJPose } from './mobile-pose';
 import type { COMPhase, COMResult } from './com-stream';
 import type { SessionSummary, SessionUpdate } from './video-session';
+import type { LiveFrameResult } from './live-protocol';
+import { cameraStopReason } from './session-diagnostics';
 
-type FrameResult = ReturnType<MobileCMJPose['estimate']> & { found: COMResult | null; phase: COMPhase; backend: string;
-  poseModel: 'full' | 'lite'; warmingUp: boolean; profileReason: string };
 export async function prepareLiveWorker(signal: AbortSignal, status: (message: string) => void) {
   if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') return null;
   let client: LiveWorkerClient | null = null;
@@ -31,8 +30,9 @@ export async function measureLive(video: HTMLVideoElement, client: LiveWorkerCli
   let callback = 0, inflight = false, frame = 0, processed = 0, callbacks = 0;
   let width = 0, height = 0, generation = 0, needsReset = true, done = false, poseFrames = 0, validFrames = 0;
   let averageMs = 0, lastUpdate = -Infinity, phase: COMPhase = 'PREPARING';
+  let previousProcessingMs: number | null = null, latestUpdate: SessionUpdate | null = null;
   const observed: number[] = [];
-  const turn = () => { generation++; needsReset = true; observed.length = 0; };
+  const turn = () => { generation++; needsReset = true; previousProcessingMs = null; observed.length = 0; };
   try {
     return await new Promise<SessionSummary>((resolve, reject) => {
       const clean = () => {
@@ -43,7 +43,9 @@ export async function measureLive(video: HTMLVideoElement, client: LiveWorkerCli
       const abort = () => { clean(); reject(new DOMException('中止', 'AbortError')); };
       const error = () => { clean(); reject(new Error('カメラ映像を取得できませんでした。')); };
       const ended = () => { clean(); resolve({ resultCount: results.length,
-        estimateCount: results.filter(r => r.analysis.heightCm !== null).length, reason: results.at(-1)?.analysis.reason ?? 'NO_JUMP_DETECTED' }); };
+        estimateCount: results.filter(r => r.analysis.heightCm !== null).length,
+        reason: phase === 'MOVING' || phase === 'RECOVERING' ? 'RECORDING_ENDED_BEFORE_RECOVERY'
+          : results.at(-1)?.analysis.heightCm != null ? null : cameraStopReason(latestUpdate) }); };
       const next: VideoFrameRequestCallback = (now, metadata) => {
         if (done || signal.aborted) return;
         // Keep observing camera callbacks while inference runs. Only one bitmap
@@ -53,13 +55,14 @@ export async function measureLive(video: HTMLVideoElement, client: LiveWorkerCli
         if (inflight || !width || !height) return;
         inflight = true;
         const timing = clock.read(now, metadata), epoch = generation;
-        if (timing.reset) { needsReset = true; observed.length = 0; }
+        if (timing.reset) { needsReset = true; previousProcessingMs = null; observed.length = 0; }
         const reset = needsReset; needsReset = false;
         const scale = Math.min(1, 720 / Math.max(width, height));
         if (canvas.width !== Math.round(width * scale) || canvas.height !== Math.round(height * scale)) {
           canvas.width = Math.round(width * scale); canvas.height = Math.round(height * scale);
         }
         // Freeze these pixels at the callback timestamp before the async copy.
+        const processingStart = performance.now();
         try { context.drawImage(video, 0, 0, canvas.width, canvas.height); }
         catch (e) { clean(); reject(e); return; }
         void (async () => {
@@ -67,9 +70,13 @@ export async function measureLive(video: HTMLVideoElement, client: LiveWorkerCli
           try {
             image = await createImageBitmap(canvas);
             if (done || signal.aborted || epoch !== generation) { needsReset = true; return; }
-            const r = await client.request<FrameResult>({ type: 'frame', image, frame: frame++, inferencePts: timing.inferencePts,
-              measurementPts: timing.measurementPts, reset }, [image]);
+            const r = await client.request<LiveFrameResult>({ type: 'frame', image, frame: frame++, inferencePts: timing.inferencePts,
+              measurementPts: timing.measurementPts, reset, previousProcessingMs: reset ? null : previousProcessingMs }, [image]);
             if (done || signal.aborted || epoch !== generation) { needsReset = true; return; }
+            const frameProcessingMs = performance.now() - processingStart;
+            // Initial warm-up and model changes include one-time setup, not
+            // sustainable per-frame cost. Never mix that into the next profile.
+            previousProcessingMs = reset || r.profileChanged ? null : frameProcessingMs;
             processed++; if (r.landmarks.length === 1) poseFrames++;
             if (r.comSample.comY !== null) validFrames++;
             else if (r.comSample.reason) failures.set(r.comSample.reason, (failures.get(r.comSample.reason) ?? 0) + 1);
@@ -83,17 +90,19 @@ export async function measureLive(video: HTMLVideoElement, client: LiveWorkerCli
             const changed = phase !== r.phase; phase = r.phase;
             if (now - lastUpdate < 50 && !r.found && !changed) return;
             lastUpdate = now;
-            update({ phase, results: [...results], backend: r.backend, processedFrames: processed,
+            latestUpdate = { phase, results: [...results], backend: r.backend, processedFrames: processed,
               sourcePts: timing.elapsed, inferenceMs: averageMs, playbackRate: 1,
               slowDevice: effectiveFps !== null && effectiveFps < 40,
               landmarks: r.landmarks.length === 1 ? r.landmarks[0] : [],
               com: r.comSample.comX === null || r.comSample.comY === null ? null : { x: r.comSample.comX / 960, y: r.comSample.comY / 960 },
               observationReason: timing.measurementPts === null ? 'CAMERA_TIME_UNAVAILABLE'
-                : r.warmingUp ? 'LIVE_MODEL_WARMUP' : r.comSample.reason ?? null,
+                : r.comSample.reason ?? (r.warmingUp ? 'LIVE_MODEL_WARMUP' : r.streamDiagnostics?.observationReason ?? null),
+              modelWarmingUp: r.warmingUp, streamDiagnostics: r.streamDiagnostics, frameProcessingMs,
               detectedPeople: r.landmarks.length, cameraTiming: timing.source ?? 'unavailable', acquisition: 'LIVE', poseModel: r.poseModel,
               profileReason: r.profileReason,
               processingThread: 'worker', effectiveFps, maxGapMs, skippedCameraFrames: callbacks - processed,
-              quality: { poseFrames, validFrames, reasons: Object.fromEntries(failures) } });
+              quality: { poseFrames, validFrames, reasons: Object.fromEntries(failures) } };
+            update(latestUpdate);
           } catch (e) { if (!done) { clean(); reject(e); } }
           finally { image?.close(); inflight = false; }
         })();
