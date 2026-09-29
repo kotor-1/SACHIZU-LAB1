@@ -222,4 +222,51 @@ describe('continuous bilateral toe-constrained cycle: implementation, not accura
     expect(a.meanProfileRange![0]).toBeLessThan(a.mean!); expect(a.meanProfileRange![1]).toBeGreaterThan(a.mean!);
     expect(readFileSync('src/rebound/toe-cycle-research.ts', 'utf8')).not.toMatch(/hybrid-model-data|fitHybridPrior|predictHybrid|1\.40|\.slice\(-3\)/);
   });
+
+  it('keeps candidate and selected counts distinct without bridging an excluded middle apex', () => {
+    const input = poses(5).map(s => ({ ...s, poses: s.poses.map(points => points.map((point, index) =>
+      (index === 31 || index === 32) && s.pts >= 1.2 && s.pts <= 1.8
+        ? { ...point, y: .82 } : point)) }));
+    const r = toeCycleReport(input, 'synthetic', 'middle-step.mov');
+    expect(r.candidateDetected).toBe(5);
+    expect(r.candidatePeaks).toHaveLength(5);
+    expect(r.detected).toBe(4);
+    expect(r.peaks).toHaveLength(4);
+    expect(r.excludedCandidateIndices).toEqual([2]);
+    expect(r.apexChecks[2]).toMatchObject({ candidateIndex: 2, status: 'NOT_BILATERAL', included: false });
+    expect(r.apexChecks.filter(c => c.included).map(c => c.candidateIndex)).toEqual([0, 1, 3, 4]);
+    expect(r.totalCycles).toBe(2); // Not 4 selected peaks minus 1: there is a real gap.
+    expect(r.acceptedCycles).toBe(2);
+    expect(r.cycles.map(c => [c.startPts, c.endPts])).toEqual([
+      [r.candidatePeaks[0].pts, r.candidatePeaks[1].pts],
+      [r.candidatePeaks[3].pts, r.candidatePeaks[4].pts],
+    ]);
+    expect(r.cycles.some(c => c.startPts === r.candidatePeaks[1].pts && c.endPts === r.candidatePeaks[3].pts)).toBe(false);
+    expect(r.cycles.every(c => Math.abs(c.period - .6) < .002)).toBe(true);
+    expect(r.mean).toBe(r.cycles.reduce((sum, c) => sum + c.result!.value, 0) / 2);
+  });
+
+  it('does not erase genuine apex counts when subject drift makes RSI uncalculable', () => {
+    const input = poses(3).map(s => ({ ...s, poses: s.poses.map(points => points.map(point =>
+      ({ ...point, x: point.x + .16 * s.pts }))) }));
+    const r = toeCycleReport(input, 'synthetic', 'moving-bilateral-jumps.mov');
+    expect(r.candidateDetected).toBe(3);
+    expect(r.detected).toBe(3);
+    expect(r.excludedCandidateIndices).toEqual([]);
+    expect(r.apexChecks.every(c => c.status === 'SUPPORTED')).toBe(true);
+    expect(r.totalCycles).toBe(2);
+    expect(r.acceptedCycles).toBe(0);
+    expect(r.mean).toBeNull();
+    expect(r.cycles.every(c => c.result === null && c.reason === 'PELVIS_SUBJECT_DRIFT')).toBe(true);
+  });
+
+  it('declares the unchanged v3 numeric model separately from apex-selection report version', () => {
+    const input = poses(3), r = toeCycleReport(input, 'synthetic', 'baseline.mov');
+    expect(r.version).toBe(TOE_CYCLE_VERSION);
+    expect(r.numericModelVersion).toBe('rj-toe-constrained-cycle-v3-research');
+    expect(r.numericModelVersion).not.toBe(r.version);
+    const standalone = toeCycleResult(fitToeCycle(r.samples, r.peaks[0], r.peaks[1]));
+    expect(standalone).toEqual(r.cycles[0].result);
+    expect(r.mean).toBeCloseTo(fractionRSI(.6, .6), 3);
+  });
 });

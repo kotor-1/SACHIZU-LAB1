@@ -22,16 +22,32 @@ function failure(text: string, code: ToeCycleImportErrorCode, bytes?: number) {
 function altered(change: (value: Saved) => void) { const value = saved(); change(value); return JSON.stringify(value); }
 
 describe('saved toe-cycle observation import, without trusting stored results', () => {
-  it.each(['rj-toe-constrained-cycle-v1-research', 'rj-toe-constrained-cycle-v2-research', 'rj-toe-constrained-cycle-v3-research'])(
+  it.each(['rj-toe-constrained-cycle-v1-research', 'rj-toe-constrained-cycle-v2-research', 'rj-toe-constrained-cycle-v3-research', 'rj-toe-constrained-cycle-v4-research'])(
     'accepts %s observations and returns no saved result or video verification', version => {
       const input = saved(version), text = JSON.stringify(input), result = parseToeCycleImport(text, new TextEncoder().encode(text).byteLength);
       expect(result).toEqual({ filename: input.result.filename, sourceBytes: 1024, sourceVideoSHA256: 'a'.repeat(64),
-        sourceFrames: 3, poses: input.poses, observationModel: 'full', savedResultVersion: version,
+        sourceFrames: 3, poses: input.poses, soles: null, observationModel: 'full', savedResultVersion: version,
         inputProvenance: 'SAVED_JSON', sourceVideoVerified: false, sourceVideoAvailable: false });
       expect(result).not.toHaveProperty('result'); expect(result).not.toHaveProperty('pelvisComparison');
       expect(result).not.toHaveProperty('mean'); expect(result).not.toHaveProperty('environment');
     },
   );
+
+  it('reads saved shoe-bottom rows frame by frame and keeps only their numeric fields', () => {
+    const input = saved(), soles = input.poses.map(p => ({ frame: p.frame, pts: p.pts, extra: 'drop',
+      feet: [{ dark: 700.5, bright: null, contrast: 99 }, null] }));
+    const result = parseToeCycleImport(JSON.stringify({ ...input, soles }));
+    expect(result.soles).toEqual(input.poses.map(p => ({ frame: p.frame, pts: p.pts, feet: [{ dark: 700.5, bright: null }, null] })));
+  });
+  it.each([
+    ['count', (v: Saved & { soles?: unknown }) => { v.soles = [] }],
+    ['frame', (v: Saved & { soles?: unknown }) => { v.soles = v.poses.map((p, i) => ({ frame: i + 1, pts: p.pts, feet: [null, null] })) }],
+    ['time', (v: Saved & { soles?: unknown }) => { v.soles = v.poses.map(p => ({ frame: p.frame, pts: p.pts + .001, feet: [null, null] })) }],
+    ['row', (v: Saved & { soles?: unknown }) => { v.soles = v.poses.map(p => ({ frame: p.frame, pts: p.pts, feet: [{ dark: -1, bright: null }, null] })) }],
+    ['feet', (v: Saved & { soles?: unknown }) => { v.soles = v.poses.map(p => ({ frame: p.frame, pts: p.pts, feet: [null] })) }],
+  ])('rejects shoe rows with an invalid %s instead of dropping or realigning them', (_, change) => {
+    failure(altered(change as (value: Saved) => void), 'IMPORT_INVALID_SOLES');
+  });
 
   it('discards all saved numerical results, manual/provenance claims, and unrecognized properties', () => {
     const input = saved(), text = JSON.stringify({ ...input, sourceVideoVerified: true, sourceVideoAvailable: true,

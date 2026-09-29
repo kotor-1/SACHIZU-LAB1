@@ -36,7 +36,8 @@ export function lowerBodySamples(poses: readonly NormalizedLandmark[][], frame: 
 /** Unique lower-body candidate in a user-confirmed region. Short reacquisition
  * is allowed only with position AND segment-size continuity. Long loss stops
  * reacquisition; previous coordinates never supply observations. */
-export function createLowerSubjectSelector(region: SubjectRegion, mode: JumpMode = 'BOTH'): PoseSelector {
+export function createLowerSubjectSelector(region: SubjectRegion, mode: JumpMode = 'BOTH',
+  options: { allowSmallInitialSubject?: boolean } = {}): PoseSelector {
   if (!validRegion(region)) throw new Error('対象者の枠を確認してください。');
   let last: { x: number; y: number; length: number; pts: number } | null = null;
   let initialLength = 0;
@@ -46,12 +47,24 @@ export function createLowerSubjectSelector(region: SubjectRegion, mode: JumpMode
       const g = geometry(p, mode); if (!g) return [];
       const anchors = mode === 'BOTH' ? [23, 24, 27, 28] : [23, 24, mode === 'RIGHT' ? 28 : 27];
       if (anchors.some(i => p[i].x < region.left || p[i].x > region.right || p[i].y < region.top || p[i].y > region.bottom)) return [];
-      if (!last && g.length < (region.bottom - region.top) * .18) return [];
+      // The automatic toe lab has no user-drawn ROI. A unique, geometrically
+      // valid person must not first become selectable only while straightening
+      // into their first jump. Keep the old foreground-size rule for every
+      // other caller and whenever multiple poses are visible. Geometry's .12
+      // minimum, landmark validity, ambiguity and continuity checks still apply.
+      if (!last && g.length < (region.bottom - region.top) * .18 &&
+        !(options.allowSmallInitialSubject && poses.length === 1)) return [];
       if (last) {
         const dt = pts - last.pts;
+        // An early crouched acquisition must not permanently tighten the upper
+        // size envelope below what the legacy foreground gate would allow.
+        // This floor is opt-in only; per-frame size/position continuity and the
+        // initial lower bound remain unchanged, so it cannot bypass a jump in identity.
+        const initialUpperReference = options.allowSmallInitialSubject
+          ? Math.max(initialLength, (region.bottom - region.top) * .18) : initialLength;
         if (dt <= 0 || dt > .75 || Math.hypot(g.hip.x - last.x, g.hip.y - last.y) > Math.min(.25, .035 + dt * .8) ||
           g.length / last.length < .75 || g.length / last.length > 1.33 ||
-          g.length / initialLength < .6 || g.length / initialLength > 1.8) return [];
+          g.length / initialLength < .6 || g.length / initialUpperReference > 1.8) return [];
       }
       return [{ p, ...g }];
     });

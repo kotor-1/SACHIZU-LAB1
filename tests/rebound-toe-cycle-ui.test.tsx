@@ -3,25 +3,31 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { readFileSync } from 'node:fs';
 import { ToeCycleResults, TOE_CYCLE_PRESENTATION_VERSION } from '../src/rebound/ToeCycleLab';
 import { toeCycleReport } from '../src/rebound/toe-cycle-research';
+import { soleContactReport, type SoleContactReport } from '../src/rebound/sole-contact';
+
+type Report = ReturnType<typeof toeCycleReport>;
+const measured = (report: Report, extra: Partial<SoleContactReport> = {}): SoleContactReport =>
+  ({ ...soleContactReport(report, null), available: true, reason: null, ...extra });
 
 describe('continuous toe-cycle result presentation', () => {
   it('labels an unavailable estimate instead of filling zero or previous values', () => {
     const report = toeCycleReport([], 'test', 'test.mov');
-    const html = renderToStaticMarkup(<ToeCycleResults report={report} pelvisMean={1.59} />);
+    const html = renderToStaticMarkup(<ToeCycleResults report={report} sole={soleContactReport(report, [])} pelvisMean={1.59} />);
     expect(html).toContain('— <small>m/s');
     expect(html).toContain('動画のコマ数が不足');
-    expect(html).toContain('数値を0や過去の平均で補っていません');
+    expect(html).toContain('数値を0や過去の平均、つま先の型だけの値で補っていません');
     expect(html).not.toContain('0.00');
   });
   it('distinguishes a subset, model estimate, assumptions and alternative baseline', () => {
     const base = toeCycleReport([], 'test', 'test.mov');
-    const report = { ...base, detected: 11, totalCycles: 10, acceptedCycles: 8,
+    const report = { ...base, candidateDetected: 11, detected: 11, totalCycles: 10, acceptedCycles: 8,
       acceptedCycleIds: [1, 2, 3, 4, 5, 7, 8, 9], mean: 1.1234, partial: true,
       boundaryCycles: [9], meanProfileRange: [.8, 1.5] as [number, number] };
-    const html = renderToStaticMarkup(<ToeCycleResults report={report} pelvisMean={1.59} />);
-    for (const s of ['1.12', '計算できた周期 8 / 10', '全周期の平均ではありません', '精度未検証',
-      '接地に相当する時間もモデル内部の推定', '探索範囲の端', '信頼区間・誤差保証ではありません',
-      '最後3回平均', '同じ骨格データの従来モデル：1.59']) expect(html).toContain(s);
+    const sole = measured(report, { mean: .9876, measuredCycles: 7, measuredCycleIds: [1, 2, 3, 4, 5, 7, 8], meanContactSeconds: .2014, modelMean: 1.1234 });
+    const html = renderToStaticMarkup(<ToeCycleResults report={report} sole={sole} pelvisMean={1.59} />);
+    for (const s of ['0.99 <small>m/s', '靴底で接地を測れた周期 7 / 10', '平均接地 201 ms', '全周期の平均ではありません', '算出周期：1・2・3・4・5・7・8',
+      '精度未検証', '測定器の実測値ではありません', '探索範囲の端', '信頼区間・誤差保証ではありません',
+      '最後3回平均', '従来の骨盤モデル：1.59', 'つま先の型だけで計算した平均：<span data-testid="toe-cycle-template">1.12</span>']) expect(html).toContain(s);
     expect(html).not.toContain('type="number"');
   });
   it('is a separate route and cannot silently replace CMJ, sprint or normal RJ', () => {
@@ -30,50 +36,114 @@ describe('continuous toe-cycle result presentation', () => {
     expect(main).toContain("lab === 'rj-toe-cycle' ? <RJToeCycle />");
     const component = readFileSync('src/rebound/ToeCycleLab.tsx', 'utf8');
     expect(component).toContain('toeCycleReport(observation.poses');
+    expect(component).toContain('soleContactReport(result, observation.soles)');
+    // Shoe pixels are read in the single pose pass; no second decode of the video.
     expect(component).not.toMatch(/collectPixelRows|refineAutomaticReview|automaticFootResult/);
     expect(component).toContain('cached.current?.file === file');
   });
-  it('shows the model revision and warns when the timing search hits its limit', () => {
+  it('names the shoe-contact timing, the template and apex versions, and warns at the search limit', () => {
     const base = toeCycleReport([], 'test', 'test.mov');
     const report = { ...base, phaseBoundaryCycles: [2, 4] };
-    const html = renderToStaticMarkup(<ToeCycleResults report={report} pelvisMean={null} />);
-    expect(html).toContain('試験版 v3');
-    expect(html).toContain('計算モデル v3 · 左右別の軌跡を使用');
+    const html = renderToStaticMarkup(<ToeCycleResults report={report} sole={measured(report)} pelvisMean={null} />);
+    expect(html).toContain('解析 v5 · 離地・着地を靴底の画像で測定（周期の型 v3・頂点選択 v4）');
+    expect(html).toContain('rj-sole-contact-v1-experimental');
     expect(html).toContain('骨盤とつま先のタイミング差が探索範囲の端に達した周期：2・4');
-    expect(html).toContain('時間割合を十分に絞れていない可能性');
+    expect(html).toContain('接地の目安を十分に絞れていない可能性');
   });
   it('puts the average RSI first and leaves the candidate range only in closed details', () => {
     const base = toeCycleReport([], 'test', 'test.mov');
-    const report = { ...base, mean: 1.3602501729526453, totalCycles: 10, acceptedCycles: 10,
+    const report = { ...base, candidateDetected: 11, detected: 11, mean: 1.3602501729526453, totalCycles: 10, acceptedCycles: 10,
       meanProfileRange: [.884534319108584, 2.4094902846166955] as [number, number] };
-    const html = renderToStaticMarkup(<ToeCycleResults report={report} pelvisMean={null} />);
+    const sole = measured(report, { mean: 1.0526, measuredCycles: 10, measuredCycleIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], meanContactSeconds: .18 });
+    const html = renderToStaticMarkup(<ToeCycleResults report={report} sole={sole} pelvisMean={null} />);
     const headline = html.slice(0, html.indexOf('</div>'));
     expect(headline).toContain('平均RSI（推定）');
-    expect(headline).toContain('<strong data-testid="toe-cycle-rsi">1.36 <small>m/s</small></strong>');
-    expect(headline).toContain('計算できた周期 10 / 10');
-    expect(headline).not.toContain('候補幅'); expect(headline).not.toContain('0.88～2.41');
-    expect(html).toMatch(/<details><summary>推定の詳細（候補幅）<\/summary><p>モデル設定による候補幅：<span data-testid="toe-cycle-range">0.88～2.41 m\/s<\/span>/);
+    expect(headline).toContain('<strong data-testid="toe-cycle-rsi">1.05 <small>m/s</small></strong>');
+    expect(headline).toContain('靴底で接地を測れた周期 10 / 10');
+    expect(headline).toContain('解析対象 11 頂点');
+    // The toe-template value is a reference only, never the headline.
+    expect(headline).not.toContain('1.36'); expect(headline).not.toContain('候補幅'); expect(headline).not.toContain('～');
+    expect(html).not.toContain('全周期の平均ではありません');
+    expect(html).toMatch(/<details><summary>つま先の型だけの値（参考）<\/summary><p>つま先の型だけで計算した平均：<span data-testid="toe-cycle-template">1.36<\/span> m\/s。/);
+    expect(html).toContain('型の設定による候補幅：<span data-testid="toe-cycle-range">0.88～2.41 m/s</span>');
+    expect(html).not.toMatch(/<details[^>]*\bopen(?:[ =>])/);
     expect(html).toContain('信頼区間・誤差保証ではありません');
-    expect(html).toContain('精度未検証の予測です');
+    expect(html).toContain('精度未検証の推定です');
     expect(html).not.toContain('表示 v3'); expect(html).not.toContain('選手の能力を比較');
     expect(html).not.toContain('各周期の最適候補の平均（参考）');
   });
   it('shows a single RSI per cycle instead of a candidate range', () => {
     const base = toeCycleReport([], 'test', 'test.mov');
-    const report = { ...base, cycles: [{ id: 1, period: .58, reason: null,
+    const report = { ...base, cycles: [{ id: 1, fromPeak: 3, toPeak: 4, period: .58, reason: null,
       result: { value: 1.453, profileRange: [.969, 2.559], boundary: false, phaseBoundary: false } }] } as typeof base;
-    const html = renderToStaticMarkup(<ToeCycleResults report={report} pelvisMean={null} />);
-    expect(html).toContain('RSI推定 m/s');
-    expect(html).toContain('<td>0.580</td><td>1.45</td>');
+    const sole = measured(report, { cycles: [{ id: 1, period: .58, modelLandingPts: null, modelTakeoffPts: null, landingPts: 1, takeoffPts: 1.187,
+      contactSeconds: .187, flightSeconds: .393, value: 1.0317, footLandings: [1, 1], footTakeoffs: [1.187, 1.18], reason: null }] });
+    const html = renderToStaticMarkup(<ToeCycleResults report={report} sole={sole} pelvisMean={null} />);
+    expect(html).toContain('<th>接地 ms</th><th>RSI推定 m/s</th><th>型のみ m/s</th>');
+    expect(html).toContain('<th>3→4</th>');
+    expect(html).toContain('<td>0.580</td><td>187</td><td>1.03</td><td>1.45</td><td>靴底で測定</td>');
     expect(html).not.toContain('0.97～2.56'); expect(html).not.toContain('参考 1.45');
   });
+  it('separates excluded candidates, unresolved candidates and drift-limited calculation counts', () => {
+    const base = toeCycleReport([], 'test', 'test.mov');
+    const apex = (pts: number) => ({ frame: Math.round(pts * 120), pts, y: 400 });
+    const report: typeof base = { ...base, reason: null, candidateDetected: 5, detected: 3,
+      totalCycles: 1, acceptedCycles: 0, acceptedCycleIds: [], mean: null, partial: true,
+      excludedCandidateIndices: [1, 4], unresolvedCandidateIndices: [2],
+      apexChecks: [
+        { candidateIndex: 0, apex: apex(.5), status: 'SUPPORTED', included: true, reason: null,
+          excursionsOverLeg: [.2, .2], recordingSectionCoverage: [1, 1, 1] },
+        { candidateIndex: 1, apex: apex(1), status: 'NOT_BILATERAL', included: false,
+          reason: 'APEX_NO_BILATERAL_RISE_FALL', excursionsOverLeg: [.01, .2], recordingSectionCoverage: [1, 1, 1] },
+        { candidateIndex: 2, apex: apex(1.5), status: 'UNRESOLVED', included: true,
+          reason: 'APEX_LEFT_TOE_GAP', excursionsOverLeg: [null, null], recordingSectionCoverage: [1, 1, 1] },
+        { candidateIndex: 3, apex: apex(2), status: 'SUPPORTED', included: true, reason: null,
+          excursionsOverLeg: [.2, .2], recordingSectionCoverage: [1, 1, 1] },
+        { candidateIndex: 4, apex: apex(2.5), status: 'INCOMPLETE_WINDOW', included: false,
+          reason: 'APEX_RECORDING_EDGE', excursionsOverLeg: [null, null], recordingSectionCoverage: [1, 1, .3] },
+      ],
+      cycles: [{ id: 1, fromPeak: 3, toPeak: 4, startPts: 1.5, endPts: 2, period: .5,
+        reason: 'PELVIS_SUBJECT_DRIFT', result: null,
+        profile: { points: [], reason: 'PELVIS_SUBJECT_DRIFT', coverage: [0, 0], spansOverLeg: [0, 0],
+          leftBestFraction: null, rightBestFraction: null, period: .5, footPoints: [[], []], commonProfileRange: null },
+      }],
+    };
+    const html = renderToStaticMarkup(<ToeCycleResults report={report} sole={soleContactReport(report, [])} pelvisMean={null} />);
+    expect(html).toContain('靴底で接地を測れた周期 0 / 1 · 解析対象 3 頂点');
+    expect(html).toContain('骨盤の候補 5 箇所のうち、前後の両足軌跡を確認できない 2 箇所は集計対象外');
+    expect(html).toContain('実際に跳んでいないと断定した数ではありません');
+    expect(html).toContain('追跡不足などで頂点確認を保留した候補があります');
+    expect(html).toContain('確認保留・候補を維持：左つま先の確認用軌跡が不足');
+    expect(html).toContain('集計対象外：左右のつま先にそろった上昇・下降が見られない');
+    expect(html).toContain('集計対象外：録画端で左右の上昇・下降の軌跡を確認できない');
+    expect(html).toContain('頂点は残していますが、横移動が大きいためRSIは計算保留');
+    expect(html).toContain('対象外の候補を飛び越えて周期を作りません');
+    expect(html).toContain('<th>3→4</th><td>0.500</td><td>—</td><td>—</td><td>—</td>');
+    expect(html).not.toContain('<th>1→3</th>');
+    expect(html).not.toContain('0.00');
+  });
+  it('does not claim candidate exclusions or unresolved checks when neither occurred', () => {
+    const base = toeCycleReport([], 'test', 'test.mov');
+    const html = renderToStaticMarkup(<ToeCycleResults report={base} sole={measured(base)} pelvisMean={null} />);
+    expect(html).not.toContain('箇所は集計対象外です');
+    expect(html).not.toContain('追跡不足などで頂点確認を保留した候補があります');
+  });
   it('identifies the new model while preserving saved-JSON recalculation and source provenance', () => {
-    expect(TOE_CYCLE_PRESENTATION_VERSION).toBe('rj-toe-cycle-presentation-v5');
+    expect(TOE_CYCLE_PRESENTATION_VERSION).toBe('rj-toe-cycle-presentation-v7');
     const component = readFileSync('src/rebound/ToeCycleLab.tsx', 'utf8');
     expect(component).toContain('parseToeCycleImport(text, selected.size)');
     expect(component).toContain("origin: 'SAVED_JSON'");
     expect(component).toContain("sourceVideoVerified: observation.origin === 'VIDEO'");
     expect(component).toContain("version: 'rj-toe-cycle-export-v1'");
     expect(component).toContain('toeCycleReport(observation.poses, observation.hash, observation.filename)');
+    expect(component).toContain('soles: observation.soles');
+  });
+  it('explains a missing shoe trace from an older saved JSON without falling back to the template', () => {
+    const base = toeCycleReport([], 'test', 'test.mov');
+    const report = { ...base, reason: null, mean: 1.2, acceptedCycles: 9, totalCycles: 10 };
+    const html = renderToStaticMarkup(<ToeCycleResults report={report} sole={soleContactReport(report, null)} pelvisMean={null} />);
+    expect(html).toContain('<strong data-testid="toe-cycle-rsi">— <small>m/s</small></strong>');
+    expect(html).toContain('靴底の画像データがありません');
+    expect(html).toContain('つま先の型だけの値で補っていません');
   });
 });

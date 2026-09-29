@@ -1,5 +1,6 @@
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 import type { PoseFrame } from './prediction-observations';
+import type { SoleFoot, SoleFrame } from './sole-contact';
 
 /** Bound parsing before JSON.parse, not just the resulting frame array. A
  * 3600-frame, 33-point trace is about 15 MB; leave room for two-person frames
@@ -9,13 +10,13 @@ const MAX_FRAMES = 3600;
 const MAX_DURATION_SECONDS = 30;
 const MAX_SOURCE_BYTES = 150 * 1024 * 1024;
 const EXPORT_VERSION = 'rj-toe-cycle-export-v1';
-const RESULT_VERSIONS = ['rj-toe-constrained-cycle-v1-research', 'rj-toe-constrained-cycle-v2-research', 'rj-toe-constrained-cycle-v3-research'] as const;
+const RESULT_VERSIONS = ['rj-toe-constrained-cycle-v1-research', 'rj-toe-constrained-cycle-v2-research', 'rj-toe-constrained-cycle-v3-research', 'rj-toe-constrained-cycle-v4-research'] as const;
 type SavedResultVersion = typeof RESULT_VERSIONS[number];
 
 export type ToeCycleImportErrorCode = 'IMPORT_TOO_LARGE' | 'IMPORT_INVALID_BYTE_LENGTH' |
   'IMPORT_INVALID_JSON' | 'IMPORT_UNSUPPORTED_EXPORT' | 'IMPORT_UNSUPPORTED_RESULT' |
   'IMPORT_INVALID_METADATA' | 'IMPORT_INVALID_FRAME_COUNT' | 'IMPORT_INVALID_FRAME_SEQUENCE' |
-  'IMPORT_INVALID_TIMESTAMPS' | 'IMPORT_INVALID_POSES' | 'IMPORT_INVALID_LANDMARK';
+  'IMPORT_INVALID_TIMESTAMPS' | 'IMPORT_INVALID_POSES' | 'IMPORT_INVALID_LANDMARK' | 'IMPORT_INVALID_SOLES';
 
 export class ToeCycleImportError extends Error {
   readonly code: ToeCycleImportErrorCode;
@@ -31,6 +32,8 @@ export interface ImportedToeCycleObservations {
   sourceVideoSHA256: string;
   sourceFrames: number;
   poses: PoseFrame[];
+  /** Shoe-bottom rows saved with newer exports; null for older JSON. */
+  soles: SoleFrame[] | null;
   observationModel: 'full';
   savedResultVersion: SavedResultVersion;
   inputProvenance: 'SAVED_JSON';
@@ -113,8 +116,23 @@ export function parseToeCycleImport(text: string, byteLength?: number): Imported
     }
     poses.push({ frame: row.frame, pts: row.pts, poses: people });
   }
+  let soles: SoleFrame[] | null = null;
+  if (value.soles !== undefined && value.soles !== null) {
+    const bad = () => fail('IMPORT_INVALID_SOLES', '靴底の画像データが骨格のコマと一致しません。');
+    if (!Array.isArray(value.soles) || value.soles.length !== poses.length) bad();
+    const row = (v: unknown) => v === null || (finite(v) && v >= 0 && v <= 960);
+    soles = (value.soles as unknown[]).map((item, index): SoleFrame => {
+      if (!record(item) || item.frame !== poses[index].frame || item.pts !== poses[index].pts || !Array.isArray(item.feet) || item.feet.length !== 2) bad();
+      const feet = (item as { feet: unknown[] }).feet.map((foot): SoleFoot | null => {
+        if (foot === null) return null;
+        if (!record(foot) || !row(foot.dark) || !row(foot.bright)) bad();
+        return { dark: (foot as SoleFoot).dark, bright: (foot as SoleFoot).bright };
+      }) as [SoleFoot | null, SoleFoot | null];
+      return { frame: poses[index].frame, pts: poses[index].pts, feet };
+    });
+  }
   return { filename: result.filename, sourceBytes: environment.sourceBytes,
-    sourceVideoSHA256: result.sourceVideoSHA256.toLowerCase(), sourceFrames: environment.sourceFrames, poses,
+    sourceVideoSHA256: result.sourceVideoSHA256.toLowerCase(), sourceFrames: environment.sourceFrames, poses, soles,
     observationModel: 'full', savedResultVersion: result.version as SavedResultVersion,
     inputProvenance: 'SAVED_JSON', sourceVideoVerified: false, sourceVideoAvailable: false };
 }

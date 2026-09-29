@@ -5,8 +5,9 @@ import { createLowerSubjectSelector, lowerBodySamples } from './lower-body';
 import { detectLowerPeaks, type Apex } from './waveform-fit';
 import { extractHybridCycle, fractionRSI, HYBRID_SETTINGS } from './hybrid-physics';
 import { bilateralFlightLobe, bilateralFlightFraction, bilateralFlightRange } from './bilateral-flight';
+import { APEX_SELECTION_SETTINGS, selectBilateralApexes } from './apex-selection';
 
-export const TOE_CYCLE_VERSION = 'rj-toe-constrained-cycle-v3-research';
+export const TOE_CYCLE_VERSION = 'rj-toe-constrained-cycle-v4-research';
 /** Frozen engineering hypotheses, NOT experimentally validated tolerances.
  * Toe kinematics are not whole-body COM kinematics. No frame is classified as
  * contact/takeoff and no event timestamps are emitted. The internal fraction
@@ -48,7 +49,8 @@ export function toeCycleDepth(phase: number, fraction: number, offset = 0): numb
 }
 
 export function toeCycleSamples(poses: readonly PoseFrame[]): ToeSample[] {
-  const select = createLowerSubjectSelector({ left: 0, right: 1, top: 0, bottom: 1 }, 'BOTH');
+  const select = createLowerSubjectSelector({ left: 0, right: 1, top: 0, bottom: 1 }, 'BOTH',
+    { allowSmallInitialSubject: true });
   return poses.map(f => {
     const selected = select(f.poses, f.pts), p = selected[0];
     const pelvis = lowerBodySamples(selected, f.frame, f.pts, 'BOTH').PELVIS;
@@ -203,9 +205,15 @@ export function toeCycleResult(profile: ToeCycleFit) {
 
 export function toeCycleReport(poses: readonly PoseFrame[], sourceVideoSHA256: string, filename: string) {
   const samples = toeCycleSamples(poses), found = detectLowerPeaks(samples, 'PELVIS', 'ALL');
-  const cycles = found.reason ? [] : found.peaks.slice(1).map((b, i) => {
-    const a = found.peaks[i], profile = fitToeCycle(samples, a, b);
-    return { id: i + 1, fromPeak: i + 1, toPeak: i + 2, startPts: a.pts, endPts: b.pts,
+  const selection = selectBilateralApexes(samples, found.peaks, TOE_CYCLE_SETTINGS.minimumSpanOverLeg);
+  // Never bridge over a rejected apex: it may represent another movement or
+  // uncertain bout boundary. Keep its check in the exported diagnostics.
+  const pairs = selection.peaks.slice(1).flatMap((b, i) =>
+    selection.candidateIndices[i + 1] === selection.candidateIndices[i] + 1
+      ? [{ a: selection.peaks[i], b, fromPeak: i + 1, toPeak: i + 2 }] : []);
+  const cycles = found.reason ? [] : pairs.map(({ a, b, fromPeak, toPeak }, i) => {
+    const profile = fitToeCycle(samples, a, b);
+    return { id: i + 1, fromPeak, toPeak, startPts: a.pts, endPts: b.pts,
       period: b.pts - a.pts, result: toeCycleResult(profile), reason: profile.reason, profile };
   });
   const accepted = cycles.filter(c => c.result !== null);
@@ -215,8 +223,14 @@ export function toeCycleReport(poses: readonly PoseFrame[], sourceVideoSHA256: s
     footCombination: 'INTERSECTION_OF_INDEPENDENT_TOE_LOBES' as const,
     profileRangeMethod: 'INDEPENDENT_FOOT_DURATION_AND_PHASE_GRID_SENSITIVITY' as const,
     aggregation: 'MEAN_OF_CALCULABLE_ADJACENT_APEX_CYCLES' as const,
-    settings: TOE_CYCLE_SETTINGS, detected: found.detected, peaks: found.peaks,
-    reason: found.reason ?? (found.detected < 2 ? 'INSUFFICIENT_PEAKS' : null), totalCycles: cycles.length,
+    // Numeric fit, fraction grid and all quality limits are unchanged from v3.
+    numericModelVersion: 'rj-toe-constrained-cycle-v3-research' as const,
+    settings: TOE_CYCLE_SETTINGS, apexSelectionSettings: APEX_SELECTION_SETTINGS,
+    candidateDetected: found.detected, candidatePeaks: found.peaks, apexChecks: selection.checks,
+    detected: selection.peaks.length, peaks: selection.peaks,
+    excludedCandidateIndices: selection.checks.filter(c => !c.included).map(c => c.candidateIndex),
+    unresolvedCandidateIndices: selection.checks.filter(c => c.status === 'UNRESOLVED').map(c => c.candidateIndex),
+    reason: found.reason ?? (selection.peaks.length < 2 ? 'INSUFFICIENT_PEAKS' : null), totalCycles: cycles.length,
     acceptedCycles: accepted.length, acceptedCycleIds: accepted.map(c => c.id),
     mean: average(accepted.map(c => c.result!.value)), partial: accepted.length < cycles.length,
     boundaryCycles: accepted.filter(c => c.result!.boundary).map(c => c.id),
