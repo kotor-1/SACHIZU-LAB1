@@ -71,7 +71,7 @@ scope.onmessage = async ({ data }) => {
       }
       const warmingUp = choice !== 'ready';
       const found = warmingUp || data.measurementPts === null ? null
-        : stream.push({ ...r.comSample, pts: data.measurementPts });
+        : stream.push({ ...r.comSample, pts: data.measurementPts }, data.allowMovement ?? true);
       completedMovement = found !== null;
       const result: LiveFrameResult = { ...r, found, phase: stream.phase, backend: pose.backend,
         poseModel: pose.variant === 'lite' ? 'lite' : 'full', warmingUp, profileReason: profile.reason,

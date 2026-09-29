@@ -19,6 +19,7 @@ export function comFeedback(reason?: string | null): string {
     case 'PROPULSION_TRANSITION_UNRESOLVED':
     case 'FIT_WINDOWS_DISAGREE': return '蹴り出しの速度を十分に絞り込めず、高さを確定できませんでした。';
     case 'SUBJECT_DRIFT': return '身体の横移動が大きいため、同じ場所でジャンプしてください。';
+    case 'COUNTDOWN_NOT_COMPLETED': return 'ジャンプの合図が出る前に停止しました。全身を映して静止し、カウントダウンをお待ちください。';
     case 'RECORDING_ENDED_BEFORE_RECOVERY': return 'ジャンプ後まで映った動画を選んでください。';
     case 'PREPARATION_NOT_CONFIRMED': return 'ジャンプ前の静止を確認できませんでした。最初に1秒ほど静止して撮影してください。';
     case 'PREPARATION_SAMPLE_CADENCE': return '解析できるコマの間隔が長く、準備を完了できません。録画を残す設定を外してください。改善しない場合は録画解析をお使いください。';

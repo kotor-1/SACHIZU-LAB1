@@ -24,7 +24,7 @@ export async function prepareLiveWorker(signal: AbortSignal, status: (message: s
 }
 
 export async function measureLive(video: HTMLVideoElement, client: LiveWorkerClient, signal: AbortSignal,
-  update: (value: SessionUpdate) => void): Promise<SessionSummary> {
+  update: (value: SessionUpdate) => void, allowMovement: () => boolean = () => true): Promise<SessionSummary> {
   const canvas = document.createElement('canvas'), context = canvas.getContext('2d')!;
   const clock = new CameraClock(), results: COMResult[] = [], failures = new Map<string, number>();
   let callback = 0, inflight = false, frame = 0, processed = 0, callbacks = 0;
@@ -71,7 +71,7 @@ export async function measureLive(video: HTMLVideoElement, client: LiveWorkerCli
             image = await createImageBitmap(canvas);
             if (done || signal.aborted || epoch !== generation) { needsReset = true; return; }
             const r = await client.request<LiveFrameResult>({ type: 'frame', image, frame: frame++, inferencePts: timing.inferencePts,
-              measurementPts: timing.measurementPts, reset, previousProcessingMs: reset ? null : previousProcessingMs }, [image]);
+              measurementPts: timing.measurementPts, reset, allowMovement: allowMovement(), previousProcessingMs: reset ? null : previousProcessingMs }, [image]);
             if (done || signal.aborted || epoch !== generation) { needsReset = true; return; }
             const frameProcessingMs = performance.now() - processingStart;
             // Initial warm-up and model changes include one-time setup, not

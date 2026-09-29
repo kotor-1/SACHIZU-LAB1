@@ -21,9 +21,9 @@ async function worker(ms: number) {
   const scope = { postMessage: vi.fn(), onmessage: null as null | ((event: {data: unknown}) => Promise<void>) };
   vi.stubGlobal('self', scope); await import('../src/cmj/live-worker');
   await scope.onmessage!({data:{id:0,type:'init'}});
-  const frame = async (i: number, previousProcessingMs?: number | null, reset = false) => {
+  const frame = async (i: number, previousProcessingMs?: number | null, reset = false, allowMovement = true) => {
     const image = {close:vi.fn()};
-    await scope.onmessage!({data:{id:i,type:'frame',image,frame:i,inferencePts:i/60,measurementPts:i/60,previousProcessingMs,reset}});
+    await scope.onmessage!({data:{id:i,type:'frame',image,frame:i,inferencePts:i/60,measurementPts:i/60,previousProcessingMs,reset,allowMovement}});
     expect(image.close).toHaveBeenCalledOnce();
     return scope.postMessage.mock.calls.at(-1)?.[0].result;
   };
@@ -87,4 +87,12 @@ it('keeps the fresh Lite stream on CPU if the new GPU model actually fails', asy
   expect(mocks.variants).toEqual(['full','lite','lite']);
   expect(mocks.backends).toEqual(['GPU','GPU','CPU']);
   expect(mocks.push).not.toHaveBeenCalled();
+});
+
+it('propagates the countdown gate to COM segmentation after warming up', async () => {
+  const w = await worker(12);
+  for (let i = 1; i <= 12; i++) await w.frame(i, 10, false, false);
+  expect(mocks.push.mock.calls.at(-1)?.[1]).toBe(false);
+  await w.frame(13, 10, false, true);
+  expect(mocks.push.mock.calls.at(-1)?.[1]).toBe(true);
 });

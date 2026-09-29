@@ -7,6 +7,7 @@ export interface LiveFrameRequest {
   measurementPts: number | null; reset: boolean;
   /** Main-thread snapshot start through previous response; never source-frame spacing. */
   previousProcessingMs?: number | null;
+  allowMovement?: boolean;
 }
 export type LiveWorkerRequest = ({ type: 'init' } | LiveFrameRequest) & { id: number };
 export type LiveFrameResult = ReturnType<MobileCMJPose['estimate']> & {

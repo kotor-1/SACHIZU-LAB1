@@ -43,7 +43,10 @@ export class COMStream {
       preparationSpanSeconds: this.preparationSpanSeconds, observationReason: this.observationReason };
   }
 
-  push(p: COMSample): COMResult | null {
+  push(p: COMSample, allowMovement = true): COMResult | null {
+    // Before the countdown cue, keep recalibrating standing posture without
+    // collecting attempts. The default preserves recorded-video analysis.
+    if (!allowMovement) { this.phase = 'PREPARING'; this.prepared = false; this.recovered = null; }
     if (!Number.isFinite(p.pts) || (this.lastPts !== null && p.pts <= this.lastPts)) throw new Error('NON_MONOTONIC_STREAM');
     const gap = this.lastPts === null ? 0 : p.pts - this.lastPts;
     this.lastPts = p.pts;

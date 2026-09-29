@@ -121,3 +121,18 @@ it('retains the interruption reason when a new movement ends after an earlier su
   env.video.dispatchEvent(new Event('ended'));
   await expect(pending).resolves.toMatchObject({ estimateCount: 1, resultCount: 1, reason: 'RECORDING_ENDED_BEFORE_RECOVERY' });
 });
+
+it('sends the current countdown gate with each worker frame', async () => {
+  const env = environment(), control = new AbortController();
+  let armed = false;
+  const client = { request: vi.fn(async (_message: unknown) => frameResult), dispose: vi.fn() };
+  const pending = measureLive(env.video as unknown as HTMLVideoElement, client as unknown as LiveWorkerClient,
+    control.signal, () => {}, () => armed);
+  const aborted = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  env.emit(1000); await Promise.resolve(); await Promise.resolve();
+  expect(client.request.mock.calls.at(-1)?.[0]).toMatchObject({ allowMovement: false });
+  armed = true;
+  env.emit(1100); await Promise.resolve(); await Promise.resolve();
+  expect(client.request.mock.calls.at(-1)?.[0]).toMatchObject({ allowMovement: true });
+  control.abort(); await aborted;
+});

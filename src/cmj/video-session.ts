@@ -31,12 +31,12 @@ export interface SessionSummary { resultCount: number; estimateCount: number; re
 /** Recorded playback can slow down without changing source timestamps.
  * A camera cannot slow physical time: gaps are rejected, never interpolated. */
 export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'file', signal: AbortSignal,
-  update: (state: SessionUpdate) => void, status: (message: string) => void = () => {}): Promise<SessionSummary> {
+  update: (state: SessionUpdate) => void, status: (message: string) => void = () => {}, allowMovement: () => boolean = () => true): Promise<SessionSummary> {
   if (!video.requestVideoFrameCallback) throw new Error('このブラウザは映像の時刻取得に未対応です。OSとブラウザを更新してください。');
   if (mode === 'camera' && typeof Worker !== 'undefined') {
     const live = await import('./live-session');
     const client = await live.prepareLiveWorker(signal, status);
-    if (client) return live.measureLive(video, client, signal, update);
+    if (client) return live.measureLive(video, client, signal, update, allowMovement);
   }
   const check = () => { if (signal.aborted) throw new DOMException('中止', 'AbortError'); };
   const pose = new MobileCMJPose(mode === 'camera' ? 'lite' : 'full');
@@ -116,7 +116,7 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
             else if (r.comSample.reason) observationFailures.set(r.comSample.reason, (observationFailures.get(r.comSample.reason) ?? 0) + 1);
             averageMs = averageMs ? .8 * averageMs + .2 * r.inferenceMs : r.inferenceMs;
             const found = timing ? timing.measurementPts === null ? null
-              : stream.push({ ...r.comSample, pts: timing.measurementPts }) : stream.push(r.comSample);
+              : stream.push({ ...r.comSample, pts: timing.measurementPts }, allowMovement()) : stream.push(r.comSample);
             if (found) results.push({ ...found, id: (results.at(-1)?.id ?? 0) + 1 });
             if (stream.phase === 'READY') prepared = true;
             if (mode === 'file') video.playbackRate = Math.max(.1, Math.min(1, 20 / Math.max(1, averageMs)));

@@ -29,10 +29,12 @@ describe('live camera rotation', () => {
     const completed = { id: 1, analysis: { heightCm: 30 } };
     fake.push.mockReturnValue(null).mockReturnValueOnce(completed);
     const updates: SessionUpdate[] = [];
-    const pending = measureVideo(video as unknown as HTMLVideoElement, 'camera', new AbortController().signal, s => updates.push(s));
+    let armed = false;
+    const pending = measureVideo(video as unknown as HTMLVideoElement, 'camera', new AbortController().signal, s => updates.push(s), () => {}, () => armed);
     await vi.waitFor(() => expect(next).toBeTypeOf('function'));
     const frame = (pts: number) => next(0, { mediaTime: pts } as VideoFrameCallbackMetadata);
-    frame(1); frame(2);
+    frame(1); frame(2); expect(fake.push.mock.calls.at(-1)?.[1]).toBe(false);
+    armed = true; frame(2.5); expect(fake.push.mock.calls.at(-1)?.[1]).toBe(true);
     const beforeTurn = fake.streams.mock.calls.length;
     video.videoWidth = 640; video.videoHeight = 480; frame(3);
     expect(fake.streams).toHaveBeenCalledTimes(beforeTurn + 1);

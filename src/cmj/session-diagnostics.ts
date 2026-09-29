@@ -1,6 +1,6 @@
 import type { SessionUpdate } from './video-session';
 
-export const CMJ_LIVE_VERSION = 'live-lifecycle-v5';
+export const CMJ_LIVE_VERSION = 'live-countdown-v6';
 
 /** Explain a stopped camera without fabricating a completed jump. */
 export function cameraStopReason(state: SessionUpdate | null): string {
