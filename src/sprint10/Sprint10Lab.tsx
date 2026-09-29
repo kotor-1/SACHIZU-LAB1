@@ -61,7 +61,7 @@ export default function Sprint10Lab() {
   }
   const display = (value: number | null | undefined, digits = 2) => value == null ? '—' : value.toFixed(digits);
   return <main className="sprint10">
-    <a href={`${import.meta.env.BASE_URL}?dev=1`}>← アプリに戻る</a>
+    <a href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
     <header><p className="sprint10-eyebrow">SPRINT / 10 METRES</p><h1>10m スプリント解析</h1>
       <p>2本のラインを設定するだけで、通過時間・歩数・ピッチ・歩幅を解析します。</p></header>
     <p className="sprint10-note">試験機能・精度未検証。固定カメラで真横に近い方向から、1人の全身と10m区間を撮影してください。通常速度の時間軸の動画を使用します。スロー書き出し動画の速度倍率は自動補正しません。</p>

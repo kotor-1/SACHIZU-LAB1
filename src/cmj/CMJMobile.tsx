@@ -207,7 +207,7 @@ export default function CMJMobile() {
   const showHeight = height != null && !review && !cueVisible && (!busy || state?.phase === 'PREPARING' || state?.phase === 'READY');
   const showCanvas = mode === 'file' && exact && !review && (busy || state?.acquisition === 'EXACT_FRAMES');
   return <main className="cmj-mobile">
-    <header className="cmj-header"><a href={`${import.meta.env.BASE_URL}?dev=1`} aria-label="アプリに戻る"><ArrowLeft size={20} /></a>
+    <header className="cmj-header"><a href={import.meta.env.BASE_URL} aria-label="種目を選ぶ"><ArrowLeft size={20} /></a>
       <span className="cmj-brand">SACHIZU <span>LAB</span></span><span className="cmj-beta">BETA</span></header>
     <div className="cmj-heading"><p className="cmj-eyebrow">JUMP ANALYSIS</p><h1>そのジャンプを、<br className="cmj-mobile-break" />数値に。</h1><p>全身の動きから、ジャンプの高さを推定。</p></div>
     <div className="cmj-workspace"><section className="cmj-capture" aria-label="ジャンプ映像">

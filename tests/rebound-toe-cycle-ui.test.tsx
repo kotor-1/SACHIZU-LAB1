@@ -30,10 +30,13 @@ describe('continuous toe-cycle result presentation', () => {
       '最後3回平均', '従来の骨盤モデル：1.59', 'つま先の型だけで計算した平均：<span data-testid="toe-cycle-template">1.12</span>']) expect(html).toContain(s);
     expect(html).not.toContain('type="number"');
   });
-  it('is a separate route and cannot silently replace CMJ, sprint or normal RJ', () => {
+  it('is the public RJ entry (also at the old toe-cycle URL) on a CMJ/RJ/10m-only site', () => {
     const main = readFileSync('src/public-app/main.tsx', 'utf8');
-    expect(main).toContain("const RJ = lazy(() => import('../rebound/AutomaticReboundLab'))");
-    expect(main).toContain("lab === 'rj-toe-cycle' ? <RJToeCycle />");
+    expect(main).toContain("const RJ = lazy(() => import('../rebound/ToeCycleLab'))");
+    expect(main).toContain("lab === 'rj' || lab === 'rj-toe-cycle' ? <RJ />");
+    expect(main).toContain("lab === 'cmj' ? <CMJ />"); expect(main).toContain("lab === 'sprint10' ? <Sprint />");
+    // No old automatic RJ, research screens or track-and-field modules on the public site.
+    expect(main).not.toMatch(/AutomaticReboundLab|CMJStage1|CMJResearch|hurdle|high-jump|long-jump|throwing|crouch/i);
     const component = readFileSync('src/rebound/ToeCycleLab.tsx', 'utf8');
     expect(component).toContain('toeCycleReport(observation.poses');
     expect(component).toContain('soleContactReport(result, observation.soles)');
