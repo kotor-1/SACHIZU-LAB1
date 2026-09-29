@@ -26,12 +26,11 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('recorded source-frame analysis', () => {
-  it('uses Heavy only for an explicit observation comparison, retaining Full for CMJ', async () => {
-    for (const analysis of ['OBSERVATIONS', 'CMJ'] as const) {
+  it('uses Full for recorded CMJ and the model a research observation run asks for', async () => {
+    for (const [analysis, observationModel, expected] of [['OBSERVATIONS', 'full', 'full'], ['OBSERVATIONS', 'heavy', 'heavy'], ['CMJ', 'heavy', 'full']] as const) {
       const updates: SessionUpdate[] = [];
       await measureRecording(input, canvas(), new AbortController().signal, s => updates.push(s), undefined,
-        { analysis, observationModel: 'heavy' });
-      const expected = analysis === 'OBSERVATIONS' ? 'heavy' : 'full';
+        { analysis, observationModel });
       expect(fake.model).toHaveBeenLastCalledWith(expected);
       expect(updates.at(-1)?.poseModel).toBe(expected);
     }

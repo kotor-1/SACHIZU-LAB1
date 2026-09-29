@@ -1,4 +1,5 @@
-import { analyzeCOM, type COMAnalysis } from './com-analysis';
+import type { COMAnalysis } from './com-analysis';
+import { analyzeToeFlight } from './toe-flight';
 import type { COMSample } from './center-of-mass';
 
 export type COMPhase = 'PREPARING' | 'READY' | 'MOVING' | 'RECOVERING';
@@ -128,7 +129,8 @@ export class COMStream {
     this.reset(); return result;
   }
   private finish(pts: number, reason?: string): COMResult {
-    let analysis = analyzeCOM(this.samples, this.scale);
+    // The legacy COM-transition estimate is kept in analysis.toeFlight for diagnostics only.
+    let analysis: COMAnalysis = analyzeToeFlight(this.samples, this.scale);
     if (reason) analysis = { ...analysis, status: 'UNAVAILABLE', reason, heightCm: null, velocityMps: null, sensitivityCm: null };
     return { id: ++this.id, analysis, detectedAtPts: pts };
   }

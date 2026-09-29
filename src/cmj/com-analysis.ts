@@ -8,7 +8,8 @@ export interface COMCandidate {
   resampledHeightsCm: number[];
 }
 export interface COMAnalysis {
-  version: 'cmj-com-velocity-v2-experimental' | 'cmj-com-short-arc-v3-experimental'; method: 'COM_VELOCITY_GRAVITY'; comModel: string;
+  version: 'cmj-com-velocity-v2-experimental' | 'cmj-com-short-arc-v3-experimental' | 'cmj-toe-flight-v1-experimental';
+  method: 'COM_VELOCITY_GRAVITY' | 'TOE_TAKEOFF_COM_APEX'; comModel: string;
   status: 'EXPERIMENTAL_ESTIMATE' | 'UNAVAILABLE'; reason?: string;
   heightCm: number | null; velocityMps: number | null;
   sensitivityCm: [number, number] | null; candidates: COMCandidate[];

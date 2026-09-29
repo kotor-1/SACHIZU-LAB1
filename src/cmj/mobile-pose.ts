@@ -12,7 +12,7 @@ export const RECORDING_MODEL_SHA256 = '5134a3aad27a58b93da0088d431f366da362b44e3
 export const HEAVY_MODEL_SHA256 = '64437af838a65d18e5ba7a0d39b465540069bc8aae8308de3e318aad31fcbc7b';
 export type PoseVariant = 'lite' | 'full' | 'heavy';
 export const POSE_MODEL_HASHES = { lite: MOBILE_MODEL_SHA256, full: RECORDING_MODEL_SHA256, heavy: HEAVY_MODEL_SHA256 };
-// Heavy is loaded only for an explicit RJ comparison. No videos are cached.
+// CMJ live and recorded analysis use Full; Heavy is loaded only for an explicit RJ comparison. No videos are cached.
 const verifiedModels = new Map<string, Uint8Array<ArrayBuffer>>();
 export type PoseSelector = (poses: NormalizedLandmark[][], pts: number) => NormalizedLandmark[][];
 export function mobileSample(points: readonly NormalizedLandmark[][], frame: number, pts: number): Sample {
@@ -44,7 +44,7 @@ export class MobileCMJPose {
       check(); verifiedModels.set(this.variant, bytes);
     }
     const files = { wasmLoaderPath: simd ? loader : noSimdLoader, wasmBinaryPath: simd ? wasm : noSimdWasm };
-    status(this.variant === 'lite' ? 'カメラ用の姿勢モデルを準備しています。' : '録画解析用の姿勢モデルを準備しています。');
+    status(this.variant === 'heavy' ? '録画解析用の高精度姿勢モデルを準備しています。' : '姿勢モデルを準備しています。');
     this.model = await PoseLandmarker.createFromOptions(files, {
       baseOptions: { modelAssetBuffer: bytes, delegate: this.delegate }, runningMode: 'VIDEO', numPoses: 2,
       outputSegmentationMasks: false,

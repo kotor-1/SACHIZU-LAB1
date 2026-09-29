@@ -18,6 +18,15 @@ export function comFeedback(reason?: string | null): string {
     case 'PROPULSION_TRANSITION_AMBIGUOUS':
     case 'PROPULSION_TRANSITION_UNRESOLVED':
     case 'FIT_WINDOWS_DISAGREE': return '蹴り出しの速度を十分に絞り込めず、高さを確定できませんでした。';
+    case 'TOE_FLOOR_UNRESOLVED':
+    case 'TOE_CONTACT_NOT_OBSERVED':
+    case 'TOE_TAKEOFF_UNRESOLVED':
+    case 'TOE_LANDING_UNRESOLVED': return 'つま先が床を離れる瞬間・着く瞬間を確認できませんでした。足先まで映し、床が見える位置で撮影してください。';
+    case 'TOE_NOT_AIRBORNE_AT_APEX':
+    case 'TOE_EVENTS_INCONSISTENT_WITH_ARC':
+    case 'FLIGHT_TIME_IMPLAUSIBLE': return '足元の動きと重心の動きが一致せず、高さを確定できませんでした。両足で真上に跳んでください。';
+    case 'FRAME_RATE_TOO_LOW': return '解析できたコマ数が少なく（毎秒約17コマ未満）、離地の瞬間を確定できませんでした。明るい場所で、他のアプリを閉じて撮影してください。';
+    case 'GRAVITY_SCALE_IMPLAUSIBLE': return '空中の重心軌道の大きさが身体の大きさと合いませんでした。カメラを固定して撮影してください。';
     case 'SUBJECT_DRIFT': return '身体の横移動が大きいため、同じ場所でジャンプしてください。';
     case 'COUNTDOWN_NOT_COMPLETED': return 'ジャンプの合図が出る前に停止しました。全身を映して静止し、カウントダウンをお待ちください。';
     case 'RECORDING_ENDED_BEFORE_RECOVERY': return 'ジャンプ後まで映った動画を選んでください。';

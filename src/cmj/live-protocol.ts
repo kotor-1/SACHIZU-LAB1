@@ -12,6 +12,6 @@ export interface LiveFrameRequest {
 export type LiveWorkerRequest = ({ type: 'init' } | LiveFrameRequest) & { id: number };
 export type LiveFrameResult = ReturnType<MobileCMJPose['estimate']> & {
   found: COMResult | null; phase: COMPhase; backend: 'CPU' | 'GPU';
-  poseModel: 'full' | 'lite'; warmingUp: boolean; profileReason: LiveProfileReason;
+  poseModel: 'full'; warmingUp: boolean; profileReason: LiveProfileReason;
   profileChanged: boolean; streamDiagnostics: COMStreamDiagnostics;
 };

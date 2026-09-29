@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { COMStream, type COMResult } from '../src/cmj/com-stream';
-import { analyzeCOM } from '../src/cmj/com-analysis';
+import { analyzeToeFlight } from '../src/cmj/toe-flight';
 import { G } from '../src/cmj/analysis';
 import type { COMSample } from '../src/cmj/center-of-mass';
+import { withToes } from './fixtures/cmj-toes';
 
 const sample = (frame: number, pts = frame / 30, comY = 500): COMSample =>
   ({ frame, pts, comX: 480, comY, bodyScale: 400 });
@@ -14,14 +15,14 @@ function ready(stream: COMStream) {
 }
 function jump(land = 500, duration = 6, offset = 0, baseline = 500): COMSample[] {
   const v = Math.sqrt(2 * G * .3), scale = .003, depth = v * .1 / scale;
-  return Array.from({ length: Math.floor(duration * 30) + 1 }, (_, frame) => {
+  return withToes(Array.from({ length: Math.floor(duration * 30) + 1 }, (_, frame) => {
     const pts = frame / 30;
     let y = baseline;
     if (pts > .45 && pts < .65) y += depth * (1 - Math.cos(Math.PI * (pts - .45) / .2)) / 2;
     else if (pts >= .65 && pts < .85) y = baseline + depth - .5 * (v / .2) * (pts - .65) ** 2 / scale;
     else if (pts >= .85) y = Math.min(land, baseline - v * (pts - .85) / scale + .5 * G * (pts - .85) ** 2 / scale);
     return sample(frame + Math.round(offset * 30), pts + offset, y);
-  });
+  }), .85 + offset, v, scale);
 }
 const process = (stream: COMStream, rows: COMSample[]): COMResult[] =>
   rows.flatMap(p => { const result = stream.push(p); return result ? [result] : []; });
@@ -91,9 +92,9 @@ describe('COM stream baseline and result lifecycle', () => {
   it.each([500, 540, 560, 600])('does not count a held landing at y=%i as a second movement', land => {
     const stream = new COMStream(), rows = jump(land), results = process(stream, rows);
     expect(results).toHaveLength(1);
-    expect(results[0].analysis.heightCm).toBeCloseTo(30, 0);
-    // The numerical estimator is untouched; segmentation emits its same fit.
-    expect(results[0].analysis.heightCm).toBe(analyzeCOM(results[0].analysis.samples, 400).heightCm);
+    expect(Math.abs(results[0].analysis.heightCm! - 30)).toBeLessThan(1.5); // 30 Hz toe-hinge timing: measured synthetic bias ~1.1 cm
+    // Segmentation emits exactly the estimator's own result for the retained samples.
+    expect(results[0].analysis.heightCm).toBe(analyzeToeFlight(results[0].analysis.samples, 400).heightCm);
     expect(stream.phase).toBe('READY');
     expect(stream.end()).toBeNull();
   });
@@ -109,11 +110,11 @@ describe('COM stream baseline and result lifecycle', () => {
         expect(stream.diagnostics.prepared).toBe(false);
       }
     }
-    expect(first?.analysis.heightCm).toBeCloseTo(30, 0);
+    expect(Math.abs(first!.analysis.heightCm! - 30)).toBeLessThan(1.5);
     expect(stream.phase).toBe('READY');
     const second = process(stream, jump(560, 3, 3 + 1 / 30, 560));
     expect(second).toHaveLength(1); expect(second[0].id).toBe(2);
-    expect(second[0].analysis.heightCm).toBeCloseTo(30, 0);
+    expect(Math.abs(second[0].analysis.heightCm! - 30)).toBeLessThan(1.5);
   });
   it('does not fill a lost measurement observation or publish an incomplete movement', () => {
     const stream = new COMStream();

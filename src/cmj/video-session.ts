@@ -39,7 +39,8 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
     if (client) return live.measureLive(video, client, signal, update, allowMovement);
   }
   const check = () => { if (signal.aborted) throw new DOMException('中止', 'AbortError'); };
-  const pose = new MobileCMJPose(mode === 'camera' ? 'lite' : 'full');
+  // Live and playback both use Full; exact recorded analysis uses Heavy.
+  const pose = new MobileCMJPose('full');
   const clock = new CameraClock();
   let callback = 0;
   let stream = new COMStream();

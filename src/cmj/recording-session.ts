@@ -8,6 +8,17 @@ import { untilAborted } from './session-lifecycle';
 import { centerOfMassSample, type COMSample } from './center-of-mass';
 import { recoveryCrop, acceptRecoveredPose } from './pose-recovery';
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
+import type { FrameInfo, VideoMetadata } from '../frame-engine/types';
+
+export interface DecodedRecordingFrame {
+  /** Borrowed until this callback settles; the decoder owns and closes it. */
+  bitmap: ImageBitmap;
+  rotation: number;
+  poses: NormalizedLandmark[][];
+  sample: COMSample;
+  sourceFrame: Readonly<FrameInfo>;
+  metadata: Readonly<VideoMetadata>;
+}
 
 export interface RecordingOptions {
   analysis?: 'CMJ' | 'OBSERVATIONS';
@@ -16,6 +27,8 @@ export interface RecordingOptions {
   onSample?: (sample: COMSample) => void;
   selectPose?: PoseSelector;
   onPose?: (poses: NormalizedLandmark[][], frame: number, pts: number) => void;
+  /** Runs once per source frame, before the next decode can release its bitmap. */
+  onDecodedFrame?: (frame: DecodedRecordingFrame) => void | Promise<void>;
 }
 
 export function supportsExactRecording(file: File): boolean {
@@ -35,6 +48,8 @@ export async function measureRecording(file: File, canvas: HTMLCanvasElement, si
     throw new Error('30秒以内・3600フレーム以内の動画を選んでください。');
   const rotation = trackRotation((d.videoTrack as typeof d.videoTrack & { matrix?: ArrayLike<number> }).matrix);
   const decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
+  // Recorded CMJ uses Full, like live. Heavy was tried: same heights on three
+  // recordings, but it marked body points occluded through one takeoff.
   const pose = new MobileCMJPose(options.analysis === 'OBSERVATIONS' ? options.observationModel ?? 'full' : 'full', options.selectPose);
   let recovery: MobileCMJPose | null = null, recoveryCanvas: HTMLCanvasElement | null = null;
   let retried = 0, recovered = 0;
@@ -80,7 +95,7 @@ export async function measureRecording(file: File, canvas: HTMLCanvasElement, si
           retried++;
           status('身体の点が不鮮明なコマを、同じ映像から再確認しています。');
           if (!recovery) {
-            recovery = new MobileCMJPose('full'); recoveryCanvas = document.createElement('canvas');
+            recovery = new MobileCMJPose(pose.variant); recoveryCanvas = document.createElement('canvas');
             await untilAborted(recovery.initialize(signal, status), signal); check();
           }
           const target = recoveryCanvas!, rc = target.getContext('2d');
@@ -99,6 +114,11 @@ export async function measureRecording(file: File, canvas: HTMLCanvasElement, si
       if (r.landmarks.length === 1) poseFrames++;
       options.onSample?.(r.comSample);
       options.onPose?.(r.landmarks, f.frameIndex, f.pts);
+      if (options.onDecodedFrame) {
+        await untilAborted(Promise.resolve(options.onDecodedFrame({ bitmap, rotation,
+          poses: r.landmarks, sample: r.comSample, sourceFrame: f, metadata: d.metadata })), signal);
+        check();
+      }
       averageMs = averageMs ? .8 * averageMs + .2 * r.inferenceMs : r.inferenceMs;
       if (r.comSample.comY !== null) valid++;
       else if (r.comSample.reason) failures.set(r.comSample.reason, (failures.get(r.comSample.reason) ?? 0) + 1);

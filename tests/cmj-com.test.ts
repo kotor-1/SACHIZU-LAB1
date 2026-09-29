@@ -4,18 +4,19 @@ import { centerOfMassSample, type COMSample } from '../src/cmj/center-of-mass';
 import { analyzeCOM } from '../src/cmj/com-analysis';
 import { COMStream, type COMResult } from '../src/cmj/com-stream';
 import { G } from '../src/cmj/analysis';
+import { withToes } from './fixtures/cmj-toes';
 
 // Known mechanics: stationary -> countermovement -> 15 m/s² propulsion
-// for .2 s -> free fall. Takeoff v=3 m/s. No contact coordinates supplied.
+// for .2 s -> free fall. Takeoff v=3 m/s. Toes leave the floor at takeoff.
 function jump(fps = 60): COMSample[] {
-  return Array.from({ length: Math.floor(2 * fps) + 1 }, (_, frame) => {
+  return withToes(Array.from({ length: Math.floor(2 * fps) + 1 }, (_, frame) => {
     const pts = frame / fps;
     let y = 500;
     if (pts > .45 && pts < .65) y += 30 * (1 - Math.cos(Math.PI * (pts - .45) / .2)) / 2;
     else if (pts >= .65 && pts < .85) y = 530 - .5 * 15 * (pts - .65) ** 2 / .004;
     else if (pts >= .85) y = Math.min(500, 455 - 3 * (pts - .85) / .004 + .5 * G * (pts - .85) ** 2 / .004);
     return { frame, pts, comX: 480, comY: y, bodyScale: 400 };
-  });
+  }), .85, 3, .004);
 }
 describe('COM velocity/gravity height (independent experimental method)', () => {
   it.each([30, 60, 120, 240])('recovers known takeoff velocity from %i Hz source observations', fps => {
@@ -90,7 +91,7 @@ describe('whole-body COM proxy', () => {
   });
 });
 describe('COM stream movement segmentation', () => {
-  it('detects and measures a jump without any foot/contact input', () => {
+  it('detects and measures a jump from toe takeoff and the airborne COM arc', () => {
     const stream = new COMStream(); const results: COMResult[] = [];
     for (const p of jump()) { const r = stream.push(p); if (r) results.push(r); }
     expect(results).toHaveLength(1);

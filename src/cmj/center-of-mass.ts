@@ -3,6 +3,8 @@ import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 export interface COMSample {
   frame: number; pts: number;
   comX: number | null; comY: number | null; bodyScale: number | null;
+  /** Left/right foot-index (toe) y in the same 960 units; takeoff/landing timing only. */
+  toeY?: [number, number];
   reason?: string;
 }
 export const COM_MODEL = 'segment-mass-mean-wrist-hand-proxy-v2';
@@ -50,5 +52,6 @@ export function centerOfMassSample(poses: readonly NormalizedLandmark[][], frame
   const bodyScale = Math.max(p[29].y, p[30].y, p[31].y, p[32].y) - head.y;
   if (bodyScale < .15) return fail('BODY_TOO_SMALL_OR_NOT_UPRIGHT');
   return { frame, pts, comX: parts.reduce((s, part) => s + part.mass * part.point.x, 0) / mass * 960,
-    comY: parts.reduce((s, part) => s + part.mass * part.point.y, 0) / mass * 960, bodyScale: bodyScale * 960 };
+    comY: parts.reduce((s, part) => s + part.mass * part.point.y, 0) / mass * 960, bodyScale: bodyScale * 960,
+    toeY: [p[31].y * 960, p[32].y * 960] };
 }

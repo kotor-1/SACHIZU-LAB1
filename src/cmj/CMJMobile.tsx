@@ -230,7 +230,7 @@ export default function CMJMobile() {
             x2={state.landmarks[b].x * dimensions.w} y2={state.landmarks[b].y * dimensions.h} strokeWidth={dimensions.w / 220} />)}
           {state.com && <circle cx={state.com.x * dimensions.w} cy={state.com.y * dimensions.h} r={dimensions.w / 70} />}</svg>}
         <div className="cmj-viewer-top"><span><i className={busy ? 'is-live' : ''} />{busy ? mode === 'file' ? 'ANALYZING' : 'LIVE' : 'CMJ / 両脚ジャンプ'}</span>{busy && state && <span>{state.sourcePts.toFixed(2)} s</span>}</div>
-        {showHeight && <div className="cmj-score-overlay"><span>{isPreviousResult(state, latest?.id) ? `直近の成立結果（${latest?.id}回目）` : 'JUMP HEIGHT'}</span><strong>{height.toFixed(1)}<small>cm</small></strong><em>重心速度からの推定値</em></div>}
+        {showHeight && <div className="cmj-score-overlay"><span>{isPreviousResult(state, latest?.id) ? `直近の成立結果（${latest?.id}回目）` : 'JUMP HEIGHT'}</span><strong>{height.toFixed(1)}<small>cm</small></strong><em>つま先の離地〜重心の最高点からの推定値</em></div>}
         {cueVisible && <div className="cmj-countdown" aria-label="ジャンプの合図"><strong>{jumpCue === 'jump' ? 'ジャンプ！' : jumpCue}</strong><span>{jumpCue === 'jump' ? '着地後は静止してください' : 'そのまま静止してください'}</span></div>}
         {busy && !showHeight && !cueVisible && <div className="cmj-stage-caption">{cancelling ? '停止中…' : rejected && state?.phase === 'READY' ? '要確認' : state?.phase === 'READY' ? 'Ready' : 'Tracking'}<span>{mode === 'file' ? progress === null ? '動画を確認しています' : `${progress}% 解析済み` : 'ジャンプの前後は静止してください'}</span></div>}
       </div>
@@ -247,7 +247,7 @@ export default function CMJMobile() {
         {!busy && file && mode === 'file' && <button className="cmj-secondary" aria-pressed={review} onClick={() => { setReview(!review); video.current?.pause(); }}>動画を確認</button>}
       </div>
       {mode === 'camera' && recordingNote && <p className="cmj-inline-note">{recordingNote}</p>}
-      {!busy && recordedClip && <div className="cmj-inline-note"><strong>撮影した映像を再解析</strong><p>録画用Fullモデルで重心を取り直します。撮影時のコマ不足やブレは復元できず、数値が出る保証はありません。新しくカメラを起動すると、この録画は置き換わります。</p>
+      {!busy && recordedClip && <div className="cmj-inline-note"><strong>撮影した映像を再解析</strong><p>Fullモデルで全コマの重心を取り直します。撮影時のコマ不足やブレは復元できず、数値が出る保証はありません。新しくカメラを起動すると、この録画は置き換わります。</p>
         <button className="cmj-primary" onClick={() => void start(recordedClip)}>録画を詳しく解析</button>
         <button className="cmj-secondary" onClick={() => {
           const href = URL.createObjectURL(recordedClip), link = document.createElement('a');
@@ -256,7 +256,7 @@ export default function CMJMobile() {
       {refining && <p className="cmj-inline-note">カメラ録画の再解析です。結果と診断JSONに撮影中の解析とは区別して記録します。</p>}
       {state?.slowDevice && <p className="cmj-inline-note">ライブ解析の実効速度が不足しています。小さいジャンプの計測に不利な状態です。録画を残す設定を外し、他のアプリを閉じて試してください。数値の確定を優先して判定を緩めることはしません。</p>}
       {mode === 'camera' && state && <div className="cmj-inline-note"><span>{state.processedFrames}コマ解析済み · {state.detectedPeople ?? 0}人検出</span>
-        <p>{state.effectiveFps == null ? '実効速度を確認中' : `実効 ${state.effectiveFps.toFixed(0)} fps`}{state.maxGapMs == null ? '' : ` · 最大コマ間隔 ${state.maxGapMs.toFixed(0)} ms`} · {state.processingThread === 'worker' ? '別スレッド' : '互換処理'} / {state.backend} / {state.poseModel === 'full' ? 'Full' : 'Lite'} · ライブv6</p>
+        <p>{state.effectiveFps == null ? '実効速度を確認中' : `実効 ${state.effectiveFps.toFixed(0)} fps`}{state.maxGapMs == null ? '' : ` · 最大コマ間隔 ${state.maxGapMs.toFixed(0)} ms`} · {state.processingThread === 'worker' ? '別スレッド' : '互換処理'} / {state.backend} / {state.poseModel === 'heavy' ? 'Heavy' : state.poseModel === 'full' ? 'Full' : 'Lite'} · ライブv7</p>
         <p>{phases[state.phase]}{state.modelWarmingUp ? ' · モデル準備中' : ''} · 重心取得 {state.quality?.validFrames ?? 0} / {state.processedFrames}コマ</p>
         <button className="cmj-secondary" onClick={download}>カメラ診断を保存</button></div>}
       {state?.acquisition === 'PLAYBACK' && <p className="cmj-inline-note">この動画は互換モードで解析しています。映像の間隔が不足する場合は数値を確定しません。</p>}
@@ -267,7 +267,7 @@ export default function CMJMobile() {
     </section><aside className="cmj-side">
       <section className="cmj-result-panel"><div className="cmj-section-heading"><h2>今回の結果</h2><span>{successful.length} REPS</span></div>
         {state?.results.length ? <><ol className="cmj-result-list">{state.results.map(r => <li key={r.id}><button className={latest?.id === r.id ? 'is-active' : ''} onClick={() => { setActiveResult(r.id); setReview(false); }}>
-          <span className="cmj-rep-index">{String(r.id).padStart(2, '0')}</span><span className="cmj-rep-label">両脚ジャンプ<small>{r.analysis.heightCm === null ? '測定条件を確認してください' : '重心速度・推定'}</small></span>
+          <span className="cmj-rep-index">{String(r.id).padStart(2, '0')}</span><span className="cmj-rep-label">両脚ジャンプ<small>{r.analysis.heightCm === null ? '測定条件を確認してください' : '離地〜最高点・推定'}</small></span>
           <strong>{r.analysis.heightCm === null ? '—' : r.analysis.heightCm.toFixed(1)}{r.analysis.heightCm !== null && <small>cm</small>}</strong></button>
           {r.analysis.heightCm === null && <p>{comFeedback(r.analysis.reason)}</p>}</li>)}</ol><button className="cmj-export" onClick={download}><Download size={16} />解析データを保存</button></>
           : <div className="cmj-no-results"><Activity size={27} /><p>ジャンプの結果が<br />ここに並びます。</p><small>解析後に高さと記録を確認できます</small></div>}
