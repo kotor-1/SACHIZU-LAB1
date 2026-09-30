@@ -25,4 +25,4 @@
 @media(max-width:700px){.cmj-mobile{padding:0 20px;}.cmj-header{height:65px;}.cmj-heading{padding:25px 0 24px;}.cmj-workspace{grid-template-columns:minmax(0,1fr);gap:28px;}.cmj-heading h1{font-size:30px;letter-spacing:-1px;}.cmj-mobile-break{display:block;}.cmj-viewer{aspect-ratio:9/11.5;}.cmj-side{gap:18px;}.cmj-score-overlay>strong{font-size:80px;}.cmj-footer{margin-top:26px;}.cmj-no-results{padding:25px 20px;}.cmj-heading>p:last-child{font-size:12px;}}
 @media(prefers-reduced-motion:reduce){.cmj-spin{animation:none}.cmj-progress>div{transition:none}}
 
-.cmj-countdown {position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0b201a88;color:#fff;pointer-events:none;text-align:center;}.cmj-countdown strong {font-size:clamp(42px,10vw,96px);line-height:1.4;color:var(--lime);font-variant-numeric:tabular-nums;}.cmj-countdown span{font-size:13px;}
+

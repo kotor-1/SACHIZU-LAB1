@@ -10,140 +10,138 @@ export interface COMStreamDiagnostics {
   preparationSpanSeconds: number;
   observationReason: string | null;
 }
-// Segmentation only. Height still requires the estimator's shorter gap limit
-// inside the propulsion/airborne window.
+/** History kept while waiting for a jump. */
+const BUFFER_SECONDS = 4;
+/** Countermovement and standing-floor evidence handed to the estimator. */
+const PRE_TAKEOFF_SECONDS = 1.5;
+/** The landing corner needs floor frames after it (toe-flight floor window 0.2 s). */
+const POST_LANDING_SECONDS = .35;
+/** Detector bounds only; the estimator applies its own flight-time limits. */
+const AIRBORNE_SECONDS = [.08, 1.2] as const;
+/** Both toes must be this far above their floor level (fraction of body extent, min 10 units). */
+const LIFT_FRACTION = .03;
+/** The COM must also have risen this far (fraction of body extent) during the flight. */
+const RISE_FRACTION = .03;
 const STREAM_BREAK_SECONDS = .25;
-const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+const MIN_TRACKING_SAMPLES = 8;
+const quantile = (xs: number[], q: number) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(q * s.length))]; };
+const valid = (p: COMSample) => p.comY !== null && p.comX !== null && p.bodyScale !== null && !!p.toeY
+  && Number.isFinite(p.comY) && Number.isFinite(p.comX) && Number.isFinite(p.bodyScale) && p.toeY.every(Number.isFinite);
 
-/** Movement segmentation uses COM displacement, not toe-ground thresholds.
- * Recovery is a display gate, not a measured landing/contact time. */
+/** Movement segmentation by the flight itself: a jump is detected when both
+ * toes are clearly above their recent floor level at the same time and the COM
+ * has risen. No standing still, baseline or countdown is needed before a jump,
+ * and the next jump can follow right after a landing. Heel raises, squats and
+ * walking never lift both toes together; anything detected still has to pass
+ * the physical estimator (toe events, gravity arc, body-size scale). */
 export class COMStream {
   constructor(private readonly preparationSeconds = .3) {}
   phase: COMPhase = 'PREPARING';
   private samples: COMSample[] = [];
-  private baseline = 0;
-  private scale = 0;
-  private started = 0;
-  private apexY = Infinity;
-  private apexPts = 0;
-  private recovered: number | null = null;
-  private recoveryMisses = 0;
-  private lastPts: number | null = null;
   private id = 0;
-  private standingNoise = 0;
+  private lastPts: number | null = null;
   private lastValidPts: number | null = null;
-  private preparationStartedPts: number | null = null;
-  private preparationSampleCount = 0;
-  private preparationSpanSeconds = 0;
+  /** Earliest time the next analysis may use (after the previous landing). */
+  private windowStart = -Infinity;
+  private airborneSince: number | null = null;
+  private landedAt: number | null = null;
+  private highestCom = Infinity;
   private prepared = false;
   private latestObservationReason: string | null = 'PREPARATION_NOT_CONFIRMED';
 
   get observationReason(): string | null { return this.latestObservationReason; }
   get diagnostics(): COMStreamDiagnostics {
-    return { prepared: this.prepared, preparationSampleCount: this.preparationSampleCount,
-      preparationSpanSeconds: this.preparationSpanSeconds, observationReason: this.observationReason };
+    const tracked = this.tracked();
+    return { prepared: this.prepared, preparationSampleCount: tracked.length,
+      preparationSpanSeconds: tracked.length ? tracked.at(-1)!.pts - tracked[0].pts : 0, observationReason: this.observationReason };
   }
 
   push(p: COMSample, allowMovement = true): COMResult | null {
-    // Before the countdown cue, keep recalibrating standing posture without
-    // collecting attempts. The default preserves recorded-video analysis.
-    if (!allowMovement) { this.phase = 'PREPARING'; this.prepared = false; this.recovered = null; }
     if (!Number.isFinite(p.pts) || (this.lastPts !== null && p.pts <= this.lastPts)) throw new Error('NON_MONOTONIC_STREAM');
     const gap = this.lastPts === null ? 0 : p.pts - this.lastPts;
     this.lastPts = p.pts;
     const active = this.phase === 'MOVING' || this.phase === 'RECOVERING';
-    if (p.comY === null || p.comX === null || p.bodyScale === null ||
-      !Number.isFinite(p.comY) || !Number.isFinite(p.comX) || !Number.isFinite(p.bodyScale) || gap > STREAM_BREAK_SECONDS) {
-      this.latestObservationReason = p.reason ?? (gap > STREAM_BREAK_SECONDS ? 'COM_SAMPLE_GAP' : 'COM_TRACKING_LOST');
-      this.samples.push(p);
-      if (active) {
-        // Retain the missing observation for the estimator's measurement-window
-        // check. Do not interpolate or prematurely reset during countermovement.
-        this.recovered = null; this.phase = 'MOVING';
-        if (p.pts - this.started <= 3) return null;
-        const failed = this.finish(p.pts, 'COM_TRACKING_OR_SAMPLE_GAP'); this.reset(); return failed;
-      }
-      // One lost pose must not erase readiness, but repeated missing rows must
-      // not retain an old person's/position's baseline indefinitely. The gap
-      // between callbacks alone cannot detect sustained pose loss.
-      if (this.phase === 'READY' && gap <= STREAM_BREAK_SECONDS && this.lastValidPts !== null &&
-        p.pts - this.lastValidPts <= STREAM_BREAK_SECONDS) return null;
-      this.reset(this.latestObservationReason); return null;
+    if (gap > STREAM_BREAK_SECONDS || (!valid(p) && this.lastValidPts !== null && p.pts - this.lastValidPts > STREAM_BREAK_SECONDS)) {
+      // Never bridge a real loss: the floor level and any flight in progress are unknown.
+      const reason = !valid(p) ? p.reason ?? 'COM_TRACKING_LOST' : 'COM_SAMPLE_GAP';
+      const failed = active ? this.finish(p.pts, 'COM_TRACKING_OR_SAMPLE_GAP') : null;
+      this.reset(reason);
+      if (valid(p)) this.track(p);
+      return failed;
     }
-    this.lastValidPts = p.pts;
-    this.latestObservationReason = null;
     this.samples.push(p);
-    if (this.phase === 'PREPARING') {
-      this.preparationStartedPts ??= p.pts;
-      this.samples = this.samples.filter(s => p.pts - s.pts <= .5);
-      this.preparationSampleCount = this.samples.length;
-      this.preparationSpanSeconds = p.pts - this.samples[0].pts;
-      if (this.samples.length < 8 || this.preparationSpanSeconds < this.preparationSeconds) {
-        // Keep the readiness evidence requirement. Expose an impossible live
-        // cadence instead of appearing to wait for the user to stand still.
-        this.latestObservationReason = this.samples.length < 8 && p.pts - this.preparationStartedPts >= .5
-          ? 'PREPARATION_SAMPLE_CADENCE' : 'PREPARATION_NOT_CONFIRMED';
-        return null;
-      }
-      const ys = this.samples.map(s => s.comY!);
-      const scales = this.samples.map(s => s.bodyScale!);
-      this.scale = median(scales);
-      // Real standing pose output sways about 1-1.6% of body extent in COM and
-      // about 4% in head-to-foot extent within 0.5 s. Readiness is only
-      // segmentation; height acceptance is decided by the physical estimator.
-      if (Math.max(...ys) - Math.min(...ys) > .03 * this.scale ||
-        Math.max(...scales) - Math.min(...scales) > .08 * this.scale) {
-        this.latestObservationReason = 'PREPARATION_NOT_STILL'; return null;
-      }
-      this.baseline = median(ys);
-      this.standingNoise = 1.4826 * median(ys.map(y => Math.abs(y - this.baseline)));
-      this.phase = 'READY'; this.prepared = true;
-    } else if (this.phase === 'READY') {
-      if (Math.abs(p.comY - this.baseline) > Math.max(.006 * this.scale, this.standingNoise * 4)) {
-        this.started = p.pts; this.apexY = p.comY; this.apexPts = p.pts; this.phase = 'MOVING';
-      } else this.samples = this.samples.filter(s => p.pts - s.pts <= .6);
-    } else {
-      if (p.comY < this.apexY) { this.apexY = p.comY; this.apexPts = p.pts; }
-      // Candidate detection, NOT a height acceptance threshold. Small rises
-      // above standing jitter still have to pass the physical estimator.
-      const rose = this.baseline - this.apexY > Math.max(.015 * this.scale, this.standingNoise * 6);
-      const rise = this.baseline - this.apexY;
-      // Landing posture is rarely the exact standing line: arms and knees leave
-      // the COM several percent away. Most of the rise coming back is the landing.
-      const descended = rise > 0 && p.comY - this.apexY >= rise * .75;
-      const returned = rose && p.pts - this.apexPts >= .16 && descended;
-      if (returned) {
-        this.recovered ??= p.pts; this.recoveryMisses = 0; this.phase = 'RECOVERING';
-        if (p.pts - this.recovered >= .12) { const r = this.finish(p.pts); this.rearm(); return r; }
-      } else if (this.recovered !== null && this.recoveryMisses < 2 && p.comY >= this.baseline - .05 * this.scale) {
-        // One noisy frame after landing must not erase an otherwise complete jump.
-        this.recoveryMisses++; this.phase = 'RECOVERING';
-      } else { this.recovered = null; this.recoveryMisses = 0; this.phase = 'MOVING'; }
-      if (p.pts - this.started > 3) { const r = this.finish(p.pts, 'MOVEMENT_NOT_RESOLVED'); this.reset(); return r; }
+    if (!valid(p)) {
+      // Retained (not filled) so the estimator sees the missing observation.
+      this.latestObservationReason = p.reason ?? 'COM_TRACKING_LOST';
+      return null;
     }
-    return null;
+    return this.track(p, allowMovement);
   }
   end(): COMResult | null {
-    const active = this.phase === 'MOVING' || this.phase === 'RECOVERING';
-    const result = active ? this.finish(this.lastPts!, 'RECORDING_ENDED_BEFORE_RECOVERY') : null;
+    const result = this.phase === 'RECOVERING' ? this.finish(this.lastPts!)
+      : this.phase === 'MOVING' ? this.finish(this.lastPts!, 'RECORDING_ENDED_BEFORE_RECOVERY') : null;
     this.reset(); return result;
   }
+  private track(p: COMSample, allowMovement = true): COMResult | null {
+    if (this.samples.at(-1) !== p) this.samples.push(p);
+    this.lastValidPts = p.pts;
+    if (this.phase === 'PREPARING' || this.phase === 'READY') {
+      while (this.samples.length && p.pts - this.samples[0].pts > BUFFER_SECONDS) this.samples.shift();
+    }
+    const tracked = this.tracked();
+    if (tracked.length < MIN_TRACKING_SAMPLES || tracked.at(-1)!.pts - tracked[0].pts < this.preparationSeconds) {
+      this.phase = 'PREPARING'; this.latestObservationReason = 'PREPARATION_NOT_CONFIRMED';
+      return null;
+    }
+    this.latestObservationReason = null; this.prepared = true;
+    const before = tracked.filter(s => this.airborneSince === null || s.pts < this.airborneSince);
+    const scale = quantile(before.map(s => s.bodyScale!), .5);
+    const lift = Math.max(10, LIFT_FRACTION * scale);
+    const floor = ([0, 1] as const).map(side => quantile(before.map(s => s.toeY![side]), .8));
+    const airborne = p.toeY!.every((y, side) => floor[side] - y > lift);
+    if (this.phase === 'PREPARING') this.phase = 'READY';
+    if (this.phase === 'READY') {
+      if (airborne && allowMovement) {
+        this.airborneSince = p.pts; this.highestCom = p.comY!; this.phase = 'MOVING';
+      }
+      return null;
+    }
+    if (this.phase === 'MOVING') {
+      this.highestCom = Math.min(this.highestCom, p.comY!);
+      if (airborne) {
+        if (p.pts - this.airborneSince! > AIRBORNE_SECONDS[1]) this.abandon();
+        return null;
+      }
+      const risen = tracked.filter(s => s.pts < this.airborneSince! && this.airborneSince! - s.pts <= 1).map(s => s.comY!);
+      const rise = risen.length ? quantile(risen, .5) - this.highestCom : 0;
+      if (p.pts - this.airborneSince! < AIRBORNE_SECONDS[0] || rise < RISE_FRACTION * scale) { this.abandon(); return null; }
+      this.landedAt = p.pts; this.phase = 'RECOVERING';
+    } else if (airborne && p.pts - this.landedAt! < .15) {
+      // A noisy toe point mid-flight is not a landing: the flight continues.
+      this.phase = 'MOVING'; this.landedAt = null; this.highestCom = Math.min(this.highestCom, p.comY!);
+      return null;
+    }
+    if (p.pts - this.landedAt! >= POST_LANDING_SECONDS) return this.finish(p.pts);
+    return null;
+  }
+  /** Valid samples usable for the current or next analysis. */
+  private tracked() { return this.samples.filter(s => s.pts > this.windowStart && valid(s)); }
+  private abandon() { this.phase = 'READY'; this.airborneSince = null; this.landedAt = null; this.highestCom = Infinity; }
   private finish(pts: number, reason?: string): COMResult {
-    // The legacy COM-transition estimate is kept in analysis.toeFlight for diagnostics only.
-    let analysis: COMAnalysis = analyzeToeFlight(this.samples, this.scale);
+    const takeoff = this.airborneSince ?? pts;
+    const rows = this.samples.filter(s => s.pts > this.windowStart && s.pts >= takeoff - PRE_TAKEOFF_SECONDS);
+    // Standing body extent before takeoff (the countermovement shortens it).
+    const extent = rows.filter(s => s.pts < takeoff && s.bodyScale !== null).map(s => s.bodyScale!);
+    let analysis: COMAnalysis = analyzeToeFlight(rows, extent.length ? quantile(extent, .9) : NaN);
     if (reason) analysis = { ...analysis, status: 'UNAVAILABLE', reason, heightCm: null, velocityMps: null, sensitivityCm: null };
+    // The landing belongs to this jump: the next analysis starts after it.
+    this.windowStart = pts; this.abandon();
+    this.samples = this.samples.filter(s => s.pts > pts - BUFFER_SECONDS);
     return { id: ++this.id, analysis, detectedAtPts: pts };
   }
-  private rearm() {
-    // Recovery confirms a complete movement, not a new standing baseline.
-    // Reusing the old baseline can label a held deep landing as another jump.
-    // Re-establish the same standing evidence before starting the next one.
-    this.reset();
-  }
   private reset(reason: string | null = 'PREPARATION_NOT_CONFIRMED') {
-    this.phase = 'PREPARING'; this.samples = []; this.recovered = null; this.recoveryMisses = 0;
-    this.lastValidPts = null; this.preparationStartedPts = null;
-    this.preparationSampleCount = 0; this.preparationSpanSeconds = 0;
+    this.phase = 'PREPARING'; this.samples = []; this.abandon(); this.phase = 'PREPARING';
+    this.lastValidPts = null; this.windowStart = -Infinity;
     this.prepared = false; this.latestObservationReason = reason;
   }
 }

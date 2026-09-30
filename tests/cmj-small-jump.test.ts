@@ -87,6 +87,7 @@ describe('small jumps (synthetic mechanics, not validation in children)', () => 
         samples.push({ frame, pts, comX: 480, comY: y + (random() - .5) * 1.2, bodyScale: 400 });
       }
       const stream = new COMStream();
+      withToes(samples, takeoff, v, scale).forEach((p, i) => { samples[i] = p; });
       const results = samples.map(p => stream.push(p)).filter(r => r !== null);
       expect(results, `${height} cm`).toHaveLength(1);
     }
@@ -102,7 +103,7 @@ describe('small jumps (synthetic mechanics, not validation in children)', () => 
       return { frame, pts, comX: 480, comY: y, bodyScale: 400 };
     });
     const stream = new COMStream();
-    const results = samples.map(p => stream.push(p)).filter(r => r !== null);
+    const results = withToes(samples, takeoff, v, scale).map(p => stream.push(p)).filter(r => r !== null);
     expect(results, results[0]?.analysis.reason).toHaveLength(1);
     expect(results[0].analysis).toMatchObject({ heightCm: null, reason: 'FRAME_RATE_TOO_LOW' });
   });

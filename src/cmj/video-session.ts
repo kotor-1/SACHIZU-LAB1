@@ -1,7 +1,7 @@
 import { MobileCMJPose } from './mobile-pose';
 import { COMStream, type COMPhase, type COMResult, type COMStreamDiagnostics } from './com-stream';
 import { untilAborted } from './session-lifecycle';
-import { CameraClock } from './camera-clock';
+import { CameraClock, drawCameraFrame } from './camera-clock';
 
 export interface SessionUpdate {
   phase: COMPhase; results: COMResult[]; backend: string;
@@ -11,7 +11,7 @@ export interface SessionUpdate {
   com: { x: number; y: number } | null;
   observationReason: string | null;
   detectedPeople?: number;
-  cameraTiming?: 'capture' | 'media' | 'unavailable';
+  cameraTiming?: 'frame' | 'capture' | 'media' | 'unavailable';
   processingThread?: 'worker' | 'main';
   effectiveFps?: number | null;
   maxGapMs?: number | null;
@@ -58,7 +58,8 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
     window.addEventListener('orientationchange', orientationChanged);
     window.screen.orientation?.addEventListener('change', orientationChanged);
   }
-  const snapshot = () => {
+  /** Returns the drawn camera frame's own capture time (seconds), or null. */
+  const snapshot = (): number | null => {
     if (mode === 'camera' && (cameraTurned || (sourceWidth > 0 &&
       (sourceWidth !== video.videoWidth || sourceHeight !== video.videoHeight)))) {
       // Pixel axes/scale changed: never join motion across a camera rotation.
@@ -69,7 +70,8 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
     const scale = Math.min(1, 720 / Math.max(video.videoWidth, video.videoHeight));
     const w = Math.round(video.videoWidth * scale), h = Math.round(video.videoHeight * scale);
     if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-    ctx.drawImage(video, 0, 0, w, h);
+    if (mode === 'camera') return drawCameraFrame(video, ctx, w, h);
+    ctx.drawImage(video, 0, 0, w, h); return null;
   };
   try {
     check(); await untilAborted(pose.initialize(signal, status), signal); check();
@@ -107,9 +109,9 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
           check();
           if (mode === 'file' && meta.mediaTime < lastPts) { seek(); return; }
           if (mode === 'camera' || meta.mediaTime > lastPts) {
-            const timing = mode === 'camera' ? clock.read(now, meta) : null;
+            const frameTime = snapshot();
+            const timing = mode === 'camera' ? clock.read(now, { ...meta, frameTime }) : null;
             const pts = timing ? timing.inferencePts : meta.mediaTime; lastPts = pts;
-            snapshot();
             if (timing?.reset) { stream = new COMStream(); prepared = false; observed.length = 0; }
             const r = pose.estimate(canvas, frame++, pts);
             if (r.landmarks.length === 1) poseFrames++;

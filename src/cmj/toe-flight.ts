@@ -15,11 +15,16 @@ import { COM_MODEL, type COMSample } from './center-of-mass';
  * same videos to 30-120fps moved heights by under ~1.5 cm. This is
  * consistency evidence, not a measured accuracy. */
 export const TOE_FLIGHT = Object.freeze({
-  version: 'cmj-toe-flight-v1-experimental' as const,
+  version: 'cmj-toe-flight-v2-experimental' as const,
   // Windows widen with the observed frame interval so every cadence keeps
-  // about three samples on each side of the corner.
+  // about three samples on the airborne side of the corner. The floor side
+  // (before takeoff / after landing) is longer: the toe is flat there, and a
+  // noisy toe point makes the first "clearly lifted" frame late. With only the
+  // short window, 30 fps and 4-8 units of toe noise left one or two floor
+  // frames and pulled takeoff late / landing early, down to -18 cm.
   hingeHalfWindowSeconds: .08, searchHalfWidthSeconds: .05, gridSeconds: .0005,
   hingeHalfWindowIntervals: 3, searchHalfWidthIntervals: 2,
+  floorWindowSeconds: .2, floorWindowIntervals: 6, floorSearchSeconds: .12, floorSearchIntervals: 4,
   minimumSideSamples: 2, minimumToeRisePixels: 5, toeRiseNoiseMultiplier: 4,
   // A hole near takeoff/landing hides the event itself. Phones were observed
   // at up to ~41 ms and desktop Full-model live at up to ~65 ms between frames.
@@ -47,12 +52,17 @@ const toe = (p: COMSample, side: 0 | 1) => p.comY !== null && p.toeY ? p.toeY[si
  * takeoff (rise after t0), dir=-1 landing (rise before t0). Least squares on
  * a 0.5 ms grid; returns null when the corner is not bracketed by data. */
 function hingeTime(samples: readonly COMSample[], side: 0 | 1, coarse: number, dir: 1 | -1, interval: number): number | null {
-  const half = Math.max(TOE_FLIGHT.hingeHalfWindowSeconds, TOE_FLIGHT.hingeHalfWindowIntervals * interval);
-  const search = Math.max(TOE_FLIGHT.searchHalfWidthSeconds, TOE_FLIGHT.searchHalfWidthIntervals * interval);
-  const rows = samples.filter(p => Math.abs(p.pts - coarse) <= half && toe(p, side) !== null);
+  const air = Math.max(TOE_FLIGHT.hingeHalfWindowSeconds, TOE_FLIGHT.hingeHalfWindowIntervals * interval);
+  const floor = Math.max(TOE_FLIGHT.floorWindowSeconds, TOE_FLIGHT.floorWindowIntervals * interval);
+  const airSearch = Math.max(TOE_FLIGHT.searchHalfWidthSeconds, TOE_FLIGHT.searchHalfWidthIntervals * interval);
+  const floorSearch = Math.max(TOE_FLIGHT.floorSearchSeconds, TOE_FLIGHT.floorSearchIntervals * interval);
+  // dir=+1 (takeoff): floor before the corner; dir=-1 (landing): floor after it.
+  const [from, to] = dir === 1 ? [coarse - floor, coarse + air] : [coarse - air, coarse + floor];
+  const [low, high] = dir === 1 ? [coarse - floorSearch, coarse + airSearch] : [coarse - airSearch, coarse + floorSearch];
+  const rows = samples.filter(p => p.pts >= from && p.pts <= to && toe(p, side) !== null);
   if (exceedsSampleGap(rows.map(p => p.pts))) return null;
   let best: { t0: number; sse: number } | null = null;
-  for (let t0 = coarse - search; t0 <= coarse + search; t0 += TOE_FLIGHT.gridSeconds) {
+  for (let t0 = low; t0 <= high; t0 += TOE_FLIGHT.gridSeconds) {
     const s = rows.map(p => Math.max(0, dir * (p.pts - t0)));
     const moving = s.filter(v => v > 0).length;
     if (moving < TOE_FLIGHT.minimumSideSamples || s.length - moving < TOE_FLIGHT.minimumSideSamples) continue;
@@ -66,7 +76,8 @@ function hingeTime(samples: readonly COMSample[], side: 0 | 1, coarse: number, d
     const sse = rows.reduce((a, p, i) => a + (floor + slope * s[i] - toe(p, side)!) ** 2, 0);
     if (!best || sse < best.sse) best = { t0, sse };
   }
-  return best && Math.abs(best.t0 - coarse) < search ? best.t0 : null;
+  // A corner on the edge of the search range is not bracketed by the data.
+  return best && best.t0 > low + TOE_FLIGHT.gridSeconds / 2 && best.t0 < high - TOE_FLIGHT.gridSeconds / 2 ? best.t0 : null;
 }
 
 export function analyzeToeFlight(samples: readonly COMSample[], baselineScale: number): COMAnalysis & { toeFlight: ToeFlightDiagnostics } {

@@ -1,10 +1,10 @@
 /** Actionable capture feedback; detailed model diagnostics stay in details. */
 export function comFeedback(reason?: string | null): string {
   switch (reason) {
-    case 'LIVE_MODEL_WARMUP': return 'ライブ解析の処理速度を確認中です。全身を映して静止してお待ちください。';
+    case 'LIVE_MODEL_WARMUP': return 'ライブ解析の処理速度を確認中です。全身を映してお待ちください。';
     case 'INSUFFICIENT_ARC_SAMPLES':
     case 'INSUFFICIENT_SHORT_ARC_EVIDENCE': return '空中の動きを計算するためのコマ数が足りませんでした。';
-    case 'APEX_NOT_BRACKETED': return '最高点の前後の動きを十分に確認できませんでした。ジャンプ後も全身を映して静止してください。';
+    case 'APEX_NOT_BRACKETED': return '最高点の前後の動きを十分に確認できませんでした。着地の後まで全身を映してください。';
     case 'GRAVITY_ARC_UNRESOLVED': return '空中の重心軌道が不安定で、高さを計算できませんでした。';
     case 'INSUFFICIENT_RISE': return '重心の上昇を十分に確認できませんでした。';
     case 'CAMERA_TIME_UNAVAILABLE': return '骨格表示中。カメラの撮影時刻を取得できないため、高さの計測には録画解析をお使いください。';
@@ -28,12 +28,10 @@ export function comFeedback(reason?: string | null): string {
     case 'FRAME_RATE_TOO_LOW': return '解析できたコマ数が少なく（毎秒約17コマ未満）、離地の瞬間を確定できませんでした。明るい場所で、他のアプリを閉じて撮影してください。';
     case 'GRAVITY_SCALE_IMPLAUSIBLE': return '空中の重心軌道の大きさが身体の大きさと合いませんでした。カメラを固定して撮影してください。';
     case 'SUBJECT_DRIFT': return '身体の横移動が大きいため、同じ場所でジャンプしてください。';
-    case 'COUNTDOWN_NOT_COMPLETED': return 'ジャンプの合図が出る前に停止しました。全身を映して静止し、カウントダウンをお待ちください。';
     case 'RECORDING_ENDED_BEFORE_RECOVERY': return 'ジャンプ後まで映った動画を選んでください。';
-    case 'PREPARATION_NOT_CONFIRMED': return 'ジャンプ前の静止を確認できませんでした。最初に1秒ほど静止して撮影してください。';
+    case 'PREPARATION_NOT_CONFIRMED': return '全身を確認できませんでした。頭から足先まで映して撮影してください。';
     case 'PREPARATION_SAMPLE_CADENCE': return '解析できるコマの間隔が長く、準備を完了できません。録画を残す設定を外してください。改善しない場合は録画解析をお使いください。';
-    case 'PREPARATION_NOT_STILL': return '重心の静止を確認中です。全身を映して、カメラと身体を動かさずにお待ちください。';
-    case 'NO_JUMP_DETECTED': return '準備完了後のジャンプを確認できませんでした。最初に静止し、ジャンプ後まで撮影してください。';
+    case 'NO_JUMP_DETECTED': return '両足が床から離れるジャンプを確認できませんでした。頭から足先まで映し、着地の後まで撮影してください。';
     default: return '身体の軌道を十分に確認できず、高さを確定できませんでした。';
   }
 }

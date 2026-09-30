@@ -1,4 +1,4 @@
-import { CameraClock } from './camera-clock';
+import { CameraClock, drawCameraFrame } from './camera-clock';
 import { LiveWorkerClient } from './live-worker-client';
 import type { COMPhase, COMResult } from './com-stream';
 import type { SessionSummary, SessionUpdate } from './video-session';
@@ -54,17 +54,18 @@ export async function measureLive(video: HTMLVideoElement, client: LiveWorkerCli
         if (width !== video.videoWidth || height !== video.videoHeight) { width = video.videoWidth; height = video.videoHeight; turn(); }
         if (inflight || !width || !height) return;
         inflight = true;
-        const timing = clock.read(now, metadata), epoch = generation;
-        if (timing.reset) { needsReset = true; previousProcessingMs = null; observed.length = 0; }
-        const reset = needsReset; needsReset = false;
         const scale = Math.min(1, 720 / Math.max(width, height));
         if (canvas.width !== Math.round(width * scale) || canvas.height !== Math.round(height * scale)) {
           canvas.width = Math.round(width * scale); canvas.height = Math.round(height * scale);
         }
-        // Freeze these pixels at the callback timestamp before the async copy.
+        // Freeze these pixels, with their own capture time, before the async copy.
         const processingStart = performance.now();
-        try { context.drawImage(video, 0, 0, canvas.width, canvas.height); }
+        let frameTime: number | null;
+        try { frameTime = drawCameraFrame(video, context, canvas.width, canvas.height); }
         catch (e) { clean(); reject(e); return; }
+        const timing = clock.read(now, { ...metadata, frameTime }), epoch = generation;
+        if (timing.reset) { needsReset = true; previousProcessingMs = null; observed.length = 0; }
+        const reset = needsReset; needsReset = false;
         void (async () => {
           let image: ImageBitmap | null = null;
           try {

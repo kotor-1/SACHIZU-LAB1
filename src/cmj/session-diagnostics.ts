@@ -1,6 +1,6 @@
 import type { SessionUpdate } from './video-session';
 
-export const CMJ_LIVE_VERSION = 'live-toe-flight-v7';
+export const CMJ_LIVE_VERSION = 'live-toe-flight-v8';
 
 /** Explain a stopped camera without fabricating a completed jump. */
 export function cameraStopReason(state: SessionUpdate | null): string {

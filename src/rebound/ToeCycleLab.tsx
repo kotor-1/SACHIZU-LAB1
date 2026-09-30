@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { FileJson, Upload } from 'lucide-react';
 import { measureRecording, supportsExactRecording } from '../cmj/recording-session';
 import type { PoseFrame } from './prediction-observations';
 import { predictionSignals } from './prediction-observations';
@@ -203,15 +204,16 @@ export default function ToeCycleLab() {
     setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
   }
   return <main className="rj-lab rj-public">
-    <header><a href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><span>SACHIZU LAB · RJ TEST</span></header>
-    <div className="rj-title"><span>RJ · 靴底接地 v1 / 頂点選択 v4 / 連続軌跡モデル v3</span><h1>両足RJ · 自動予測</h1><p>動画または保存済みJSONから、平均RSIを推定します。身長・基準物・手動のコマ指定は不要です。</p></div>
+    <header><a href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><span>SACHIZU LAB · RJ</span></header>
+    <div className="rj-title"><span>REBOUND JUMP</span><h1>両足RJ · 自動予測</h1><p>動画または保存済みJSONから、平均RSIを推定します。身長・基準物・手動のコマ指定は不要です。</p></div>
     <section className="rj-capture"><h2>動画を選ぶ</h2>
-      <input ref={videoInput} type="file" accept="video/*" aria-label="つま先軌跡RJの動画を選ぶ" disabled={busy} onChange={e => {
+      <p>固定カメラ・全身と左右の靴・床が映る120/240fpsの元動画。正面から、靴と床の色がはっきり違う場所で撮影してください。録画解析です。</p>
+      <label className="rj-upload"><input className="rj-file-input" ref={videoInput} type="file" accept="video/*" aria-label="つま先軌跡RJの動画を選ぶ" disabled={busy} onChange={e => {
         const f = e.target.files?.[0] ?? null; cached.current = null; clear(); setSavedSource(null); setFile(f); setUrl(f ? URL.createObjectURL(f) : '');
         setMessage(f ? '動画を選択しました。解析を開始できます。' : '両足RJの元動画を選んでください。');
-      }} />
-      <p>固定カメラ・全身と左右の靴・床が映る120/240fpsの元動画。正面から、靴と床の色がはっきり違う場所で撮影してください。録画解析です。</p>
-      <div className="rj-viewer" hidden={!!savedSource} style={{ maxWidth: Math.min(720, aspect * 520), aspectRatio: aspect, marginInline: 'auto' }}>
+      }} /><span className="rj-upload-button" aria-hidden="true"><Upload size={19} />{file ? '別の動画を選ぶ' : '動画を選ぶ'}</span></label>
+      {file && <p className="rj-filename">{file.name} · {(file.size / 1024 / 1024).toFixed(1)} MB</p>}
+      <div className="rj-viewer" hidden={!!savedSource || !file} style={{ maxWidth: Math.min(720, aspect * 520), aspectRatio: aspect, marginInline: 'auto' }}>
         <video ref={video} src={url || undefined} controls={!!file && !busy} playsInline muted hidden={busy} onLoadedMetadata={e => {
           if (e.currentTarget.videoHeight) setAspect(e.currentTarget.videoWidth / e.currentTarget.videoHeight);
         }} />
@@ -222,9 +224,9 @@ export default function ToeCycleLab() {
     <section aria-label="保存済み骨格から再計算">
       <h2>保存済みJSONから再計算</h2>
       <p>以前保存した rebound-toe-cycle.json を使えます。動画の再解析・骨格の再取得はしません。保存されていたRSI値は使わず、骨格と靴底の画像データから計算し直します。靴底の画像データがない古いJSONでは、平均RSIを表示できません。</p>
-      <input type="file" accept="application/json,.json" aria-label="保存済みつま先軌跡JSONを選ぶ" disabled={busy} onChange={e => {
+      <label className="rj-upload rj-upload-secondary"><input className="rj-file-input" type="file" accept="application/json,.json" aria-label="保存済みつま先軌跡JSONを選ぶ" disabled={busy} onChange={e => {
         const selected = e.target.files?.[0]; e.target.value = ''; if (selected) void loadJSON(selected);
-      }} />
+      }} /><span className="rj-upload-button" aria-hidden="true"><FileJson size={18} />保存済みJSONを選ぶ</span></label>
       {savedSource && <p className="rj-warning" data-testid="toe-cycle-import-source">{savedSource} の保存済み骨格を使用。元動画との同一性や骨格の正確さは、このJSONだけでは検証できません。元動画の再生はありません。</p>}
     </section>
     <button className="rj-button" disabled={(!file && !savedSource) || busy} onClick={() => void start()}>入力なしでRJを解析</button>
@@ -232,6 +234,6 @@ export default function ToeCycleLab() {
     <p role="status">{message}</p>
     {report && sole && <ToeCycleResults report={report} sole={sole} pelvisMean={pelvisMean} />}
     {exportData && <button className="rj-button" onClick={save}>予測結果・骨格をJSON保存</button>}
-    <footer>動画は端末内で処理。150MB / 30秒 / 3600フレーム以内。ページを閉じると未保存の結果は消えます。</footer>
+    <footer>靴底接地 v1 / 頂点選択 v4 / 連続軌跡モデル v3 · 動画は端末内で処理。150MB / 30秒 / 3600フレーム以内。ページを閉じると未保存の結果は消えます。</footer>
   </main>;
 }

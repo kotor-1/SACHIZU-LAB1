@@ -5,8 +5,8 @@ import { G } from '../src/cmj/analysis';
 import type { COMSample } from '../src/cmj/center-of-mass';
 import { withToes } from './fixtures/cmj-toes';
 
-const sample = (frame: number, pts = frame / 30, comY = 500): COMSample =>
-  ({ frame, pts, comX: 480, comY, bodyScale: 400 });
+const sample = (frame: number, pts = frame / 30, comY = 500, toeY: [number, number] = [850, 850]): COMSample =>
+  ({ frame, pts, comX: 480, comY, bodyScale: 400, toeY });
 const missing = (frame: number): COMSample =>
   ({ frame, pts: frame / 30, comX: null, comY: null, bodyScale: null, reason: 'BODY_POINT_OCCLUDED' });
 function ready(stream: COMStream) {
@@ -27,29 +27,16 @@ function jump(land = 500, duration = 6, offset = 0, baseline = 500): COMSample[]
 const process = (stream: COMStream, rows: COMSample[]): COMResult[] =>
   rows.flatMap(p => { const result = stream.push(p); return result ? [result] : []; });
 
-describe('COM stream preparation diagnostics', () => {
-  it.each([8, 10, 12, 13])('explains why %i Hz cannot satisfy the unchanged standing evidence requirement', fps => {
-    const stream = new COMStream();
-    for (let frame = 0; frame <= fps * 4; frame++) stream.push(sample(frame, frame / fps));
-    expect(stream.phase).toBe('PREPARING');
-    expect(stream.observationReason).toBe('PREPARATION_SAMPLE_CADENCE');
-    expect(stream.diagnostics).toMatchObject({ prepared: false, observationReason: 'PREPARATION_SAMPLE_CADENCE' });
-    expect(stream.diagnostics.preparationSampleCount).toBeLessThan(8);
-    expect(stream.diagnostics.preparationSpanSeconds).toBeLessThanOrEqual(.5);
-    expect(stream.end()).toBeNull();
-  });
-  it('distinguishes initial evidence collection, unstable standing, and readiness', () => {
+describe('COM stream tracking readiness (no standing still required)', () => {
+  it('becomes ready from tracking evidence alone, while the athlete keeps moving', () => {
     const stream = new COMStream();
     stream.push(sample(0));
     expect(stream.diagnostics).toEqual({ prepared: false, preparationSampleCount: 1,
       preparationSpanSeconds: 0, observationReason: 'PREPARATION_NOT_CONFIRMED' });
-    for (let frame = 1; frame <= 30; frame++) stream.push(sample(frame, frame / 30, frame % 2 ? 515 : 485));
-    expect(stream.observationReason).toBe('PREPARATION_NOT_STILL');
-    for (let frame = 31; frame <= 60; frame++) stream.push(sample(frame));
+    // Bouncing and swaying by 7% of body extent: the old stillness gate never became ready here.
+    for (let frame = 1; frame <= 12; frame++) stream.push(sample(frame, frame / 30, frame % 2 ? 515 : 485));
     expect(stream.phase).toBe('READY');
     expect(stream.diagnostics.prepared).toBe(true);
-    expect(stream.diagnostics.preparationSampleCount).toBeGreaterThanOrEqual(8);
-    expect(stream.diagnostics.preparationSpanSeconds).toBeGreaterThanOrEqual(.3);
     expect(stream.observationReason).toBeNull();
   });
   it('returns diagnostics by value, without letting callers mutate stream state', () => {
@@ -58,6 +45,24 @@ describe('COM stream preparation diagnostics', () => {
     diagnostics.prepared = false; diagnostics.observationReason = 'changed';
     expect(stream.diagnostics.prepared).toBe(true);
     expect(stream.observationReason).toBeNull();
+  });
+  it('does not start a jump when only one foot leaves the floor (stepping, walking)', () => {
+    const stream = new COMStream(); ready(stream);
+    for (let frame = 31; frame <= 150; frame++) {
+      const step = Math.floor(frame / 10) % 2 ? [850, 790] as [number, number] : [790, 850] as [number, number];
+      expect(stream.push(sample(frame, frame / 30, 500 - 15 * Math.abs(Math.sin(frame / 3)), step))).toBeNull();
+      expect(stream.phase).toBe('READY');
+    }
+  });
+  it('ignores toes that appear lifted without the COM rising (e.g. walking away from the camera)', () => {
+    const stream = new COMStream(); ready(stream);
+    const results = [];
+    for (let frame = 31; frame <= 120; frame++) {
+      const r = stream.push(sample(frame, frame / 30, 500, frame > 40 && frame < 55 ? [800, 800] : [850, 850]));
+      if (r) results.push(r);
+    }
+    expect(results).toHaveLength(0);
+    expect(stream.phase).toBe('READY');
   });
 });
 
@@ -82,12 +87,11 @@ describe('COM stream baseline and result lifecycle', () => {
     for (let frame = 46; frame <= 60; frame++) expect(stream.push(sample(frame, frame / 30, 600))).toBeNull();
     expect(stream.phase).toBe('READY'); expect(stream.diagnostics.prepared).toBe(true);
   });
-  it('expires readiness on a real callback gap and requires fresh standing evidence', () => {
+  it('expires readiness on a real callback gap and requires fresh tracking evidence', () => {
     const stream = new COMStream(); ready(stream);
     expect(stream.push(sample(60))).toBeNull();
     expect(stream.phase).toBe('PREPARING');
-    expect(stream.observationReason).toBe('COM_SAMPLE_GAP');
-    expect(stream.diagnostics.prepared).toBe(false);
+    expect(stream.diagnostics).toMatchObject({ prepared: false, preparationSampleCount: 1 });
   });
   it.each([500, 540, 560, 600])('does not count a held landing at y=%i as a second movement', land => {
     const stream = new COMStream(), rows = jump(land), results = process(stream, rows);
@@ -98,23 +102,21 @@ describe('COM stream baseline and result lifecycle', () => {
     expect(stream.phase).toBe('READY');
     expect(stream.end()).toBeNull();
   });
-  it('rechecks stillness after recovery and then measures the next distinct jump', () => {
+  it('is ready for the next jump right after a landing, without standing still in between', () => {
     const stream = new COMStream();
-    let first: COMResult | null = null;
-    const rows = jump(560, 3);
-    for (const row of rows) {
-      const result = stream.push(row);
-      if (result) {
-        first = result;
-        expect(stream.phase).toBe('PREPARING');
-        expect(stream.diagnostics.prepared).toBe(false);
-      }
-    }
-    expect(Math.abs(first!.analysis.heightCm! - 30)).toBeLessThan(1.5);
-    expect(stream.phase).toBe('READY');
-    const second = process(stream, jump(560, 3, 3 + 1 / 30, 560));
+    const first = process(stream, jump(560, 1.8));
+    expect(first).toHaveLength(1); expect(Math.abs(first[0].analysis.heightCm! - 30)).toBeLessThan(1.5);
+    // The second attempt starts 1.8 s after the first began, from a held landing crouch.
+    const second = process(stream, jump(560, 3, 1.8 + 1 / 30, 560));
     expect(second).toHaveLength(1); expect(second[0].id).toBe(2);
     expect(Math.abs(second[0].analysis.heightCm! - 30)).toBeLessThan(1.5);
+  });
+  it('measures a jump that starts while the athlete is still bouncing', () => {
+    const stream = new COMStream();
+    const rows = jump().map(p => p.pts < .45 ? { ...p, comY: p.comY! + 18 * Math.sin(p.pts * 14) } : p);
+    const results = process(stream, rows);
+    expect(results).toHaveLength(1);
+    expect(Math.abs(results[0].analysis.heightCm! - 30)).toBeLessThan(1.5);
   });
   it('does not fill a lost measurement observation or publish an incomplete movement', () => {
     const stream = new COMStream();

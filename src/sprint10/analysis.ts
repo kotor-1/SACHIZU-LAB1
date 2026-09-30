@@ -1,4 +1,7 @@
 export const SPRINT10_ANALYSIS_VERSION = 'sprint10-experimental-v7';
+/** Standing explanations appended to every result's warnings, after any run-specific ones. */
+export const SPRINT10_NOTES: readonly string[] = ['歩数は、2本のラインの間に経過した脚の入れ替わり（遊脚が支持脚を追い越す動き）の周期の数です。ライン上の半端な1歩は周期の割合で数えます。接地回数を1つずつ数えた値ではありません。',
+  '各歩の距離は骨盤の画面内移動を10mのライン間隔で比例換算した推定です。真の全身重心・接地位置間の距離ではなく、遠近やカメラの揺れも補正していません。'];
 export interface Point { x: number; y: number; visibility?: number }
 export interface SprintSample { frame: number; pts: number; hipX: number | null; ankleGap: number | null; kneeGap: number | null; legLength: number | null }
 /** One leg-overlap (the swing leg passing the support leg), once per step. */
@@ -204,8 +207,7 @@ export function analyzeSprint(samples: SprintSample[], startX: number, finishX: 
   }
   const reliable = steps.length >= 2 && coverage >= .9 && !gaps && !irregular && edgeFractions !== null;
   const count = reliable ? multiples.reduce((sum: number, k) => sum + k!, 0) + edgeFractions![0] + edgeFractions![1] : null;
-  const warnings = ['歩数は、2本のラインの間に経過した脚の入れ替わり（遊脚が支持脚を追い越す動き）の周期の数です。ライン上の半端な1歩は周期の割合で数えます。接地回数を1つずつ数えた値ではありません。',
-    '各歩の距離は骨盤の画面内移動を10mのライン間隔で比例換算した推定です。真の全身重心・接地位置間の距離ではなく、遠近やカメラの揺れも補正していません。'];
+  const warnings = [...SPRINT10_NOTES];
   if (!reliable) warnings.unshift('脚の追跡欠落・周期の不確かさがあるため、歩数・ピッチ・歩幅を確定していません。候補位置を確認してください。');
   else if (multiples.includes(2)) warnings.unshift('脚の入れ替わりを1回見逃した区間があり、周期の長さから2歩分として数えました。');
   if (laterRuns.length) warnings.unshift('ゴールを2回以上越えています。最初の走りを解析しました。');

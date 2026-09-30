@@ -10,7 +10,7 @@ function samples(options: Parameters<typeof makeSyntheticFixture>[0] = {}): COMS
     row.comY === null ? row : { ...row, toeY: [feet[0].toe!.y, feet[1].toe!.y] as [number, number] });
 }
 
-describe('toe takeoff + airborne COM apex (cmj-toe-flight-v1)', () => {
+describe('toe takeoff + airborne COM apex (cmj-toe-flight-v2)', () => {
   it('holds all 54 audit smooth-force conditions within 1 cm where the legacy estimator spread 21-39 cm', () => {
     const legacy: number[] = [];
     for (const T of [.15, .25, .35]) for (const fps of [30, 45, 60]) for (const p of [1, 2, 3, 4, 5, 6]) {
@@ -33,6 +33,23 @@ describe('toe takeoff + airborne COM apex (cmj-toe-flight-v1)', () => {
       expect(Math.abs(r.heightCm! - 30), r.reason).toBeLessThan(2);
     }
   });
+  it('does not pull takeoff late or landing early under heavy toe-point noise at 30 fps', () => {
+    // v1 (short floor window) went down to -12 cm here; phones add this much toe noise.
+    const errors: number[] = [];
+    for (let seed = 1; seed <= 40; seed++) {
+      let state = seed * 7919 % 2147483647;
+      const rand = () => (state = (state * 16807) % 2147483647) / 2147483647;
+      const gauss = () => Math.sqrt(-2 * Math.log(rand() + 1e-12)) * Math.cos(2 * Math.PI * rand());
+      const rows = samples({ fps: 30, p: 1 + seed % 6, phase: (seed % 10) / 10 }).map(row =>
+        row.toeY ? { ...row, toeY: [row.toeY[0] + 8 * gauss(), row.toeY[1] + 8 * gauss()] as [number, number] } : row);
+      const r = analyzeToeFlight(rows, 400);
+      if (r.heightCm !== null) errors.push(r.heightCm - 30);
+    }
+    errors.sort((a, b) => a - b);
+    expect(errors.length).toBeGreaterThanOrEqual(38);
+    expect(Math.abs(errors[errors.length >> 1])).toBeLessThan(1.5);
+    expect(errors[0]).toBeGreaterThan(-6);
+  }, 30000);
   it('does not turn a heel raise without toe-off into a jump', () => {
     for (const fps of [45, 60, 240]) expect(analyzeToeFlight(samples({ fps, stress: 'heel-only' }), 400).heightCm).toBeNull();
   });
@@ -44,7 +61,7 @@ describe('toe takeoff + airborne COM apex (cmj-toe-flight-v1)', () => {
   });
   it('keeps the legacy estimate only as a diagnostic', () => {
     const r = analyzeToeFlight(samples({ fps: 60 }), 400);
-    expect(r.version).toBe('cmj-toe-flight-v1-experimental');
+    expect(r.version).toBe('cmj-toe-flight-v2-experimental');
     expect(r.toeFlight.legacyHeightCm).toBe(analyzeCOM(samples({ fps: 60 }), 400).heightCm);
     expect(r.toeFlight.takeoffPts).toBeLessThan(r.toeFlight.apexPts!);
     expect(r.toeFlight.apexPts).toBeLessThan(r.toeFlight.landingPts!);

@@ -240,7 +240,7 @@ describe('10m sprint experiment', () => {
   it('renders upload, playback, gates and analyze, with no first-step or foot input', () => {
     const html = renderToStaticMarkup(<Sprint10Lab />);
     expect(html).not.toContain('type="radio"'); expect(html).not.toContain('左足から'); expect(html).not.toContain('1歩目');
-    expect(html).toContain('4　自動解析'); expect(html).toContain('解析v7');
+    expect(html).toContain('3　解析する'); expect(html).toContain('解析v7'); expect(html).toContain('aria-label="10m動画を選ぶ"');
     expect(html).toContain('この2本のラインで決定'); expect(html).toContain('解析する'); expect(html).toContain('<video');
   });
 });
