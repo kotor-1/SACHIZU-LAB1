@@ -68,7 +68,7 @@ describe('saved toe-cycle observation import, without trusting stored results', 
   });
 
   it('accepts the decoder limits including an offset start time and canonicalizes a hex identifier', () => {
-    const input = saved(); input.environment.sourceFrames = 3600; input.environment.sourceBytes = 150 * 1024 * 1024;
+    const input = saved(); input.environment.sourceFrames = 3600; input.environment.sourceBytes = 250 * 1024 * 1024;
     input.result.sourceVideoSHA256 = 'ABCDEF01'.repeat(8);
     input.poses = Array.from({ length: 3600 }, (_, frame) => ({ frame, pts: 5 + 30 * frame / 3599, poses: [] }));
     const result = parseToeCycleImport(JSON.stringify(input));
@@ -129,7 +129,7 @@ describe('saved toe-cycle observation import, without trusting stored results', 
   it.each(['', 'a'.repeat(63), 'g'.repeat(64), 'a'.repeat(65)])('rejects invalid SHA-256 identifier %s', hash => {
     failure(altered(input => { input.result.sourceVideoSHA256 = hash; }), 'IMPORT_INVALID_METADATA');
   });
-  it.each([0, -1, .5, 150 * 1024 * 1024 + 1, Number.MAX_SAFE_INTEGER + 1])('rejects source byte count %s', bytes => {
+  it.each([0, -1, .5, 250 * 1024 * 1024 + 1, Number.MAX_SAFE_INTEGER + 1])('rejects source byte count %s', bytes => {
     failure(altered(input => { input.environment.sourceBytes = bytes; }), 'IMPORT_INVALID_METADATA');
   });
   it.each([0, -1, 2, 3.5, 3601])('rejects invalid or inconsistent source frame count %s', frames => {

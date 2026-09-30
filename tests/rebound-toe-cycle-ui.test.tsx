@@ -6,8 +6,11 @@ import { toeCycleReport } from '../src/rebound/toe-cycle-research';
 import { soleContactReport, type SoleContactReport } from '../src/rebound/sole-contact';
 
 type Report = ReturnType<typeof toeCycleReport>;
-const measured = (report: Report, extra: Partial<SoleContactReport> = {}): SoleContactReport =>
-  ({ ...soleContactReport(report, null), available: true, reason: null, ...extra });
+const measured = (report: Report, extra: Partial<SoleContactReport> = {}): SoleContactReport => {
+  const sole = { ...soleContactReport(report, null), available: true, reason: null, ...extra };
+  // A sole-measured headline unless a test sets the basis itself.
+  return 'basis' in extra ? sole : { ...sole, basis: sole.mean === null ? null : 'SOLE', headlineMean: sole.mean, headlineContactSeconds: sole.meanContactSeconds };
+};
 
 describe('continuous toe-cycle result presentation', () => {
   it('labels an unavailable estimate instead of filling zero or previous values', () => {
@@ -48,10 +51,33 @@ describe('continuous toe-cycle result presentation', () => {
     const base = toeCycleReport([], 'test', 'test.mov');
     const report = { ...base, phaseBoundaryCycles: [2, 4] };
     const html = renderToStaticMarkup(<ToeCycleResults report={report} sole={measured(report)} pelvisMean={null} />);
-    expect(html).toContain('解析 v5 · 離地・着地を靴底の画像で測定（周期の型 v3・頂点選択 v4）');
-    expect(html).toContain('rj-sole-contact-v1-experimental');
+    expect(html).toContain('解析 v6 · 離地・着地を靴底の画像で測定。床の影と重なる動画はつま先の軌跡で計算（周期の型 v3・頂点選択 v4）');
+    expect(html).toContain('rj-sole-contact-v2-experimental');
     expect(html).toContain('骨盤とつま先のタイミング差が探索範囲の端に達した周期：2・4');
     expect(html).toContain('接地の目安を十分に絞れていない可能性');
+  });
+  it('shows the toe-template RSI, and says why, when the shoe silhouette merged with a floor shadow', () => {
+    const base = toeCycleReport([], 'test', 'test.mov');
+    const report = { ...base, candidateDetected: 11, detected: 11, mean: 1.6051, totalCycles: 10, acceptedCycles: 10 };
+    const sole = measured(report, { mean: .702, measuredCycles: 7, measuredCycleIds: [1, 2, 3, 4, 6, 7, 9], meanContactSeconds: .263,
+      modelMean: 1.6051, basis: 'TOE_MODEL', headlineMean: 1.6051, headlineContactSeconds: .183, reason: 'SOLE_FLOOR_SHADOW_SUSPECTED',
+      landingLeadSeconds: .045, takeoffLagSeconds: .04 });
+    const html = renderToStaticMarkup(<ToeCycleResults report={report} sole={sole} pelvisMean={null} />);
+    expect(html).toContain('<strong data-testid="toe-cycle-rsi">1.61 <small>m/s');
+    expect(html).toContain('つま先の軌跡で計算した周期 10 / 10'); expect(html).toContain('平均接地 183 ms');
+    expect(html).toContain('床の影と一体'); expect(html).toContain('靴底で測った場合の値（0.70 m/s）は使っていません');
+    expect(html).not.toContain('全周期の平均ではありません');
+    expect(html).not.toContain('role="alert"');
+  });
+  it('adds the last-three mean and the best cycle next to the all-cycle mean', () => {
+    const base = toeCycleReport([], 'test', 'test.mov');
+    const cycle = (id: number, value: number) => ({ id, fromPeak: id, toPeak: id + 1, startPts: id, endPts: id + .6, period: .6, reason: null,
+      result: { value, fraction: .7, footFractions: [.7, .7], footPhases: [0, 0] } });
+    const cycles = [1.48, 1.26, 1.38, 1.46, 1.57, 1.56, 1.59, 1.66, 1.75, 1.71].map((v, i) => cycle(i + 1, v));
+    const report = { ...base, candidateDetected: 11, detected: 11, mean: 1.542, totalCycles: 10, acceptedCycles: 10, cycles } as unknown as typeof base;
+    const sole = measured(report, { modelMean: 1.542, basis: 'TOE_MODEL', headlineMean: 1.542, headlineContactSeconds: .17, reason: 'SOLE_CONTACT_INSUFFICIENT_CYCLES' });
+    const html = renderToStaticMarkup(<ToeCycleResults report={report} sole={sole} pelvisMean={null} />);
+    expect(html).toContain('最後3回の平均 <b>1.71</b> · 最高 <b>1.75</b> m/s（平均は全10周期）');
   });
   it('puts the average RSI first and leaves the candidate range only in closed details', () => {
     const base = toeCycleReport([], 'test', 'test.mov');

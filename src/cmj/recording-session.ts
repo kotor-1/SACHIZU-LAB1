@@ -10,6 +10,8 @@ import { recoveryCrop, acceptRecoveredPose } from './pose-recovery';
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 import type { FrameInfo, VideoMetadata } from '../frame-engine/types';
 
+/** Recorded videos are read into memory whole (about twice the file size while demuxing). */
+export const MAX_RECORDING_BYTES = 250 * 1024 * 1024;
 export interface DecodedRecordingFrame {
   /** Borrowed until this callback settles; the decoder owns and closes it. */
   bitmap: ImageBitmap;
@@ -41,7 +43,7 @@ export async function measureRecording(file: File, canvas: HTMLCanvasElement, si
   update: (state: SessionUpdate) => void, status: (message: string) => void = () => {}, options: RecordingOptions = {}): Promise<SessionSummary> {
   const check = () => { if (signal.aborted) throw new DOMException('中止', 'AbortError'); };
   check();
-  if (file.size > 150 * 1024 * 1024) throw new Error('150MB以内の動画を選んでください。ジャンプの前後を残して短くすると解析できます。');
+  if (file.size > MAX_RECORDING_BYTES) throw new Error('250MB以内の動画を選んでください。ジャンプの前後を残して短くするか、1080p・120fpsで撮影すると解析できます。');
   status('動画のフレームと撮影時刻を読み込んでいます。');
   const d = await untilAborted(demuxMP4(file), signal); check();
   if (!d.frames.length || d.frames.length > 3600 || d.frames.at(-1)!.pts - d.frames[0].pts > 30)

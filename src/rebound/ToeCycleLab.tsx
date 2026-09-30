@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { FileJson, Upload } from 'lucide-react';
-import { measureRecording, supportsExactRecording } from '../cmj/recording-session';
+import { MAX_RECORDING_BYTES, measureRecording, supportsExactRecording } from '../cmj/recording-session';
 import type { PoseFrame } from './prediction-observations';
 import { predictionSignals } from './prediction-observations';
 import { AUTOMATIC_REGION } from './automatic-foot';
@@ -39,31 +39,42 @@ const reasons: Record<string, string> = {
   SOLE_OBSERVATIONS_INVALID: '靴底の画像データの時刻が不正', SOLE_EDGE_GAP: '離地・着地の付近で靴底の輪郭が途切れた',
   SOLE_TAKEOFF_UNRESOLVED: '靴底が床から離れる瞬間を確認できない', SOLE_LANDING_UNRESOLVED: '靴底が床に着く瞬間を確認できない',
   SOLE_EVENT_FAR_FROM_MODEL: '靴底の離地・着地がつま先の軌跡と大きく食い違う', SOLE_CONTACT_OUT_OF_RANGE: '接地時間が条件外',
+  SOLE_FLOOR_SHADOW_SUSPECTED: '靴底の輪郭が床の影と一体になり、着地を早く・離地を遅く測っていました（周期全体の中央値で25ms超）。このため平均RSIは、つま先の軌跡の型の離地・着地から計算しています',
   SOLE_CONTACT_INSUFFICIENT_CYCLES: `靴底で接地を測れた周期が${SOLE_CONTACT_SETTINGS.minimumCycles}未満。靴と床の色が近い・足元が暗い・両足が重なる場合に起こります`,
   MODEL_CONTACT_UNAVAILABLE: 'つま先の軌跡から接地の目安を作れない', NO_ACCEPTED_TOE_CYCLES: 'つま先の軌跡から計算できる周期がない',
 };
 export function ToeCycleResults({ report: r, sole, pelvisMean }: { report: Report; sole: SoleContactReport; pelvisMean: number | null }) {
   const byId = new Map(sole.cycles.map(c => [c.id, c]));
-  const reason = sole.mean === null ? (r.mean === null ? r.reason : sole.reason) : null;
+  const shadow = sole.basis === 'TOE_MODEL';
+  const reason = sole.headlineMean === null ? (r.mean === null ? r.reason : sole.reason) : null;
+  const contact = sole.headlineContactSeconds;
+  // Per-cycle values behind the headline, in time order, for PUSH-style summaries.
+  const values = sole.headlineMean === null ? [] : shadow ? r.cycles.flatMap(c => c.result ? [c.result.value] : [])
+    : sole.cycles.flatMap(c => c.value !== null ? [c.value] : []);
+  const lastThree = values.length >= 3 ? values.slice(-3).reduce((a, b) => a + b, 0) / 3 : null;
   return <section aria-label="つま先軌跡によるRJ予測結果">
     <div className="rj-auto-headline">
       <p>平均RSI（推定）</p>
-      <strong data-testid="toe-cycle-rsi">{fmt(sole.mean)} <small>m/s</small></strong>
-      <p>靴底で接地を測れた周期 {sole.measuredCycles} / {r.totalCycles} · 解析対象 {r.detected} 頂点{sole.meanContactSeconds !== null && ` · 平均接地 ${Math.round(sole.meanContactSeconds * 1000)} ms`}</p>
-      <p data-testid="toe-cycle-model">解析 v5 · 離地・着地を靴底の画像で測定（周期の型 v3・頂点選択 v4）</p>
+      <strong data-testid="toe-cycle-rsi">{fmt(sole.headlineMean)} <small>m/s</small></strong>
+      {lastThree !== null && <p data-testid="toe-cycle-summary">最後3回の平均 <b>{fmt(lastThree)}</b> · 最高 <b>{fmt(Math.max(...values))}</b> m/s（平均は全{values.length}周期）</p>}
+      <p>{shadow ? `つま先の軌跡で計算した周期 ${r.acceptedCycles} / ${r.totalCycles}` : `靴底で接地を測れた周期 ${sole.measuredCycles} / ${r.totalCycles}`} · 解析対象 {r.detected} 頂点{contact !== null && ` · 平均接地 ${Math.round(contact * 1000)} ms`}</p>
+      <p data-testid="toe-cycle-model">解析 v6 · 離地・着地を靴底の画像で測定。床の影と重なる動画はつま先の軌跡で計算（周期の型 v3・頂点選択 v4）</p>
     </div>
+    {shadow && <p className="rj-warning" data-testid="toe-cycle-shadow">{sole.reason === 'SOLE_FLOOR_SHADOW_SUSPECTED'
+      ? `${reasons.SOLE_FLOOR_SHADOW_SUSPECTED}。靴底で測った場合の値（${fmt(sole.mean)} m/s）は使っていません。`
+      : `靴底で接地を測れた周期が${SOLE_CONTACT_SETTINGS.minimumCycles}未満のため、平均RSIはつま先の軌跡の型の離地・着地から計算しています。床の影・靴と床の色が近い・足元が暗い場合に起こります。芝の検証動画では、この方法はPUSHより平均0.16高く出ました。`}</p>}
     {reason !== null && <p role="alert" className="rj-warning">{reasons[reason ?? ''] ?? reason ?? 'この動画では予測を算出できませんでした。下の各周期の理由を確認してください。'}。数値を0や過去の平均、つま先の型だけの値で補っていません。</p>}
-    {sole.mean !== null && sole.measuredCycles < r.totalCycles && <p className="rj-warning">全周期の平均ではありません。算出周期：{sole.measuredCycleIds.join('・') || 'なし'}。</p>}
+    {!shadow && sole.mean !== null && sole.measuredCycles < r.totalCycles && <p className="rj-warning">全周期の平均ではありません。算出周期：{sole.measuredCycleIds.join('・') || 'なし'}。</p>}
     {!!r.excludedCandidateIndices.length && <p className="rj-warning">骨盤の候補 {r.candidateDetected} 箇所のうち、前後の両足軌跡を確認できない {r.excludedCandidateIndices.length} 箇所は集計対象外です。実際に跳んでいないと断定した数ではありません。</p>}
     {!!r.unresolvedCandidateIndices.length && <p className="rj-warning">追跡不足などで頂点確認を保留した候補があります。候補を消さず、各周期の計算条件でも確認します。</p>}
-    <p className="rj-warning">精度未検証の推定です。接地時間は靴底が床から離れる・床に着く瞬間を画像から測った値で、測定器の実測値ではありません。PUSHなど他の機器とは定義や集計が異なります。</p>
+    <p className="rj-warning">精度未検証の推定です。接地時間は{shadow ? 'つま先の骨格点の軌跡' : '靴底が床から離れる・床に着く瞬間'}を画像から測った値で、測定器の実測値ではありません。PUSHなど他の機器とは定義や集計が異なります。</p>
     {!!r.boundaryCycles.length && <p className="rj-warning">つま先の型が探索範囲の端に達した周期：{r.boundaryCycles.join('・')}。周期の区切りが不安定な可能性があります。</p>}
     {!!r.phaseBoundaryCycles.length && <p className="rj-warning">骨盤とつま先のタイミング差が探索範囲の端に達した周期：{r.phaseBoundaryCycles.join('・')}。接地の目安を十分に絞れていない可能性があります。</p>}
     <details><summary>各周期の値・算出できなかった理由</summary>
       <div style={{ overflowX: 'auto' }}><table className="rj-table"><thead><tr><th>頂点間</th><th>周期 秒</th><th>接地 ms</th><th>RSI推定 m/s</th><th>型のみ m/s</th><th>状態</th></tr></thead><tbody>
         {r.cycles.map(c => { const s = byId.get(c.id); return <tr key={c.id}><th>{c.fromPeak}→{c.toPeak}</th><td>{fmt(c.period, 3)}</td>
-          <td>{s?.contactSeconds != null ? Math.round(s.contactSeconds * 1000) : '—'}</td><td>{fmt(s?.value)}</td><td>{fmt(c.result?.value)}</td>
-          <td>{c.reason ? reasons[c.reason] ?? c.reason : s?.reason ? reasons[s.reason] ?? s.reason : '靴底で測定'}</td></tr>; })}
+          <td>{s?.contactSeconds != null ? Math.round(s.contactSeconds * 1000) : '—'}</td><td>{fmt(shadow ? c.result?.value : s?.value)}</td><td>{fmt(c.result?.value)}</td>
+          <td>{c.reason ? reasons[c.reason] ?? c.reason : shadow ? 'つま先の型で計算（靴底は使わず）' : s?.reason ? reasons[s.reason] ?? s.reason : '靴底で測定'}</td></tr>; })}
       </tbody></table></div>
     </details>
     <details><summary>解析対象にした頂点・対象外の理由</summary>
@@ -75,10 +86,10 @@ export function ToeCycleResults({ report: r, sole, pelvisMean }: { report: Repor
     </details>
     <details><summary>測り方の詳細</summary>
       <p>骨盤の頂点で周期を区切り、つま先の軌跡に当てはめた型から接地の目安を作ります。その前後で、骨格から決めた足元の小さな範囲だけ靴の輪郭を調べ、靴底の一番下が速く上がり始めた瞬間を離地、速い下降が止まった瞬間を着地とします。踵が上がってつま先で床を押している間は、靴底はゆっくりしか動かないため離地に数えません。両足のうち最初に着いた足から最後に離れた足までを接地時間とし、周期から接地時間を引いた時間を滞空として、高さ＝g×滞空²÷8、RSI＝高さ÷接地時間を周期ごとに計算して平均します。</p>
-      <p>靴底の輪郭を確認できない周期は、つま先の型の値で補わずに集計から外します。数値モデル：靴底接地 v1（{SOLE_CONTACT_SETTINGS.version}）。</p>
+      <p>靴底の輪郭を確認できない周期は、つま先の型の値で補わずに集計から外します。ただし、床の影と重なって靴底の着地が早く・離地が遅く測られている動画（周期全体の中央値で25ms超）では、靴底の値を使わず、つま先の型の離地・着地から計算します。数値モデル：靴底接地 v2（{SOLE_CONTACT_SETTINGS.version}）。</p>
     </details>
     <details><summary>つま先の型だけの値（参考）</summary>
-      <p>つま先の型だけで計算した平均：<span data-testid="toe-cycle-template">{fmt(r.mean)}</span> m/s。つま先の骨格点は踵が上がると床に着いたまま上がり始めるため、離地を早く取り、高めに出る傾向があります。</p>
+      <p>つま先の型だけで計算した平均：<span data-testid="toe-cycle-template">{fmt(r.mean)}</span> m/s。{shadow ? 'この動画では、この値を平均RSIとして表示しています（床の影と重なる夜間のコンクリートの録画2本で、型の離地・着地は映像と1コマ以内でした）。' : 'つま先の骨格点は踵が上がると床に着いたまま上がり始めるため、芝の検証動画では離地を早く取り、高めに出る傾向がありました。'}</p>
       <p>型の設定による候補幅：<span data-testid="toe-cycle-range">{r.meanProfileRange ? `${fmt(r.meanProfileRange[0])}～${fmt(r.meanProfileRange[1])}` : '—'} m/s</span>。信頼区間・誤差保証ではありません。</p>
       <p>同じ骨格データの従来の骨盤モデル：{fmt(pelvisMean)} m/s。高い方を正解として選んだり、値を混ぜたりしていません。隣接する対象頂点間を1周期とします。各跳躍の実測RSIや「最後3回平均」と同じ集計ではありません。</p>
     </details>
@@ -152,7 +163,7 @@ export default function ToeCycleLab() {
   }
   async function start() {
     if ((!file && !cached.current) || !canvas.current || owner.current) return;
-    if (file && file.size > 150 * 1024 * 1024) { setMessage('150MB以内の動画を選んでください。'); return; }
+    if (file && file.size > MAX_RECORDING_BYTES) { setMessage('250MB以内の動画を選んでください。1080p・120fpsで撮影すると軽くなります（解析は高さ960pxに縮小するため、4Kにしても精度は上がりません）。'); return; }
     if (file && !supportsExactRecording(file)) { setMessage('MOV/MP4の元動画と元フレーム解析に対応したブラウザが必要です。'); return; }
     const control = new AbortController(); owner.current = control; setBusy(true); clear(); video.current?.pause();
     const current = () => owner.current === control && !control.signal.aborted;
@@ -192,7 +203,7 @@ export default function ToeCycleLab() {
         result, soleContact: soleResult, pelvisComparison: baseline, inputProvenance: { kind: observation.origin, sourceVideoVerified: observation.origin === 'VIDEO' },
         observationModel: 'full', manualInputsUsed: false, videoUploaded: false, poses: observation.poses, soles: observation.soles,
         environment: { userAgent: navigator.userAgent, sourceFrames: observation.poses.length, sourceBytes: observation.sourceBytes } });
-      setMessage(`解析完了（${Math.round((performance.now() - started) / 1000)}秒）${reused ? ' · 骨格の再取得なし' : ''}。${soleResult.mean === null ? '算出できなかった理由を確認してください。' : '平均RSIを表示しました。精度未検証の推定値です。'}`);
+      setMessage(`解析完了（${Math.round((performance.now() - started) / 1000)}秒）${reused ? ' · 骨格の再取得なし' : ''}。${soleResult.headlineMean === null ? '算出できなかった理由を確認してください。' : '平均RSIを表示しました。精度未検証の推定値です。'}`);
     } catch (e) {
       if (owner.current === control) setMessage(control.signal.aborted ? '停止しました。途中の結果は表示しません。' : e instanceof Error ? e.message : String(e));
     } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
@@ -234,6 +245,6 @@ export default function ToeCycleLab() {
     <p role="status">{message}</p>
     {report && sole && <ToeCycleResults report={report} sole={sole} pelvisMean={pelvisMean} />}
     {exportData && <button className="rj-button" onClick={save}>予測結果・骨格をJSON保存</button>}
-    <footer>靴底接地 v1 / 頂点選択 v4 / 連続軌跡モデル v3 · 動画は端末内で処理。150MB / 30秒 / 3600フレーム以内。ページを閉じると未保存の結果は消えます。</footer>
+    <footer>靴底接地 v2 / 頂点選択 v4 / 連続軌跡モデル v3 · 動画は端末内で処理。250MB / 30秒 / 3600フレーム以内（1080p・120fps推奨）。ページを閉じると未保存の結果は消えます。</footer>
   </main>;
 }

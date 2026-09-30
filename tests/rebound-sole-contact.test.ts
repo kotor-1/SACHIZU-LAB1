@@ -62,6 +62,25 @@ describe('RJ sole-contact timing (rj-sole-contact-v1)', () => {
       expect(Math.abs(c.takeoffPts! - (truth[i].off + .02))).toBeLessThanOrEqual(frame / 2 + 1e-9);
     });
   });
+  it('uses the shoe bottom when it agrees with the template (about a frame apart)', () => {
+    const r = report(3), truth = r.cycles.map(c => ({ land: c.startPts + .1771, off: c.startPts + .4352 }));
+    const out = soleContactReport(r, soles(truth, 3.2));
+    expect(out).toMatchObject({ basis: 'SOLE', reason: null });
+    expect(out.headlineMean).toBe(out.mean);
+    expect(out.landingLeadSeconds!).toBeLessThan(.025); expect(out.takeoffLagSeconds!).toBeLessThan(.025);
+  });
+  it('falls back to the template when a floor shadow makes the shoe land early and leave late', () => {
+    // The merged shoe+shadow silhouette reaches the floor ~5 frames before and leaves ~5 frames after the template events.
+    const r = report(3), model = r.cycles.map(c => ({ land: c.startPts + .18, off: c.startPts + .42 }));
+    const shadowed = model.map(e => ({ land: e.land - .045, off: e.off + .04 }));
+    const out = soleContactReport(r, soles(shadowed, 3.2));
+    expect(out.mean).not.toBeNull();
+    expect(out.mean!).toBeLessThan(out.modelMean! * .8);   // what v1 displayed
+    expect(out).toMatchObject({ basis: 'TOE_MODEL', reason: 'SOLE_FLOOR_SHADOW_SUSPECTED' });
+    expect(out.headlineMean).toBe(out.modelMean);
+    expect(out.headlineContactSeconds).toBeCloseTo(.24, 9);
+    expect(out.landingLeadSeconds!).toBeGreaterThan(.025);
+  });
   it('ignores a one-frame silhouette glitch during support', () => {
     const r = report(3), truth = r.cycles.map(c => ({ land: c.startPts + .1771, off: c.startPts + .4352 }));
     const clean = soleContactReport(r, soles(truth, 3.2));
@@ -69,13 +88,13 @@ describe('RJ sole-contact timing (rj-sole-contact-v1)', () => {
       ? { ...f, feet: [{ dark: 680, bright: null }, f.feet[1]] } : f));
     expect(glitch.cycles[0].takeoffPts).toBe(clean.cycles[0].takeoffPts);
   });
-  it('does not bridge missing shoe frames at an event and never fills from the template', () => {
+  it('does not bridge missing shoe frames at an event, and with too few measured cycles shows the labelled template', () => {
     const r = report(3), truth = r.cycles.map(c => ({ land: c.startPts + .1771, off: c.startPts + .4352 }));
     const out = soleContactReport(r, soles(truth, 3.2, f => Math.abs(f.pts - truth[1].off) < .015 ? null : f));
     expect(out.cycles[1]).toMatchObject({ value: null, reason: 'SOLE_EDGE_GAP' });
     expect(out.measuredCycles).toBe(2);
-    expect(out.mean).toBeNull();
-    expect(out.reason).toBe('SOLE_CONTACT_INSUFFICIENT_CYCLES');
+    expect(out.mean).toBeNull();   // no partial shoe mean, no per-cycle template filling
+    expect(out).toMatchObject({ reason: 'SOLE_CONTACT_INSUFFICIENT_CYCLES', basis: 'TOE_MODEL', headlineMean: out.modelMean });
   });
   it('holds when no shoe observations exist (older saved JSON)', () => {
     const out = soleContactReport(report(3), null);

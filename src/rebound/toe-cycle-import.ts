@@ -8,7 +8,8 @@ import type { SoleFoot, SoleFrame } from './sole-contact';
 export const MAX_TOE_CYCLE_IMPORT_BYTES = 32 * 1024 * 1024;
 const MAX_FRAMES = 3600;
 const MAX_DURATION_SECONDS = 30;
-const MAX_SOURCE_BYTES = 150 * 1024 * 1024;
+// Same limit as recorded-video analysis (MAX_RECORDING_BYTES in cmj/recording-session).
+const MAX_SOURCE_BYTES = 250 * 1024 * 1024;
 const EXPORT_VERSION = 'rj-toe-cycle-export-v1';
 const RESULT_VERSIONS = ['rj-toe-constrained-cycle-v1-research', 'rj-toe-constrained-cycle-v2-research', 'rj-toe-constrained-cycle-v3-research', 'rj-toe-constrained-cycle-v4-research'] as const;
 type SavedResultVersion = typeof RESULT_VERSIONS[number];

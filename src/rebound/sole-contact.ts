@@ -13,16 +13,28 @@ import type { ToeCycleReport } from './toe-cycle-research';
  * 120 fps) and then leaves fast (4-6 px/frame). A takeoff is therefore the
  * first FAST upward step that carries on into the air; a landing is the same
  * rule with time reversed. Thresholds are in leg lengths per second and were
- * chosen from those blind visual reviews, NOT from reference RSI values. */
+ * chosen from those blind visual reviews, NOT from reference RSI values.
+ *
+ * v2: under an overhead light on a bright floor (concrete, at night) each shoe
+ * casts a dark shadow directly below it. Near the floor the shadow merges with
+ * the shoe silhouette, so its "bottom" reaches the floor 4-7 frames before the
+ * visible landing and stays there 4-6 frames after the takeoff (16 reviewed
+ * events, 2 recordings; the toe template matched the video within ~1 frame).
+ * On the turf review set the sole and template events differed by a median of
+ * about 1 frame (95th percentile ~3 frames). When the recording's median
+ * difference exceeds 25 ms at landing or takeoff, the silhouette is treated as
+ * floor-attached and the headline falls back to the toe template's events.
+ * With fewer than three shoe-measured cycles the headline also uses the
+ * template, labelled (on turf it read +0.16 above PUSH on average). */
 export const SOLE_CONTACT_SETTINGS = Object.freeze({
-  version: 'rj-sole-contact-v1-experimental' as const,
+  version: 'rj-sole-contact-v2-experimental' as const,
   imageHeight: 960,
   minimumToeVisibility: .5, minimumHeelVisibility: .35,
   liftSpeedLegsPerSecond: 1.3, minimumTravelLegs: .05,
   continuationSamples: 6, monotoneSteps: 3, reboundTolerancePixels: 1,
   searchBeyondModelSeconds: .1, maximumShiftFromModelSeconds: .06,
   maximumGapSeconds: .02, minimumContactSeconds: .06, maximumContactSeconds: .6,
-  minimumCycles: 3,
+  minimumCycles: 3, maximumFloorAttachedSeconds: .025,
 });
 
 export interface SoleFoot { dark: number | null; bright: number | null }
@@ -114,6 +126,11 @@ export interface SoleContactReport {
   available: boolean; polarity: SolePolarity | null;
   cycles: SoleContactCycle[]; measuredCycles: number; measuredCycleIds: number[];
   mean: number | null; meanContactSeconds: number | null; modelMean: number | null;
+  /** Median over cycles of (template landing - sole landing) and (sole takeoff - template takeoff). */
+  landingLeadSeconds: number | null; takeoffLagSeconds: number | null;
+  /** What the headline RSI is based on: the shoe bottom, or (when the silhouette
+   * merged with a floor shadow) the toe template's contact events. */
+  basis: 'SOLE' | 'TOE_MODEL' | null; headlineMean: number | null; headlineContactSeconds: number | null;
   reason: string | null;
 }
 
@@ -134,7 +151,8 @@ export function soleContactReport(report: ToeCycleReport, soles: readonly SoleFr
   const accepted = report.cycles.filter(c => c.result);
   const modelMean = accepted.length ? accepted.reduce((s, c) => s + c.result!.value, 0) / accepted.length : null;
   const base: SoleContactReport = { version: S.version, settings: S, available: false, polarity: null, cycles: [],
-    measuredCycles: 0, measuredCycleIds: [], mean: null, meanContactSeconds: null, modelMean, reason: null };
+    measuredCycles: 0, measuredCycleIds: [], mean: null, meanContactSeconds: null, modelMean,
+    landingLeadSeconds: null, takeoffLagSeconds: null, basis: null, headlineMean: null, headlineContactSeconds: null, reason: null };
   if (!soles || !soles.length) return { ...base, reason: 'SOLE_OBSERVATIONS_UNAVAILABLE' };
   if (soles.some((f, i) => !Number.isFinite(f.pts) || (i > 0 && f.pts <= soles[i - 1].pts)))
     return { ...base, reason: 'SOLE_OBSERVATIONS_INVALID' };
@@ -173,8 +191,26 @@ export function soleContactReport(report: ToeCycleReport, soles: readonly SoleFr
   const measured = cycles.filter(c => c.value !== null);
   const average = (xs: number[]) => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
   const enough = measured.length >= S.minimumCycles;
-  return { ...base, available: true, polarity, cycles, measuredCycles: measured.length, measuredCycleIds: measured.map(c => c.id),
-    mean: enough ? average(measured.map(c => c.value!)) : null,
-    meanContactSeconds: enough ? average(measured.map(c => c.contactSeconds!)) : null,
+  const mean = enough ? average(measured.map(c => c.value!)) : null;
+  const meanContactSeconds = enough ? average(measured.map(c => c.contactSeconds!)) : null;
+  // Floor-attached silhouette (shadow): sole landings early AND/OR takeoffs late
+  // against the template across the recording, not in single cycles.
+  const timed = cycles.flatMap(c => c.modelLandingPts !== null && c.modelTakeoffPts !== null
+    && c.footLandings.every(v => v !== null) && c.footTakeoffs.every(v => v !== null)
+    ? [{ lead: c.modelLandingPts - Math.min(...c.footLandings as number[]), lag: Math.max(...c.footTakeoffs as number[]) - c.modelTakeoffPts }] : []);
+  const landingLeadSeconds = timed.length ? median(timed.map(t => t.lead)) : null;
+  const takeoffLagSeconds = timed.length ? median(timed.map(t => t.lag)) : null;
+  const floorAttached = timed.length >= S.minimumCycles && modelMean !== null
+    && (landingLeadSeconds! > S.maximumFloorAttachedSeconds || takeoffLagSeconds! > S.maximumFloorAttachedSeconds);
+  const modelContacts = accepted.flatMap(c => { const m = modelContact(c); return m ? [m.takeoff - m.landing] : []; });
+  const common = { ...base, available: true, polarity, cycles, measuredCycles: measured.length, measuredCycleIds: measured.map(c => c.id),
+    mean, meanContactSeconds, landingLeadSeconds, takeoffLagSeconds };
+  if (floorAttached) return { ...common, basis: 'TOE_MODEL', headlineMean: modelMean, headlineContactSeconds: average(modelContacts),
+    reason: 'SOLE_FLOOR_SHADOW_SUSPECTED' };
+  // Too few shoe-measured cycles (e.g. a floor shadow that never leaves the
+  // floor): report the toe template's events, labelled, rather than nothing.
+  if (!enough && modelMean !== null) return { ...common, basis: 'TOE_MODEL', headlineMean: modelMean,
+    headlineContactSeconds: average(modelContacts), reason: 'SOLE_CONTACT_INSUFFICIENT_CYCLES' };
+  return { ...common, basis: mean === null ? null : 'SOLE', headlineMean: mean, headlineContactSeconds: meanContactSeconds,
     reason: enough ? null : accepted.length ? 'SOLE_CONTACT_INSUFFICIENT_CYCLES' : report.reason ?? 'NO_ACCEPTED_TOE_CYCLES' };
 }
