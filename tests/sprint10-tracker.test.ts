@@ -102,17 +102,99 @@ describe('10m subject acquisition', () => {
     expect(tracker.choose([target], .04)).toBe(target);
   });
 
-  it('does not reacquire after a confirmed track has been lost for more than 350 ms', () => {
+  it('abandons a confirmed track that has been lost for more than 1.5 s', () => {
     const tracker = new SprintTracker(.2), target = pose(.2);
     tracker.choose([target], 0); tracker.choose([target], .01);
     expect(tracker.choose([target], .02)).toBe(target);
     expect(tracker.choose([], .1)).toEqual([]);
-    expect(tracker.choose([target], .370001)).toEqual([]);
-    expect(tracker.choose([target], .38)).toEqual([]);
-    expect(tracker.choose([target], .39)).toEqual([]);
-    expect(tracker.choose([target], .4)).toEqual([]);
+    for (const t of [1.520001, 1.53, 1.54, 1.55, 1.56, 1.57]) expect(tracker.choose([target], t)).toEqual([]);
   });
 
+  it('keeps a running subject when a slow bystander walking the other way is briefly nearest', () => {
+    const fps = 120, tracker = new SprintTracker(.1), runner = (t: number) => .1 + .4 * Math.max(0, t - .2);
+    const walker = (t: number) => .62 - .05 * t;
+    let lastRunner = 0, onWalker = 0;
+    for (let frame = 0; frame < 2.4 * fps; frame++) {
+      const t = frame / fps, r = runner(t), w = walker(t);
+      // The runner's pose drops out for 40 ms while passing the walker.
+      const passing = Math.abs(r - w) < .04 && Math.abs(r - w) > .01;
+      const poses = passing ? [pose(w)] : Math.abs(r - w) <= .01 ? [pose(r)] : [pose(r), pose(w)];
+      const chosen = tracker.choose(poses, t);
+      if (!chosen.length) continue;
+      const x = (chosen[23].x + chosen[24].x) / 2;
+      if (Math.abs(x - r) < 1e-9) lastRunner = t; else onWalker = t;
+    }
+    // After the pass the track is back on the runner, never following the walker.
+    expect(lastRunner).toBeGreaterThan(2.2);
+    expect(onWalker).toBeLessThan(1.6);
+  });
+  it('resumes a runner after a longer occlusion only at the predicted, forward-moving position', () => {
+    const fps = 120, tracker = new SprintTracker(.1), runner = (t: number) => .1 + .4 * Math.max(0, t - .2);
+    let resumed = -1;
+    for (let frame = 0; frame < 2.4 * fps; frame++) {
+      const t = frame / fps, hidden = t > 1 && t < 1.6;
+      const poses = hidden ? [pose(.7)] : [pose(runner(t))];   // a static bystander while the runner is hidden
+      const chosen = tracker.choose(poses, t);
+      if (hidden) expect(chosen).toEqual([]);
+      if (!hidden && t > 1.6 && chosen.length && resumed < 0) resumed = t;
+    }
+    expect(resumed).toBeGreaterThan(1.6); expect(resumed).toBeLessThan(1.7);
+  });
+  it('does not resume on a pose moving backwards after a running loss', () => {
+    const fps = 120, tracker = new SprintTracker(.1), runner = (t: number) => .1 + .4 * Math.max(0, t - .2);
+    for (let frame = 0; frame <= 1.2 * fps; frame++) tracker.choose([pose(runner(frame / fps))], frame / fps);
+    let taken = 0, seen = 0;
+    for (let frame = 1.2 * fps + 1; frame < 2.4 * fps; frame++) {
+      const t = frame / fps;
+      // After the loss, someone appears exactly at the predicted position but walks back towards the start.
+      if (t < 1.55) { tracker.choose([], t); continue; }
+      const x = runner(1.2) + .4 * .35 - .05 * (t - 1.55);
+      if (Math.abs(x - tracker.expected(t)) < .1) seen++;
+      if (tracker.choose([pose(x)], t).length) taken++;
+    }
+    expect(seen).toBeGreaterThan(10);
+    expect(taken).toBe(0);
+  });
+  it.each([.175, .35])('before the run, replaces a bystander acquired first with the person nearer the start gate, then passes them (acceleration %s)', acceleration => {
+    // The bystander stands 0.08 image widths ahead of the runner, who accelerates from rest at t = 1 s.
+    const fps = 120, tracker = new SprintTracker(.05, 1), bystander = .13;
+    const runner = (t: number) => .054 + acceleration * Math.max(0, t - 1) ** 2;
+    let onBystanderAfter = 0, firstOnRunner = -1, last = 0;
+    for (let frame = 0; frame < 3 * fps; frame++) {
+      const t = frame / fps, r = runner(t);
+      // The runner at the gate is detected only from 0.2 s; the bystander stands still.
+      const poses = t < .2 ? [pose(bystander)] : Math.abs(r - bystander) < .01 ? [pose(r)] : [pose(r), pose(bystander)];
+      const chosen = tracker.choose(poses, t);
+      if (!chosen.length) continue;
+      const x = (chosen[23].x + chosen[24].x) / 2;
+      if (Math.abs(x - r) < 1e-9) { if (firstOnRunner < 0) firstOnRunner = t; last = x; } else if (firstOnRunner >= 0) onBystanderAfter++;
+    }
+    expect(firstOnRunner).toBeGreaterThan(.2); expect(firstOnRunner).toBeLessThan(.25);
+    expect(onBystanderAfter).toBe(0);
+    expect(last).toBeGreaterThan(.45);
+  });
+  it.each([.175, .35])('keeps a runner who overtakes a person walking back past the start (acceleration %s)', acceleration => {
+    // The runner walks in from behind the gate, then accelerates from 0.8 s.
+    const fps = 120, tracker = new SprintTracker(.05, 1), walker = (t: number) => .21 - .07 * t;
+    const runner = (t: number) => t < .8 ? .025 + .13 * (t - .2) : .103 + .13 * (t - .8) + acceleration * (t - .8) ** 2;
+    let onWalkerAfter = 0, onRunner = -1, last = 0;
+    for (let frame = 0; frame < 3 * fps; frame++) {
+      const t = frame / fps, w = walker(t), r = runner(t);
+      const poses = t < .2 ? [pose(w)] : Math.abs(r - w) < .01 ? [pose(r)] : [pose(r), pose(w)];
+      const chosen = tracker.choose(poses, t);
+      if (!chosen.length) continue;
+      const x = (chosen[23].x + chosen[24].x) / 2;
+      if (t >= .2 && Math.abs(x - r) < 1e-9) { if (onRunner < 0) onRunner = t; last = x; } else if (onRunner >= 0) onWalkerAfter++;
+    }
+    expect(onRunner).toBeGreaterThan(.2); expect(onRunner).toBeLessThan(.25);
+    expect(onWalkerAfter).toBe(0);
+    expect(last).toBeGreaterThan(.5);
+  });
+  it('without a run direction keeps the subject acquired first', () => {
+    const tracker = new SprintTracker(.05), bystander = pose(.13), runner = pose(.054);
+    for (let frame = 0; frame < 24; frame++) tracker.choose([bystander], frame / 120);
+    for (let frame = 24; frame < 60; frame++) expect(tracker.choose([runner, bystander], frame / 120)).toBe(bystander);
+  });
   it('preserves confirmed tracking through a short gap or ambiguous observation', () => {
     const tracker = new SprintTracker(.2), target = pose(.2);
     tracker.choose([target], 0); tracker.choose([target], .01);
@@ -120,6 +202,15 @@ describe('10m subject acquisition', () => {
     expect(tracker.choose([pose(.19), pose(.21)], .03)).toEqual([]);
     expect(tracker.choose([], .04)).toEqual([]);
     expect(tracker.choose([target], .05)).toBe(target);
-    expect(tracker.choose([target], .4)).toBe(target);
+    expect(tracker.choose([target], .15)).toBe(target);
+  });
+  it('needs three consistent observations over 40 ms to resume after a gap longer than 0.1 s', () => {
+    const tracker = new SprintTracker(.2), target = pose(.2);
+    tracker.choose([target], 0); tracker.choose([target], .01);
+    expect(tracker.choose([target], .02)).toBe(target);
+    expect(tracker.choose([target], .4)).toEqual([]);
+    expect(tracker.choose([target], .42)).toEqual([]);
+    expect(tracker.choose([target], .44)).toBe(target);
+    expect(tracker.choose([target], .45)).toBe(target);
   });
 });

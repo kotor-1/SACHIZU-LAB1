@@ -39,6 +39,63 @@ describe('10m sprint experiment', () => {
     expect(stepCandidates(glitch).events.map(e => e.pts)).toEqual(stepCandidates(clean).events.map(e => e.pts));
     expect(analyzeSprint(glitch, .2, .8).count).toBeCloseTo(analyzeSprint(clean, .2, .8).count!, 9);
   });
+  it('treats standing sway on the start line as one start: the last time the pelvis was on or behind it', () => {
+    // Pelvis sways +-.006 around the start line for 1 s, then runs.
+    const sway = synthetic().map(s => ({ ...s, hipX: s.pts < 1 ? .2 + .006 * Math.sin(2 * Math.PI * 3 * s.pts) : .2 + .4 * (s.pts - 1) }));
+    const r = analyzeSprint(sway, .2, .8);
+    expect(r.reason).toBeNull();
+    expect(r.start!.pts).toBeGreaterThan(.95); expect(r.start!.pts).toBeLessThanOrEqual(1.0001);
+    expect(r.duration).toBeCloseTo(1.5, 1);
+  });
+  it('analyses a run after the athlete walked back to the start and warns about a second run', () => {
+    const walk = synthetic().map(s => ({ ...s, hipX: s.pts < .5 ? .3 - .3 * s.pts : .15 + .3 * (s.pts - .5) }));
+    const r = analyzeSprint(walk, .2, .8);
+    expect(r.reason).toBeNull(); expect(r.start!.pts).toBeCloseTo(.5 + .05 / .3, 3);
+    const twice = [...synthetic(), ...synthetic().map(s => ({ ...s, frame: s.frame + 1000, pts: s.pts + 10 }))];
+    const t = analyzeSprint(twice, .2, .8);
+    expect(t.duration).toBeCloseTo(2); expect(t.warnings[0]).toContain('最初の走り');
+  });
+  it('explains a start line placed in front of where the athlete already stands', () => {
+    const r = analyzeSprint(synthetic().filter(s => s.pts > .6), .2, .8);
+    expect(r.reason).toContain('スタートラインより後ろにいる選手を確認できません');
+  });
+  it('counts one missed overlap (a cycle about twice the usual) as two steps and leaves its distance blank', () => {
+    const missed = synthetic(120).map(s => Math.abs(s.pts - 1.375) < .07 ? { ...s, ankleGap: .2, kneeGap: .1 } : s);
+    const clean = analyzeSprint(synthetic(120), .2, .8), r = analyzeSprint(missed, .2, .8);
+    expect(r.steps.length).toBe(clean.steps.length - 1);
+    expect(r.count).toBeCloseTo(clean.count!, 6);
+    expect(r.warnings[0]).toContain('2歩分');
+    expect(r.strideIntervals.some(s => s.reason === '入れ替わりの見逃しで2歩分の区間です' && s.distanceM === null)).toBe(true);
+  });
+  it('counts a cycle up to 1.5x the median as one, about 1.7x as two, and withholds the band between', () => {
+    // Overlaps every 30 frames (0.25 s at 120 fps) except one longer cycle after 1.375 s.
+    const gait = (longFrames: number) => {
+      const overlaps: number[] = [];
+      for (let f = 15; f <= 165; f += 30) overlaps.push(f);
+      for (let f = 165 + longFrames; f <= 400; f += 30) overlaps.push(f);
+      return Array.from({ length: 361 }, (_, i) => {
+        const k = overlaps.filter(o => o <= i).length - 1, a = overlaps[k] ?? overlaps[0] - 30, b = overlaps[k + 1] ?? a + 30;
+        const gap = .03 + .25 * Math.sin(Math.PI * (i - a) / (b - a));
+        return { frame: i, pts: i / 120, hipX: .05 + .3 * i / 120, ankleGap: gap, kneeGap: gap * .5, legLength: .3 };
+      });
+    };
+    const single = analyzeSprint(gait(43), .2, .8);           // 1.43x: easing off, one cycle
+    // Start .5 is half a cycle before .625; the finish 2.5 is 2 frames after the overlap at frame 298.
+    expect(single.count).toBeCloseTo(.5 + 7 + (2.5 - 298 / 120) / .25, 6);
+    expect(single.warnings[0]).not.toContain('2歩分');
+    expect(analyzeSprint(gait(47), .2, .8).count).toBeNull(); // 1.57x: ambiguous
+    const double = analyzeSprint(gait(52), .2, .8);            // 1.73x: one missed overlap
+    expect(double.count).not.toBeNull(); expect(double.warnings[0]).toContain('2歩分');
+  });
+  it('detects the first leg crossing out of a standing stance narrower than a running stride', () => {
+    // Stance gap 0.45 (scaled by leg length) lies between the closed (0.28) and open (0.51) levels;
+    // the legs first close at 0.625 s, just after the start line at 0.5 s.
+    const standing = synthetic(120).map(s => s.pts < .5905 ? { ...s, ankleGap: .135, kneeGap: .0675 } : s);
+    const r = analyzeSprint(standing, .2, .8);
+    // Within one frame: the stance flattens one side of the smoothed minimum.
+    expect(Math.abs(r.steps[0].pts - .625)).toBeLessThanOrEqual(1 / 120 + 1e-9);
+    expect(Math.abs(r.count! - 8)).toBeLessThanOrEqual(1 / 120 / .25 + 1e-9);
+  });
   it('uses measured displacements between equal gait phases, with N-1 complete intervals', () => {
     const r = analyzeSprint(synthetic(), .2, .8);
     expect(r.strideIntervals).toHaveLength(r.steps.length - 1);
@@ -183,7 +240,7 @@ describe('10m sprint experiment', () => {
   it('renders upload, playback, gates and analyze, with no first-step or foot input', () => {
     const html = renderToStaticMarkup(<Sprint10Lab />);
     expect(html).not.toContain('type="radio"'); expect(html).not.toContain('左足から'); expect(html).not.toContain('1歩目');
-    expect(html).toContain('4　自動解析'); expect(html).toContain('解析v6');
+    expect(html).toContain('4　自動解析'); expect(html).toContain('解析v7');
     expect(html).toContain('この2本のラインで決定'); expect(html).toContain('解析する'); expect(html).toContain('<video');
   });
 });

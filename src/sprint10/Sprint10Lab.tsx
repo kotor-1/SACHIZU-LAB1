@@ -24,7 +24,7 @@ export default function Sprint10Lab() {
     if (busy) return;
     const x = Math.max(.01, Math.min(.99, value));
     if (which === 'start') setStart(x); else setFinish(x);
-    // The start gate seeds subject selection: changing gates requires a fresh run.
+    // The gates seed subject selection and its run direction: changing them requires a fresh run.
     setConfirmed(false); setSamples(null); setReview('');
   }
   function drag(which: 'start' | 'finish', event: React.PointerEvent<HTMLButtonElement>) {
@@ -39,7 +39,7 @@ export default function Sprint10Lab() {
     try {
       const data = await measureSprint(file, start, control.signal, (value, text) => {
         if (owner.current === control) { setProgress(value); setMessage(text); }
-      });
+      }, finish);
       if (owner.current === control && !control.signal.aborted) setSamples(data);
     } catch (error) {
       if (owner.current === control && !control.signal.aborted) setMessage(error instanceof Error ? error.message : String(error));
@@ -107,6 +107,6 @@ export default function Sprint10Lab() {
       </div><p>ボタンでその時刻へ移動します。遊脚が支持脚を追い越す瞬間で、接地のコマではありません。</p>
       <button onClick={save}>結果と判定データを保存（JSON）</button>
     </section>}
-    <footer>解析v6 · 動画はこの端末内で処理します。全フレームの解析時間は端末性能により変わります。2本のラインだけで遠近やカメラの揺れを補正することはできません。</footer>
+    <footer>解析v7 · 動画はこの端末内で処理します。全フレームの解析時間は端末性能により変わります。2本のラインだけで遠近やカメラの揺れを補正することはできません。</footer>
   </main>;
 }
