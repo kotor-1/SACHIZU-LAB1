@@ -43,12 +43,12 @@ describe('camera clock separation', () => {
   describe('drawCameraFrame', () => {
     afterEach(() => { vi.unstubAllGlobals(); });
     const video = {} as HTMLVideoElement;
-    it('draws the VideoFrame and returns its own timestamp in seconds', () => {
+    it('returns the current VideoFrame timestamp and draws the element, which applies camera rotation', () => {
       const close = vi.fn();
       vi.stubGlobal('VideoFrame', class { timestamp = 1_500_000; close = close; constructor(readonly source: unknown) {} });
       const drawImage = vi.fn();
       expect(drawCameraFrame(video, { drawImage } as unknown as CanvasRenderingContext2D, 10, 20)).toBe(1.5);
-      expect(drawImage.mock.calls[0][0]).not.toBe(video);
+      expect(drawImage).toHaveBeenCalledWith(video, 0, 0, 10, 20);
       expect(close).toHaveBeenCalledTimes(1);
     });
     it('draws the element and returns null when VideoFrame is unavailable or fails', () => {

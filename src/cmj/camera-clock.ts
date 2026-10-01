@@ -65,17 +65,20 @@ export class CameraClock {
 
 /** Draws the video's current frame and returns that frame's own capture time
  * in seconds, so pixels and time always belong to the same camera frame.
- * Returns null (after drawing from the element) when VideoFrame is unavailable. */
+ * The time comes from new VideoFrame(video); the pixels from the element. The
+ * element applies the camera's rotation, while a VideoFrame drawn directly kept
+ * the landscape sensor orientation in portrait on iPhone (sideways skeleton).
+ * Both read the element's current frame within this one task (WebKit:
+ * m_imagePainter.videoFrame), so they cannot belong to different frames.
+ * Returns null when VideoFrame is unavailable. */
 export function drawCameraFrame(video: HTMLVideoElement, context: CanvasRenderingContext2D, width: number, height: number): number | null {
+  let time: number | null = null;
   if (typeof VideoFrame !== 'undefined') {
     let frame: VideoFrame | null = null;
-    try {
-      frame = new VideoFrame(video);
-      context.drawImage(frame, 0, 0, width, height);
-      return frame.timestamp / 1e6;
-    } catch { /* Fall back to the element and its callback metadata. */ }
+    try { frame = new VideoFrame(video); time = frame.timestamp / 1e6; }
+    catch { /* Fall back to the callback metadata. */ }
     finally { frame?.close(); }
   }
   context.drawImage(video, 0, 0, width, height);
-  return null;
+  return time;
 }

@@ -15,6 +15,7 @@ const skeleton = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [1
 
 export default function CMJMobile() {
   const video = useRef<HTMLVideoElement>(null), canvas = useRef<HTMLCanvasElement>(null), input = useRef<HTMLInputElement>(null);
+  const viewer = useRef<HTMLDivElement>(null);
   const owner = useRef<AbortController | null>(null), camera = useRef<MediaStream | null>(null), url = useRef<string | null>(null);
   const [mode, setMode] = useState<'file' | 'camera'>('file'), [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false), [cancelling, setCancelling] = useState(false);
@@ -57,6 +58,9 @@ export default function CMJMobile() {
       camera.current?.getTracks().forEach(t => t.stop()); if (url.current) URL.revokeObjectURL(url.current);
     };
   }, []);
+  // Live: bring the camera view, status and stop button on screen once the camera starts.
+  const liveView = busy && mode === 'camera' && dimensions.w > 0;
+  useEffect(() => { if (liveView) viewer.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }); }, [liveView]);
   function selectMode(next: 'file' | 'camera') {
     if (busy) return;
     setRefining(false);
@@ -210,11 +214,14 @@ export default function CMJMobile() {
         <button className={mode === 'file' ? 'is-selected' : ''} aria-pressed={mode === 'file'} disabled={busy} onClick={() => selectMode('file')}><Upload size={17} />録画を解析</button>
         <button className={mode === 'camera' ? 'is-selected' : ''} aria-pressed={mode === 'camera'} disabled={busy} onClick={() => selectMode('camera')}><Camera size={17} />カメラで計測</button>
       </div>
-      {mode === 'camera' && <div className="cmj-inline-note"><p>全身が映ると計測が始まります。止まったり合図を待ったりする必要はありません。好きなタイミングで跳ぶと、着地の後に高さを自動で表示します。続けて何回でも跳べます。スマホは選手の腰付近の高さで固定し、頭から足先まで映してください。</p>
+      {mode === 'camera' && <div className="cmj-inline-note"><p>全身が映ると計測が始まります。止まったり合図を待ったりする必要はありません。好きなタイミングで跳ぶと、着地の後に高さを自動で表示します。続けて何回でも跳べます。スマホは縦向き・横向きのどちらでも使えます。選手の腰付近の高さで固定し、頭から足先まで映してください。計測中はスマホの向きを変えないでください。</p>
         <label><input type="checkbox" checked={keepRecording} disabled={busy} onChange={e => setKeepRecording(e.target.checked)} /> 録画も残す（最長20秒で計測終了）</label>
         <p>{keepRecording ? '音声なしで端末内に録画します。映像は送信しません。停止後の再解析にも使えます。' : 'ライブ優先：録画せず連続計測します。撮影中はスマホの位置・向きを変えないでください。'}</p></div>}
-      <div className={`cmj-viewer ${hasSource ? 'has-source' : ''}`}
-        style={mode === 'camera' && hasSource ? { aspectRatio: `${dimensions.w} / ${dimensions.h}` } : undefined}>
+      <div ref={viewer} className={`cmj-viewer ${hasSource ? 'has-source' : ''}`}
+        style={mode === 'camera' && hasSource ? { aspectRatio: `${dimensions.w} / ${dimensions.h}`,
+          // A portrait camera is taller than the screen: shrink the view (same aspect ratio)
+          // so the status and the stop button stay visible below it.
+          width: `min(100%, calc((100dvh - 190px) * ${(dimensions.w / dimensions.h).toFixed(4)}))`, marginInline: 'auto' } : undefined}>
         <video ref={video} playsInline muted preload="metadata" controls={review && !busy} hidden={showCanvas} />
         <canvas ref={canvas} hidden={!showCanvas} aria-label="解析した元動画フレーム" />
         {!hasSource && <div className="cmj-empty"><div className="cmj-frame-guide"><svg viewBox="0 0 140 240" aria-hidden="true">
@@ -230,9 +237,6 @@ export default function CMJMobile() {
       </div>
       {busy && mode === 'file' && <div className="cmj-progress"><div role="progressbar" aria-label="動画の解析" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress ?? undefined} style={{ width: `${progress ?? 3}%` }} /></div>}
       <div className={`cmj-status ${problem ? 'has-problem' : ''}`} role="status">{busy ? <LoaderCircle size={18} className="cmj-spin" /> : successful.length ? <Check size={18} /> : <Activity size={18} />}<span>{statusText}</span></div>
-      {rejected && <div className="cmj-inline-note" role="alert"><strong>動きは検出しましたが、高さを確定できませんでした。</strong><p>{comFeedback(rejected.analysis.reason)}</p>
-        <small>診断コード：{rejected.analysis.reason ?? 'UNKNOWN'} · {state?.poseModel ?? '不明'}モデル</small>
-        <p>{busy ? '腰付近の高さでカメラを固定し、明るい場所で全身を映して、もう一度跳んでください。' : '録画がある場合は、下のボタンから再解析できます。'}</p></div>}
       <input className="cmj-file-input" ref={input} type="file" accept="video/*" disabled={busy} aria-label="録画動画を選ぶ" onChange={e => fileSelected(e.target.files?.[0])} />
       {mode === 'file' && file && <div className="cmj-file"><span>{file.name}</span><button disabled={busy} onClick={() => input.current?.click()}>変更</button></div>}
       <div className="cmj-primary-actions">{busy ? <button className="cmj-stop" disabled={cancelling} onClick={cancel}><Square size={17} />{cancelling ? '停止中' : '計測を停止'}</button>
@@ -240,6 +244,9 @@ export default function CMJMobile() {
         : <button className="cmj-primary" onClick={() => void start()}>{state ? <RotateCcw size={18} /> : <Play size={18} />}{mode === 'file' ? state ? 'もう一度解析する' : '動画を解析する' : 'カメラを起動する'}</button>}
         {!busy && file && mode === 'file' && <button className="cmj-secondary" aria-pressed={review} onClick={() => { setReview(!review); video.current?.pause(); }}>動画を確認</button>}
       </div>
+      {rejected && <div className="cmj-inline-note" role="alert"><strong>動きは検出しましたが、高さを確定できませんでした。</strong><p>{comFeedback(rejected.analysis.reason)}</p>
+        <small>診断コード：{rejected.analysis.reason ?? 'UNKNOWN'} · {state?.poseModel ?? '不明'}モデル</small>
+        <p>{busy ? '腰付近の高さでカメラを固定し、明るい場所で全身を映して、もう一度跳んでください。' : '録画がある場合は、下のボタンから再解析できます。'}</p></div>}
       {mode === 'camera' && recordingNote && <p className="cmj-inline-note">{recordingNote}</p>}
       {!busy && recordedClip && <div className="cmj-inline-note"><strong>撮影した映像を再解析</strong><p>Fullモデルで全コマの重心を取り直します。撮影時のコマ不足やブレは復元できず、数値が出る保証はありません。新しくカメラを起動すると、この録画は置き換わります。</p>
         <button className="cmj-primary" onClick={() => void start(recordedClip)}>録画を詳しく解析</button>
