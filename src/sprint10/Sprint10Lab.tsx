@@ -2,11 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
 import { analyzeSprint, SPRINT10_ANALYSIS_VERSION, SPRINT10_NOTES, type SprintSample } from './analysis';
 import { measureSprint } from './recording';
+import type { SprintStart } from './tracker';
 import StrideResults from './StrideResults';
 import './sprint10.css';
 
 type Gate = 'start' | 'finish';
 const GATE_LABEL: Record<Gate, string> = { start: 'スタート', finish: 'ゴール' };
+/** Standing 10 m from the start line, or a known section the athlete runs through at speed. */
+const MODES: { id: SprintStart; label: string; hint: string }[] = [
+  { id: 'standing', label: 'スタート10m', hint: 'スタートラインから10m。選手は走り出す前から映っている。' },
+  { id: 'flying', label: '最高速度区間', hint: '例：50〜60m。選手は走った状態で画面に入ってくる。' },
+];
+const DEFAULT_GATES: Record<SprintStart, [number, number]> = { standing: [.12, .88], flying: [.2, .8] };
 /** One ◀/▶ tap moves a line by 0.2% of the frame width. */
 const NUDGE = .002;
 /** The magnifier shows the frame around the active line at this multiple of the on-screen video. */
@@ -17,6 +24,11 @@ export default function Sprint10Lab() {
   const loupe = useRef<HTMLCanvasElement>(null), resultCard = useRef<HTMLElement>(null), showResult = useRef(false);
   const [file, setFile] = useState<File | null>(null), [url, setUrl] = useState('');
   const [start, setStart] = useState(.12), [finish, setFinish] = useState(.88);
+  const [mode, setMode] = useState<SprintStart>('standing');
+  // Flying section: where it begins on the track (label only) and its real length (the scale).
+  const [sectionStartM, setSectionStartM] = useState(50), [sectionLengthM, setSectionLengthM] = useState(10);
+  const distanceM = mode === 'flying' ? sectionLengthM : 10;
+  const sectionLabel = mode === 'flying' ? `${sectionStartM}〜${sectionStartM + sectionLengthM}m区間` : '10m';
   const [active, setActive] = useState<Gate>('start');
   // Where along the line the user is looking (fraction of the frame height): the touch point while dragging.
   const focusY = useRef(.75);
@@ -24,7 +36,7 @@ export default function Sprint10Lab() {
   const [ready, setReady] = useState(false), [busy, setBusy] = useState(false), [progress, setProgress] = useState(0);
   const [message, setMessage] = useState(''), [samples, setSamples] = useState<SprintSample[] | null>(null);
   const [review, setReview] = useState('');
-  const result = useMemo(() => samples && confirmed ? analyzeSprint(samples, start, finish) : null, [samples, start, finish, confirmed]);
+  const result = useMemo(() => samples && confirmed && distanceM > 0 ? analyzeSprint(samples, start, finish, distanceM) : null, [samples, start, finish, confirmed, distanceM]);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   useEffect(() => () => { owner.current?.abort(); owner.current = null; }, []);
   // Bring the numbers into view once, when a new analysis finishes.
@@ -61,6 +73,12 @@ export default function Sprint10Lab() {
     cancel(); setFile(next); setUrl(next ? URL.createObjectURL(next) : ''); setReady(false);
     setSamples(null); setConfirmed(false); setMessage(''); setProgress(0); setReview('');
   }
+  function changeMode(next: SprintStart) {
+    if (busy || next === mode) return;
+    setMode(next); setStart(DEFAULT_GATES[next][0]); setFinish(DEFAULT_GATES[next][1]);
+    // Subject acquisition differs between modes: a fresh run is required.
+    setConfirmed(false); setSamples(null); setReview('');
+  }
   function move(which: Gate, value: number) {
     if (busy) return;
     const x = Math.max(.01, Math.min(.99, value));
@@ -82,7 +100,7 @@ export default function Sprint10Lab() {
     try {
       const data = await measureSprint(file, start, control.signal, (value, text) => {
         if (owner.current === control) { setProgress(value); setMessage(text); }
-      }, finish);
+      }, finish, mode);
       if (owner.current === control && !control.signal.aborted) { showResult.current = true; setSamples(data); }
     } catch (error) {
       if (owner.current === control && !control.signal.aborted) setMessage(error instanceof Error ? error.message : String(error));
@@ -95,28 +113,39 @@ export default function Sprint10Lab() {
     }
   }
   function save() {
-    const blob = new Blob([JSON.stringify({ version: SPRINT10_ANALYSIS_VERSION, file: file?.name, distanceM: 10,
+    const blob = new Blob([JSON.stringify({ version: SPRINT10_ANALYSIS_VERSION, file: file?.name, distanceM,
+      mode, section: mode === 'flying' ? { startM: sectionStartM, lengthM: sectionLengthM } : null,
       gates: { start, finish }, timeBasis: 'SOURCE_PRESENTATION_TIME', crossingBasis: 'PELVIS_MIDPOINT',
       stepBasis: 'LEG_OVERLAP_CYCLES_BETWEEN_GATES_WITH_FRACTIONAL_EDGES', strideBasis: 'PELVIS_DISPLACEMENT_BETWEEN_OVERLAPS',
       calibration: 'TWO_GATE_LINEAR_SCALE_NOT_PERSPECTIVE_CORRECTED', result, samples }, null, 2)], { type: 'application/json' });
     const link = document.createElement('a'), objectURL = URL.createObjectURL(blob); link.href = objectURL;
-    link.download = 'sprint10-result.json'; link.click(); setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
+    link.download = mode === 'flying' ? `sprint-section-${sectionStartM}-${sectionStartM + sectionLengthM}m-result.json` : 'sprint10-result.json';
+    link.click(); setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
   }
   const display = (value: number | null | undefined, digits = 2) => value == null ? '—' : value.toFixed(digits);
   const position = (which: Gate) => which === 'start' ? start : finish;
   const specific = result ? result.warnings.filter(w => !SPRINT10_NOTES.includes(w)) : [];
   return <main className="sprint10">
     <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
-    <header><p className="sprint10-eyebrow">SPRINT / 10 METRES</p><h1>10m スプリント解析</h1>
+    <header><p className="sprint10-eyebrow">SPRINT / {mode === 'flying' ? 'MAX VELOCITY SECTION' : '10 METRES'}</p><h1>{mode === 'flying' ? '最高速度区間の解析' : '10m スプリント解析'}</h1>
       <p>2本のラインを設定するだけで、通過時間・歩数・ピッチ・歩幅を解析します。</p></header>
-    <p className="sprint10-note">試験機能・精度未検証。固定カメラで真横に近い方向から、1人の全身と10m区間を撮影してください。通常速度の時間軸の動画を使用します。スロー書き出し動画の速度倍率は自動補正しません。</p>
+    <div className="sprint10-modes" role="group" aria-label="解析の種類">{MODES.map(m => <button key={m.id} type="button" aria-pressed={mode === m.id} disabled={busy}
+      className={mode === m.id ? 'is-selected' : ''} onClick={() => changeMode(m.id)}><strong>{m.label}</strong><span>{m.hint}</span></button>)}</div>
+    {mode === 'flying' && <div className="sprint10-section"><label>区間の入口<input type="number" inputMode="numeric" min={0} max={400} step={5} value={sectionStartM} disabled={busy}
+        onChange={e => setSectionStartM(Math.max(0, Math.min(400, Math.round(Number(e.target.value) || 0))))} /><span>m地点</span></label>
+      <label>区間の長さ<input type="number" inputMode="decimal" min={1} max={100} step={1} value={sectionLengthM} disabled={busy}
+        onChange={e => { setSectionLengthM(Math.max(0, Math.min(100, Number(e.target.value) || 0))); setConfirmed(false); setReview(''); }} /><span>m</span></label>
+      <p>{sectionLabel}として記録します。長さは2本のラインの実際の間隔です。</p></div>}
+    <p className="sprint10-note">試験機能・精度未検証。固定カメラで真横に近い方向から、1人の全身と{mode === 'flying' ? '区間全体' : '10m区間'}を撮影してください。通常速度の時間軸の動画を使用します。スロー書き出し動画の速度倍率は自動補正しません。</p>
     <section className="sprint10-card"><h2>1　動画を選ぶ</h2>
-      <label className="sprint10-upload"><input className="sprint10-file-input" type="file" aria-label="10m動画を選ぶ" accept="video/mp4,video/quicktime,.mov,.mp4,.m4v" disabled={busy} onChange={e => changeFile(e.target.files?.[0] ?? null)} />
+      <label className="sprint10-upload"><input className="sprint10-file-input" type="file" aria-label={`${sectionLabel}の動画を選ぶ`} accept="video/mp4,video/quicktime,.mov,.mp4,.m4v" disabled={busy} onChange={e => changeFile(e.target.files?.[0] ?? null)} />
         <span className="sprint10-upload-button" aria-hidden="true"><Upload size={19} />{file ? '別の動画を選ぶ' : '動画を選ぶ'}</span></label>
       {file && <p className="sprint10-file">{file.name} · {(file.size / 1024 / 1024).toFixed(1)} MB</p>}
     </section>
     <section className="sprint10-card"><h2>2　スタートとゴールを合わせる</h2>
-      <p>再生して、骨盤がスタートを越える前からゴールを越えた後まで映っていることを確認します。次に、2本の線を走路上の白線・コーンに合わせてください。目印は選手が走るコース上（同じ奥行き）に置きます。画面の端ほど奥行きの差でタイムがずれます。スタートの線は、選手の立ち位置より少し後ろに置いてください。</p>
+      <p>再生して、骨盤がスタートを越える前からゴールを越えた後まで映っていることを確認します。次に、2本の線を走路上の白線・コーンに合わせてください。目印は選手が走るコース上（同じ奥行き）に置きます。画面の端ほど奥行きの差でタイムがずれます。{mode === 'flying'
+        ? '選手が入ってくる側の線は、画面の端から2割以上内側に置いてください。線より手前で走っている選手を捉えてから区間を測ります。線の手前に人が立っていると選手を見失うことがあります。'
+        : 'スタートの線は、選手の立ち位置より少し後ろに置いてください。'}</p>
       {ready && <figure className="sprint10-loupe"><canvas ref={loupe} aria-label={`${GATE_LABEL[active]}ライン付近の拡大表示`} />
         <figcaption className={active}>{GATE_LABEL[active]}の拡大（{LOUPE_ZOOM}倍）</figcaption></figure>}
       <div className="sprint10-player">
@@ -138,7 +167,7 @@ export default function Sprint10Lab() {
           onChange={e => move(which, Number(e.target.value) / 100)} />
         <button type="button" aria-label={`${GATE_LABEL[which]}を右へ`} disabled={!ready || busy} onClick={() => move(which, position(which) + NUDGE)}>▶</button>
       </div>)}</div>
-      <button className="sprint10-confirm" disabled={!ready || busy || Math.abs(start - finish) < .1} onClick={() => setConfirmed(true)}>{confirmed ? '✓ ライン設定済み' : 'この2本のラインで決定'}</button>
+      <button className="sprint10-confirm" disabled={!ready || busy || Math.abs(start - finish) < .1 || distanceM <= 0} onClick={() => setConfirmed(true)}>{confirmed ? '✓ ライン設定済み' : 'この2本のラインで決定'}</button>
     </section>
     <section className="sprint10-card"><h2>3　解析する</h2><button className="sprint10-primary" disabled={!ready || !confirmed || busy} onClick={() => void analyze()}>解析する</button>
       {busy && <button onClick={cancel}>中止</button>}
@@ -147,7 +176,7 @@ export default function Sprint10Lab() {
     </section>
     {result && <section ref={resultCard} className="sprint10-card sprint10-result" aria-label="解析結果"><h2>解析結果</h2>
       {result.reason && <p role="alert" className="sprint10-note">{result.reason}</p>}
-      <div className="sprint10-metrics">{[['10m通過時間', display(result.duration, 3), '秒'], ['平均速度', display(result.speed), 'm/s'],
+      <div className="sprint10-metrics">{[[`${sectionLabel}通過時間`, display(result.duration, 3), '秒'], ['平均速度', display(result.speed), 'm/s'],
         ['推定歩数', display(result.count, 1), '歩'], ['推定ピッチ', display(result.cadence), '歩/秒'], ['平均歩幅', display(result.stride), 'm']].map(([label, value, unit]) => <div key={label}><span>{label}</span><strong>{value}</strong><small>{unit}</small></div>)}</div>
       {specific.map(w => <p className="sprint10-note" key={w}>{w}</p>)}
       <details className="sprint10-more"><summary>数値の見方</summary>
@@ -163,6 +192,6 @@ export default function Sprint10Lab() {
         </div><p>ボタンでその時刻へ移動します。遊脚が支持脚を追い越す瞬間で、接地のコマではありません。</p></details>
       <button onClick={save}>結果と判定データを保存（JSON）</button>
     </section>}
-    <footer>解析v7 · 動画はこの端末内で処理します。全フレームの解析時間は端末性能により変わります。2本のラインだけで遠近やカメラの揺れを補正することはできません。</footer>
+    <footer>解析v8 · 動画はこの端末内で処理します。全フレームの解析時間は端末性能により変わります。2本のラインだけで遠近やカメラの揺れを補正することはできません。</footer>
   </main>;
 }

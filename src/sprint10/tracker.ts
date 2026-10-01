@@ -4,6 +4,9 @@ interface Position { t: number; x: number }
 interface Acquisition { x: number; y: number; pts: number; points: Position[] }
 interface Resumption { startX: number; startPts: number; x: number; y: number; pts: number; count: number }
 interface Challenger { x: number; y: number; pts: number; count: number }
+/** How the subject arrives at the start gate: standing at it, or already running
+ * through it (a maximal-velocity section such as 50-60 m). */
+export type SprintStart = 'standing' | 'flying';
 const TIME_EPSILON = 1e-9;
 /** Velocity is the least-squares slope of the positions accepted in the last
  * 0.2 s, once they span 0.1 s. An exponential average lagged a start's
@@ -27,6 +30,25 @@ const SEED_RADIUS = .15;
 /** A track moving toward the finish faster than this is heading for it: it is
  * not replaced before the run, and resumes only on a pose that moves the same way. */
 const HEADING_SPEED = .05;
+/** Flying start: the crop is seeded this far on the run-in side of the gate so
+ * the runner is seen earlier, and provisional tracks need this many consecutive
+ * observations spanning this long before one is confirmed. */
+const FLYING_SEED_OFFSET = .08;
+const FLYING_MIN_OBSERVATIONS = 3;
+/** Over 40 ms, frame-to-frame pose jitter alone can look like running speed
+ * (a person walking back was confirmed); 60 ms of motion is required. */
+const FLYING_MIN_SPAN_SECONDS = .06;
+const FLYING_MAX_TRACKS = 6;
+/** A runner entering at the frame edge is only partly visible, and its pelvis
+ * jumps by up to 0.05 image widths between frames. The running decision and the
+ * history handed to the confirmed track use only the last 0.1 s, so those edge
+ * points neither delay confirmation nor skew the trajectory reference. */
+const FLYING_DECISION_SECONDS = .1;
+/** Body points that must lie inside the frame for a flying-start observation:
+ * shoulders, hips, knees and ankles. A runner cut by the frame edge has a
+ * pelvis estimate that jumps between frames and skews the trajectory. */
+const BODY_POINTS = [11, 12, 23, 24, 25, 26, 27, 28];
+const insideFrame = (p: Point[]) => BODY_POINTS.every(i => !p[i] || (p[i].x > 0 && p[i].x < 1));
 function fitLine(points: Position[]) {
   const mt = points.reduce((s, h) => s + h.t, 0) / points.length, mx = points.reduce((s, h) => s + h.x, 0) / points.length;
   const den = points.reduce((s, h) => s + (h.t - mt) ** 2, 0);
@@ -44,10 +66,18 @@ const ambiguous = (poses: Candidate[], centre: number) => poses.length > 1
  * While running, candidates are judged against the subject's own trajectory
  * from at least 0.1 s earlier, so a bystander who is briefly nearest cannot
  * drag the track along frame by frame. After a gap the track resumes only on
- * consecutive poses that keep the runner's direction and pace. Before the run,
- * when the run direction is known, the subject is the person nearest the start
- * gate: someone who was acquired first and is not heading for the finish (a
- * bystander, or a person walking back) gives way to a person nearer the gate. */
+ * consecutive poses that keep the runner's direction and pace.
+ *
+ * Standing start: before the run, when the run direction is known, the subject
+ * is the person nearest the start gate; someone who was acquired first and is
+ * not heading for the finish (a bystander, or a person walking back) gives way
+ * to a person nearer the gate.
+ *
+ * Flying start: the subject is whoever first shows 0.06 s of consecutive
+ * observations running toward the finish on the run-in side of the gate, with
+ * the whole body inside the frame.
+ * Several people are followed provisionally at once, so a bystander standing
+ * at the line cannot block the runner, and nobody is ever replaced afterwards. */
 export class SprintTracker {
   private x: number;
   private y: number | null = null;
@@ -55,25 +85,33 @@ export class SprintTracker {
   private velocity = 0;
   private history: Position[] = [];
   private acquisition: Acquisition | null = null;
+  private provisional: Acquisition[] = [];
   private resumption: Resumption | null = null;
   private challenger: Challenger | null = null;
   private running = false;
   private behindStart = false;
   private readonly seed: number;
   private readonly direction: number;
-  /** direction: sign of finish - start; 0 when unknown (no pre-run replacement). */
-  constructor(startX: number, direction = 0) { this.x = this.seed = startX; this.direction = Math.sign(direction); }
+  private readonly start: SprintStart;
+  /** direction: sign of finish - start; 0 when unknown (no pre-run replacement,
+   * and a flying start cannot tell the run-in side, so it behaves as standing). */
+  constructor(startX: number, direction = 0, start: SprintStart = 'standing') {
+    this.seed = startX; this.direction = Math.sign(direction);
+    this.start = this.direction && start === 'flying' ? 'flying' : 'standing';
+    this.x = this.start === 'flying' ? Math.max(.02, Math.min(.98, startX - this.direction * FLYING_SEED_OFFSET)) : startX;
+  }
   /** Crop centre: the track is extrapolated while it is briefly unobserved. */
   expected(pts: number) {
     return this.x + this.velocity * Math.max(0, Math.min(MAX_PREDICTION_SECONDS, this.pts === null ? 0 : pts - this.pts));
   }
   choose(poses: Point[][], pts: number): Point[] {
-    if (!Number.isFinite(pts)) { this.acquisition = null; this.resumption = null; return []; }
+    if (!Number.isFinite(pts)) { this.acquisition = null; this.provisional = []; this.resumption = null; return []; }
     if (this.pts !== null && pts <= this.pts) return [];
     const valid = poses.filter(p => [23, 24].every(i => p[i] && Number.isFinite(p[i].x) && Number.isFinite(p[i].y)
-      && p[i].x > 0 && p[i].x < 1 && p[i].y > 0 && p[i].y < 1 && (p[i].visibility ?? 0) >= .3))
+      && p[i].x > 0 && p[i].x < 1 && p[i].y > 0 && p[i].y < 1 && (p[i].visibility ?? 0) >= .3)
+      && (this.start !== 'flying' || insideFrame(p)))
       .map(p => ({ p, x: (p[23].x + p[24].x) / 2, y: (p[23].y + p[24].y) / 2 }));
-    if (this.pts === null) return this.acquire(valid, pts);
+    if (this.pts === null) return this.start === 'flying' ? this.acquireFlying(valid, pts) : this.acquire(valid, pts);
     const replaced = this.challenge(valid, pts);
     if (replaced) return replaced;
     const since = pts - this.pts;
@@ -108,11 +146,11 @@ export class SprintTracker {
     // a bystander ahead of it, or a jump between two people, cannot.
     if (this.behindStart && this.velocity * this.direction >= RUNNING_SPEED) this.running = true;
   }
-  /** Before the run: three consecutive observations (50 ms apart at most) of a
-   * person at least 0.03 nearer the start gate replace a track that is not
-   * heading for the finish. */
+  /** Standing start, before the run: three consecutive observations (50 ms
+   * apart at most) of a person at least 0.03 nearer the start gate replace a
+   * track that is not heading for the finish. */
   private challenge(valid: Candidate[], pts: number): Point[] | null {
-    if (!this.direction || this.running || this.velocity * this.direction >= HEADING_SPEED) { this.challenger = null; return null; }
+    if (!this.direction || this.start === 'flying' || this.running || this.velocity * this.direction >= HEADING_SPEED) { this.challenger = null; return null; }
     const own = Math.abs(this.expected(pts) - this.seed);
     const best = candidatesNear(valid, this.seed, Math.min(SEED_RADIUS, own - .03), null)[0];
     const previous = this.challenger;
@@ -179,5 +217,49 @@ export class SprintTracker {
     const best = candidates[0];
     this.acquisition = { x: best.x, y: best.y, pts, points: [{ t: pts, x: best.x }] };
     return [];
+  }
+  /** Flying start: every person on the run-in side of the gate (up to
+   * SEED_RADIUS past it) is followed provisionally. A track becomes the subject
+   * when, over its last 0.1 s (at least three observations 50 ms apart at most,
+   * spanning 60 ms), its fitted speed toward the finish is at least
+   * RUNNING_SPEED and it advanced that far, AND over its whole followed span
+   * (up to 0.4 s) it also moved toward the finish. Standing, walking or
+   * backward-moving people never confirm; a track is dropped after a 50 ms miss. */
+  private acquireFlying(valid: Candidate[], pts: number): Point[] {
+    const live = this.provisional.filter(track => pts > track.pts && pts - track.pts - .05 <= TIME_EPSILON);
+    const next: Acquisition[] = [], taken = new Set<Candidate>();
+    for (const track of live) {
+      const velocity = track.points.length > 1 ? fitLine(track.points).slope : 0;
+      const expected = track.x + velocity * (pts - track.pts);
+      const candidates = candidatesNear(valid.filter(c => !taken.has(c)), expected, TRACK_RADIUS, track.y);
+      if (!candidates.length || ambiguous(candidates, expected)) continue;
+      const best = candidates[0]; taken.add(best);
+      next.push({ x: best.x, y: best.y, pts, points: [...track.points.filter(h => pts - h.t <= .4), { t: pts, x: best.x }] });
+    }
+    for (const c of valid) {
+      if (taken.has(c) || (c.x - this.seed) * this.direction > SEED_RADIUS) continue;
+      next.push({ x: c.x, y: c.y, pts, points: [{ t: pts, x: c.x }] });
+    }
+    // Keep the most advanced tracks if there are many people in the picture.
+    next.sort((a, b) => (b.x - a.x) * this.direction);
+    this.provisional = next.slice(0, FLYING_MAX_TRACKS);
+    const recent = (track: Acquisition) => track.points.filter(h => pts - h.t <= FLYING_DECISION_SECONDS + TIME_EPSILON);
+    const confirmed = this.provisional.filter(track => {
+      const points = recent(track), span = points.length ? points.at(-1)!.t - points[0].t : 0;
+      if (points.length < FLYING_MIN_OBSERVATIONS || span - FLYING_MIN_SPAN_SECONDS < -TIME_EPSILON) return false;
+      const slope = fitLine(points).slope * this.direction;
+      const advance = (points.at(-1)!.x - points[0].x) * this.direction;
+      const whole = track.points, wholeSpan = whole.at(-1)!.t - whole[0].t;
+      const wholeAdvance = (whole.at(-1)!.x - whole[0].x) * this.direction;
+      return slope >= RUNNING_SPEED && advance >= .7 * RUNNING_SPEED * span && wholeAdvance >= .5 * RUNNING_SPEED * wholeSpan;
+    });
+    if (!confirmed.length) return [];
+    // Two runners confirming together: take the one nearer the gate, unless they are too close to tell apart.
+    const best = confirmed[0];
+    if (confirmed.length > 1 && Math.abs(confirmed[1].x - best.x) < FRAME_RADIUS) return [];
+    this.x = best.x; this.y = best.y; this.pts = pts; this.provisional = [];
+    this.behindStart = true; this.history = recent(best); this.updateVelocity(pts);
+    this.running = true;
+    return valid.find(c => c.x === best.x && c.y === best.y)!.p;
   }
 }

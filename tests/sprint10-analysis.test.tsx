@@ -96,6 +96,13 @@ describe('10m sprint experiment', () => {
     expect(Math.abs(r.steps[0].pts - .625)).toBeLessThanOrEqual(1 / 120 + 1e-9);
     expect(Math.abs(r.count! - 8)).toBeLessThanOrEqual(1 / 120 / .25 + 1e-9);
   });
+  it('scales speed, stride and per-step distances by the real gate distance', () => {
+    const ten = analyzeSprint(synthetic(), .2, .8), section = analyzeSprint(synthetic(), .2, .8, 6.5);
+    expect(section.duration).toBe(ten.duration); expect(section.count).toBe(ten.count); expect(section.cadence).toBe(ten.cadence);
+    expect(section.speed).toBeCloseTo(6.5 / 2, 9); expect(section.stride).toBeCloseTo(6.5 / ten.count!, 9);
+    section.strideIntervals.forEach((s, i) => expect(s.distanceM!).toBeCloseTo(ten.strideIntervals[i].distanceM! * .65, 9));
+    expect(section.warnings.join('')).not.toContain('10mのライン間隔');
+  });
   it('uses measured displacements between equal gait phases, with N-1 complete intervals', () => {
     const r = analyzeSprint(synthetic(), .2, .8);
     expect(r.strideIntervals).toHaveLength(r.steps.length - 1);
@@ -240,7 +247,8 @@ describe('10m sprint experiment', () => {
   it('renders upload, playback, gates and analyze, with no first-step or foot input', () => {
     const html = renderToStaticMarkup(<Sprint10Lab />);
     expect(html).not.toContain('type="radio"'); expect(html).not.toContain('左足から'); expect(html).not.toContain('1歩目');
-    expect(html).toContain('3　解析する'); expect(html).toContain('解析v7'); expect(html).toContain('aria-label="10m動画を選ぶ"');
+    expect(html).toContain('3　解析する'); expect(html).toContain('解析v8'); expect(html).toContain('aria-label="10mの動画を選ぶ"');
     expect(html).toContain('この2本のラインで決定'); expect(html).toContain('解析する'); expect(html).toContain('<video');
+    expect(html).toContain('スタート10m'); expect(html).toContain('最高速度区間');
   });
 });

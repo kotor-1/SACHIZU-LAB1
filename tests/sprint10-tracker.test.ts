@@ -214,3 +214,107 @@ describe('10m subject acquisition', () => {
     expect(tracker.choose([target], .45)).toBe(target);
   });
 });
+
+describe('flying start (maximal-velocity section)', () => {
+  const fps = 120;
+  /** Runner enters from the frame edge at full speed; pelvis x per second. */
+  const runner = (t: number, speed = .64, enter = .2) => -.05 + speed * (t - enter);
+  function run(tracker: SprintTracker, scene: (t: number) => Point[][], seconds = 2.5) {
+    const chosen: { t: number; x: number }[] = [];
+    for (let frame = 0; frame < seconds * fps; frame++) {
+      const t = frame / fps, c = tracker.choose(scene(t), t);
+      if (c.length) chosen.push({ t, x: (c[23].x + c[24].x) / 2 });
+    }
+    return chosen;
+  }
+  const inFrame = (x: number) => x > .01 && x < .99;
+  it.each([false, true])('acquires a runner entering at speed before the gate, ignoring people standing at and past it (reflected=%s)', reflected => {
+    const x = (v: number) => reflected ? 1 - v : v;
+    const tracker = new SprintTracker(x(.2), reflected ? -1 : 1, 'flying');
+    const chosen = run(tracker, t => {
+      const r = runner(t), poses = [pose(x(.2)), pose(x(.27))];      // one on the line, one 1 m past it
+      if (inFrame(r)) poses.unshift(pose(x(r)));
+      return poses;
+    });
+    expect(chosen.length).toBeGreaterThan(100);
+    // Every published sample is the runner, none the bystanders.
+    for (const c of chosen) expect(Math.abs(c.x - x(runner(c.t)))).toBeLessThan(1e-9);
+    // The runner appears at x = .01 (t = .2 + .06/.64) and is confirmed within 80 ms (60 ms of motion
+    // are required), still well before the gate.
+    expect(chosen[0].t).toBeLessThan(.2 + .06 / .64 + .08);
+    expect((chosen[0].x - x(.2)) * (reflected ? -1 : 1)).toBeLessThan(-.05);
+  });
+  it('never acquires a person walking through the gate, then takes the runner', () => {
+    const tracker = new SprintTracker(.2, 1, 'flying');
+    const walker = (t: number) => .05 + .08 * t;                      // ~1 m/s
+    const chosen = run(tracker, t => {
+      const r = runner(t, .64, 1.2), poses = [pose(walker(t))];
+      if (inFrame(r)) poses.unshift(pose(r));
+      return poses;
+    }, 3);
+    expect(chosen.length).toBeGreaterThan(50);
+    for (const c of chosen) expect(Math.abs(c.x - runner(c.t, .64, 1.2))).toBeLessThan(1e-9);
+  });
+  it('never confirms a jittery person walking back near the gate, then takes the runner', () => {
+    // Recorded: a person at .26 drifting back to .23 with ±.006 pose jitter was confirmed over 40 ms.
+    const tracker = new SprintTracker(.2, 1, 'flying');
+    const jitter = [.006, -.004, .005, -.006, .004, .006, -.005, .003];
+    const back = (t: number, frame: number) => .26 - .14 * t + jitter[frame % jitter.length];
+    const chosen = run(tracker, t => {
+      const frame = Math.round(t * fps), r = runner(t, .64, 1.2), poses = [];
+      if (back(t, frame) > .01) poses.push(pose(back(t, frame)));
+      if (inFrame(r)) poses.push(pose(r));
+      return poses;
+    }, 3);
+    expect(chosen.length).toBeGreaterThan(50);
+    for (const c of chosen) expect(Math.abs(c.x - runner(c.t, .64, 1.2))).toBeLessThan(1e-9);
+  });
+  it('is not blocked by a bystander who is nearest the seed every frame', () => {
+    const tracker = new SprintTracker(.2, 1, 'flying');
+    const chosen = run(tracker, t => {
+      const r = runner(t, .5), poses = [pose(.13), pose(.16, .62)];   // two people standing on the run-in
+      if (inFrame(r)) poses.push(pose(r));
+      return poses;
+    });
+    expect(chosen.length).toBeGreaterThan(100);
+    for (const c of chosen) expect(Math.abs(c.x - runner(c.t, .5))).toBeLessThan(1e-9);
+  });
+  it('does not acquire anyone already past the gate, and keeps the subject after acquisition', () => {
+    const tracker = new SprintTracker(.2, 1, 'flying');
+    const chosen = run(tracker, t => {
+      const ahead = .4 + .64 * t, r = runner(t, .64, 1);              // a runner already past the gate, then ours
+      const poses = []; if (inFrame(ahead)) poses.push(pose(ahead)); if (inFrame(r)) poses.push(pose(r));
+      return poses;
+    }, 3);
+    expect(chosen.length).toBeGreaterThan(50);
+    for (const c of chosen) expect(Math.abs(c.x - runner(c.t, .64, 1))).toBeLessThan(1e-9);
+  });
+  it('ignores a runner cut by the frame edge (pelvis jumping around), then tracks it through the gate without a gap', () => {
+    // Recorded pattern: entering at the edge, the pelvis read .087, .060, .065, .031, .034, .073, ... before settling.
+    const tracker = new SprintTracker(.2, 1, 'flying');
+    const noise = [.03, -.02, -.01, -.045, -.04, .015, -.01, .02, -.03, .01, -.025, .02];
+    // Still accelerating at the edge (a crop of a standing 10 m): .25 widths/s rising by 1.2 widths/s².
+    const accelerating = (t: number) => -.02 + .25 * (t - .2) + .6 * (t - .2) ** 2;
+    const chosen = run(tracker, t => {
+      const r = accelerating(t), frame = Math.round((t - .2) * fps);
+      if (t < .2 || r <= .01 || r >= .99) return [];
+      const p = pose(Math.max(.005, r + (r < .1 ? noise[frame % noise.length] : 0)));
+      // The trailing leg and arm are outside the frame while the pelvis is within .08 of the edge.
+      if (r < .08) for (const i of [11, 25, 27]) p[i] = { ...p[i], x: r - .09 };
+      return [p];
+    });
+    const before = chosen.filter(c => c.x < .2), after = chosen.filter(c => c.x >= .2);
+    expect(before.length).toBeGreaterThan(3); expect(after.length).toBeGreaterThan(50);
+    const crossing = chosen.findIndex(c => c.x >= .2);
+    expect(chosen[crossing].t - chosen[crossing - 1].t).toBeLessThanOrEqual(.05);
+  });
+  it('seeds the crop on the run-in side of the gate and falls back to standing without a direction', () => {
+    expect(new SprintTracker(.2, 1, 'flying').expected(0)).toBeCloseTo(.12, 9);
+    expect(new SprintTracker(.8, -1, 'flying').expected(0)).toBeCloseTo(.88, 9);
+    expect(new SprintTracker(.05, 1, 'flying').expected(0)).toBeCloseTo(.02, 9);
+    const t = new SprintTracker(.2, 0, 'flying'), target = pose(.2);
+    expect(t.expected(0)).toBe(.2);
+    t.choose([target], 0); t.choose([target], .01);
+    expect(t.choose([target], .02)).toBe(target);                       // standing acquisition
+  });
+});

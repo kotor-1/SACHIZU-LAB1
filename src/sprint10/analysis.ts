@@ -1,7 +1,7 @@
-export const SPRINT10_ANALYSIS_VERSION = 'sprint10-experimental-v7';
+export const SPRINT10_ANALYSIS_VERSION = 'sprint10-experimental-v8';
 /** Standing explanations appended to every result's warnings, after any run-specific ones. */
 export const SPRINT10_NOTES: readonly string[] = ['歩数は、2本のラインの間に経過した脚の入れ替わり（遊脚が支持脚を追い越す動き）の周期の数です。ライン上の半端な1歩は周期の割合で数えます。接地回数を1つずつ数えた値ではありません。',
-  '各歩の距離は骨盤の画面内移動を10mのライン間隔で比例換算した推定です。真の全身重心・接地位置間の距離ではなく、遠近やカメラの揺れも補正していません。'];
+  '各歩の距離は骨盤の画面内移動をライン間隔（既知の距離）で比例換算した推定です。真の全身重心・接地位置間の距離ではなく、遠近やカメラの揺れも補正していません。'];
 export interface Point { x: number; y: number; visibility?: number }
 export interface SprintSample { frame: number; pts: number; hipX: number | null; ankleGap: number | null; kneeGap: number | null; legLength: number | null }
 /** One leg-overlap (the swing leg passing the support leg), once per step. */
@@ -111,7 +111,7 @@ export function stepCandidates(samples: SprintSample[], interval?: { startPts: n
 /** Per-cycle pelvis displacement, NOT 10m divided equally among the steps.
  * Both endpoints use the SAME leg-overlap phase. */
 export function strideIntervals(samples: SprintSample[], steps: Step[], startX: number, finishX: number,
-  startPts: number, finishPts: number): StrideInterval[] {
+  startPts: number, finishPts: number, distanceM = 10): StrideInterval[] {
   const output: StrideInterval[] = [];
   for (let i = 1; i < steps.length; i++) {
     const a = steps[i - 1], b = steps[i];
@@ -126,7 +126,7 @@ export function strideIntervals(samples: SprintSample[], steps: Step[], startX: 
     else if (first?.hipX == null || last?.hipX == null || !Number.isFinite(first.hipX) || !Number.isFinite(last.hipX)) reason = '端点の骨盤位置がありません';
     else if (!validTimes.length || exceedsTime(validTimes[0] - a.pts, .05) || exceedsTime(b.pts - validTimes.at(-1)!, .05)
       || validTimes.some((t, j) => j > 0 && exceedsTime(t - validTimes[j - 1], .05))) reason = 'この区間の追跡が途切れています';
-    const distance = first?.hipX != null && last?.hipX != null ? 10 * (last.hipX - first.hipX) / (finishX - startX) : NaN;
+    const distance = first?.hipX != null && last?.hipX != null ? distanceM * (last.hipX - first.hipX) / (finishX - startX) : NaN;
     if (!reason && (!Number.isFinite(distance) || distance <= 0 || distance > 10)) reason = '進行方向の移動距離を確認できません';
     output.push({ fromStep: i, toStep: i + 1, fromPts: a.pts, toPts: b.pts,
       fromHipX: first?.hipX ?? null, toHipX: last?.hipX ?? null, distanceM: reason ? null : distance, reason });
@@ -136,7 +136,8 @@ export function strideIntervals(samples: SprintSample[], steps: Step[], startX: 
 
 /** Time between pelvis gate crossings; steps are the leg-overlap cycles
  * elapsed between those crossings. No manual contact frame or foot label. */
-export function analyzeSprint(samples: SprintSample[], startX: number, finishX: number): SprintResult {
+/** distanceM: the real distance between the two gates (10 m for the standing 10 m; any known section otherwise). */
+export function analyzeSprint(samples: SprintSample[], startX: number, finishX: number, distanceM = 10): SprintResult {
   const base: SprintResult = { start: null, finish: null, duration: null, steps: [], count: null, speed: null, cadence: null, stride: null,
     edgeFractions: null, strideIntervals: [], warnings: [], reason: null };
   if (![startX, finishX].every(x => Number.isFinite(x) && x > 0 && x < 1) || Math.abs(finishX - startX) < .1)
@@ -211,8 +212,8 @@ export function analyzeSprint(samples: SprintSample[], startX: number, finishX: 
   if (!reliable) warnings.unshift('脚の追跡欠落・周期の不確かさがあるため、歩数・ピッチ・歩幅を確定していません。候補位置を確認してください。');
   else if (multiples.includes(2)) warnings.unshift('脚の入れ替わりを1回見逃した区間があり、周期の長さから2歩分として数えました。');
   if (laterRuns.length) warnings.unshift('ゴールを2回以上越えています。最初の走りを解析しました。');
-  return { ...base, start, finish, duration, speed: 10 / duration, steps, count, edgeFractions: reliable ? edgeFractions : null,
-    strideIntervals: strideIntervals(samples, steps, startX, finishX, start.pts, finish.pts).map((interval, i) => multiples[i] === 2
+  return { ...base, start, finish, duration, speed: distanceM / duration, steps, count, edgeFractions: reliable ? edgeFractions : null,
+    strideIntervals: strideIntervals(samples, steps, startX, finishX, start.pts, finish.pts, distanceM).map((interval, i) => multiples[i] === 2
       ? { ...interval, distanceM: null, reason: '入れ替わりの見逃しで2歩分の区間です' } : interval),
-    cadence: count === null ? null : count / duration, stride: count === null ? null : 10 / count, warnings };
+    cadence: count === null ? null : count / duration, stride: count === null ? null : distanceM / count, warnings };
 }

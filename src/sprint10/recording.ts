@@ -4,10 +4,10 @@ import { MobileCMJPose } from '../cmj/mobile-pose';
 import { trackRotation } from '../cmj/video-orientation';
 import { untilAborted } from '../cmj/session-lifecycle';
 import { sprintSample, type SprintSample } from './analysis';
-import { SprintTracker } from './tracker';
+import { SprintTracker, type SprintStart } from './tracker';
 
 export async function measureSprint(file: File, startX: number, signal: AbortSignal,
-  progress: (fraction: number, message: string) => void, finishX?: number): Promise<SprintSample[]> {
+  progress: (fraction: number, message: string) => void, finishX?: number, start: SprintStart = 'standing'): Promise<SprintSample[]> {
   const check = () => { if (signal.aborted) throw new DOMException('中止', 'AbortError'); };
   check();
   if (!SequentialRecordingDecoder.isAvailable()) throw new Error('このブラウザではフレーム解析ができません。対応する最新のブラウザでお試しください。');
@@ -19,7 +19,7 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
   const rotation = trackRotation((d.videoTrack as typeof d.videoTrack & { matrix?: ArrayLike<number> }).matrix);
   const decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
   const model = new MobileCMJPose('full');
-  const tracker = new SprintTracker(startX, finishX === undefined ? 0 : finishX - startX);
+  const tracker = new SprintTracker(startX, finishX === undefined ? 0 : finishX - startX, start);
   const source = document.createElement('canvas'), crop = document.createElement('canvas');
   const ctx = source.getContext('2d'), cc = crop.getContext('2d');
   const abort = () => decoder.dispose();
