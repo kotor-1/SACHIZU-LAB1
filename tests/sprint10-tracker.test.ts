@@ -239,9 +239,9 @@ describe('flying start (maximal-velocity section)', () => {
     expect(chosen.length).toBeGreaterThan(100);
     // Every published sample is the runner, none the bystanders.
     for (const c of chosen) expect(Math.abs(c.x - x(runner(c.t)))).toBeLessThan(1e-9);
-    // The runner appears at x = .01 (t = .2 + .06/.64) and is confirmed within 80 ms (60 ms of motion
-    // are required), still well before the gate.
-    expect(chosen[0].t).toBeLessThan(.2 + .06 / .64 + .08);
+    // The runner appears at x = .01 (t = .2 + .06/.64) and is confirmed within 100 ms (clear of the
+    // 1% edge margin, then 60 ms of motion), still well before the gate.
+    expect(chosen[0].t).toBeLessThan(.2 + .06 / .64 + .1);
     expect((chosen[0].x - x(.2)) * (reflected ? -1 : 1)).toBeLessThan(-.05);
   });
   it('never acquires a person walking through the gate, then takes the runner', () => {
@@ -307,6 +307,191 @@ describe('flying start (maximal-velocity section)', () => {
     expect(before.length).toBeGreaterThan(3); expect(after.length).toBeGreaterThan(50);
     const crossing = chosen.findIndex(c => c.x >= .2);
     expect(chosen[crossing].t - chosen[crossing - 1].t).toBeLessThanOrEqual(.05);
+  });
+  it('hands back the runner\'s sightings before the running decision, and only the runner\'s', () => {
+    // A person stands at .08 one lane further back (0.03 higher in the picture) until the runner
+    // reaches them, then is hidden behind the runner.
+    const tracker = new SprintTracker(.12, 1, 'flying'), here = (t: number) => .08 + .64 * (t - .3);
+    const published: { t: number; x: number }[] = [];
+    for (let frame = 0; frame < .8 * fps; frame++) {
+      const t = frame / fps, poses: Point[][] = [];
+      if (t < .3) poses.push(pose(.08, .62));
+      if (inFrame(here(t)) && Math.abs(here(t) - .08) > .005) poses.push(pose(here(t)));
+      const c = tracker.choose(poses, t);
+      for (const b of tracker.takeBackfill()) published.push({ t: b.pts, x: (b.pose[23].x + b.pose[24].x) / 2 });
+      if (c.length) published.push({ t, x: (c[23].x + c[24].x) / 2 });
+    }
+    expect(published.length).toBeGreaterThan(50);
+    for (const p of published) expect(Math.abs(p.x - here(p.t))).toBeLessThan(1e-9);
+    // Published in time order without duplicates, and seen before the gate.
+    for (let i = 1; i < published.length; i++) expect(published[i].t).toBeGreaterThan(published[i - 1].t);
+    expect(published[0].x).toBeLessThan(.12);
+  });
+  it('does not hand back sightings of a person the runner emerged from behind', () => {
+    // The runner is hidden behind a person standing at .06 until 0.33 s, then appears there; the
+    // provisional track of the standing person continues onto the runner.
+    const tracker = new SprintTracker(.12, 1, 'flying'), here = (t: number) => .06 + .64 * (t - .33);
+    const published: { t: number; x: number }[] = [];
+    for (let frame = 0; frame < .8 * fps; frame++) {
+      const t = frame / fps, c = tracker.choose([pose(t < .33 ? .06 : here(t))], t);
+      for (const b of tracker.takeBackfill()) published.push({ t: b.pts, x: (b.pose[23].x + b.pose[24].x) / 2 });
+      if (c.length) published.push({ t, x: (c[23].x + c[24].x) / 2 });
+    }
+    expect(published.length).toBeGreaterThan(40);
+    // Standing sightings join the path only within pose jitter (.015) of the runner's line.
+    for (const p of published) expect(Math.abs(p.x - here(p.t))).toBeLessThan(.016);
+    expect(published[0].t).toBeGreaterThan(.33 - .016 / .64 - 1e-9);
+  });
+  it('treats a body cut by the edge of the analysed crop like one cut by the frame edge', () => {
+    // The crop covers .3-.66 of the frame: a runner entering it is cut at .3, not at the frame edge.
+    const tracker = new SprintTracker(.5, 1, 'flying'), view = [.3, .66] as const;
+    const at = (t: number) => .25 + .64 * t, published: number[] = [];
+    for (let frame = 0; frame < .6 * fps; frame++) {
+      const t = frame / fps, hip = at(t);
+      // MediaPipe extends a cut body beyond the crop; the trailing ankle is .05 behind the pelvis.
+      const p = pose(hip); p[27] = { ...p[27], x: hip - .05 };
+      const c = tracker.choose(hip < .66 ? [p] : [], t, view);
+      for (const b of tracker.takeBackfill()) published.push(b.pose[27].x);
+      if (c.length) published.push(c[27].x);
+    }
+    expect(published.length).toBeGreaterThan(10);
+    for (const ankle of published) expect(ankle).toBeGreaterThan(.3);
+  });
+  // A 10 m section spanning 0.84 of the picture: 1 m/s is 0.084 image widths/s; sprint speed 4 m/s.
+  const widths = (mps: number) => mps * .084, sprint = widths(4);
+  it('never takes a person jogging toward the finish (3.5 m/s) for the runner, and takes the runner (8 m/s) after them', () => {
+    // Recorded: people jogging behind the track at 3.2-3.6 m/s were taken before the runner arrived.
+    const tracker = new SprintTracker(.09, 1, 'flying', sprint);
+    const jogger = (t: number) => .03 + widths(3.5) * t, runner = (t: number) => -.05 + widths(8) * (t - 2);
+    const chosen = run(tracker, t => {
+      const poses: Point[][] = [];
+      if (inFrame(jogger(t))) poses.push(pose(jogger(t), .55));
+      if (inFrame(runner(t))) poses.push(pose(runner(t), .7));
+      return poses;
+    }, 4);
+    expect(chosen.length).toBeGreaterThan(100);
+    for (const c of chosen) expect(Math.abs(c.x - runner(c.t))).toBeLessThan(1e-9);
+  });
+  it('keeps following a runner who is missed for a frame or two, and decides at sprint speed', () => {
+    // Recorded at night: the runner's pose was missed for 1-3 frames every few frames.
+    const tracker = new SprintTracker(.1, 1, 'flying', sprint), runner = (t: number) => -.05 + widths(7) * (t - .2);
+    const chosen = run(tracker, t => {
+      const frame = Math.round(t * fps);
+      return inFrame(runner(t)) && frame % 7 > 2 ? [pose(runner(t))] : [];
+    });
+    expect(chosen.length).toBeGreaterThan(60);
+    for (const c of chosen) expect(Math.abs(c.x - runner(c.t))).toBeLessThan(1e-9);
+    // Decided before the runner reaches the entry gate's far side, so the entry is measured.
+    expect(chosen[0].x).toBeLessThan(.3);
+  });
+  it('treats one person detected twice as one person', () => {
+    // Recorded with four people per frame: the runner was often detected twice, 0.003-0.007 apart.
+    const tracker = new SprintTracker(.1, 1, 'flying', sprint), runner = (t: number) => -.05 + widths(7) * (t - .2);
+    const chosen = run(tracker, t => {
+      const frame = Math.round(t * fps), r = runner(t);
+      if (!inFrame(r)) return [];
+      return frame % 3 ? [pose(r)] : [pose(r), pose(r + .005, .655)];
+    });
+    expect(chosen.length).toBeGreaterThan(100);
+    expect(chosen[0].x).toBeLessThan(.3);
+    for (const c of chosen) expect(Math.abs(c.x - runner(c.t))).toBeLessThan(.006);
+  });
+  it('passes in front of people jogging behind at the same horizontal position', () => {
+    // Recorded: the runner (pelvis at 0.67 of the height) passed joggers on the field behind (0.61).
+    const tracker = new SprintTracker(.1, 1, 'flying', sprint), runner = (t: number) => -.05 + widths(7) * (t - .2);
+    // The runner passes them at about 0.45 s, while its track is still provisional.
+    const jogger = (t: number) => -.02 + widths(3) * t, other = (t: number) => .01 + widths(3) * t;
+    const published: { t: number; x: number }[] = [];
+    for (let frame = 0; frame < 2.5 * fps; frame++) {
+      const t = frame / fps, poses: Point[][] = [jogger(t), other(t)].filter(inFrame).map((x, i) => pose(x, .61 - .005 * i));
+      if (inFrame(runner(t))) poses.push(pose(runner(t), .67));
+      const c = tracker.choose(poses, t);
+      for (const b of tracker.takeBackfill()) published.push({ t: b.pts, x: (b.pose[23].x + b.pose[24].x) / 2 });
+      if (c.length) published.push({ t, x: (c[23].x + c[24].x) / 2 });
+    }
+    expect(published.length).toBeGreaterThan(100);
+    expect(published[0].x).toBeLessThan(.1);   // seen before the entry gate, so the entry is measured
+    for (const p of published) expect(Math.abs(p.x - runner(p.t))).toBeLessThan(1e-9);
+  });
+  it('never takes someone first seen well past the entry gate, whose entry cannot be measured', () => {
+    // Recorded: a person 0.12 widths past the entry, apparently at sprint speed (a panning camera), was taken.
+    const tracker = new SprintTracker(.09, 1, 'flying', sprint);
+    const past = (t: number) => .21 + widths(5) * t, runner = (t: number) => -.05 + widths(8) * (t - 1.5);
+    const chosen = run(tracker, t => {
+      const poses: Point[][] = [];
+      if (t < 1 && inFrame(past(t))) poses.push(pose(past(t), .55));
+      if (inFrame(runner(t))) poses.push(pose(runner(t), .7));
+      return poses;
+    }, 3.5);
+    expect(chosen.length).toBeGreaterThan(100);
+    for (const c of chosen) expect(Math.abs(c.x - runner(c.t))).toBeLessThan(1e-9);
+  });
+  it('replaces a person jogging behind, taken first, with a nearer and faster young runner', () => {
+    // Young runners (4-5 m/s) are as slow as people jogging (3-3.6 m/s): speed alone cannot tell them apart.
+    const tracker = new SprintTracker(.1, .8, 'flying', widths(2.5));
+    const jogger = (t: number) => .03 + widths(3.2) * t, runner = (t: number) => -.05 + widths(5) * (t - 1);
+    const published = new Map<number, number>();
+    for (let frame = 0; frame < 3.5 * fps; frame++) {
+      const t = frame / fps, poses: Point[][] = [];
+      if (inFrame(jogger(t))) poses.push(pose(jogger(t), .58));
+      if (inFrame(runner(t))) poses.push(pose(runner(t), .7));
+      const c = tracker.choose(poses, t), from = tracker.takeRetraction();
+      if (from !== null) for (const k of [...published.keys()]) if (k >= from) published.delete(k);
+      for (const b of tracker.takeBackfill()) published.set(b.pts, (b.pose[23].x + b.pose[24].x) / 2);
+      if (c.length) published.set(t, (c[23].x + c[24].x) / 2);
+    }
+    const kept = [...published.entries()];
+    expect(kept.length).toBeGreaterThan(100);
+    for (const [t, x] of kept) expect(Math.abs(x - runner(t))).toBeLessThan(1e-9);
+    expect(Math.min(...kept.map(([, x]) => x))).toBeLessThan(.1);   // the runner's entry is measured
+  });
+  it('keeps the runner when a slower or farther person comes along', () => {
+    const tracker = new SprintTracker(.1, .8, 'flying', widths(2.5));
+    const runner = (t: number) => -.05 + widths(5) * (t - .2), nearSlow = (t: number) => -.05 + widths(3) * (t - .6);
+    const farFast = (t: number) => -.05 + widths(7) * (t - .8);
+    const chosen = run(tracker, t => {
+      const poses: Point[][] = [];
+      if (inFrame(runner(t))) poses.push(pose(runner(t), .65));
+      if (inFrame(nearSlow(t))) poses.push(pose(nearSlow(t), .75));   // nearer but slower
+      if (inFrame(farFast(t))) poses.push(pose(farFast(t), .55));     // faster but farther
+      return poses;
+    });
+    expect(chosen.length).toBeGreaterThan(100);
+    for (const c of chosen) expect(Math.abs(c.x - runner(c.t))).toBeLessThan(1e-9);
+    expect(tracker.takeRetraction()).toBeNull();
+  });
+  it('is idle only while nobody on the run-in side has moved in the last 0.1 s', () => {
+    // Recorded: a person standing for 0.3 s then setting off looked still over the whole track.
+    const tracker = new SprintTracker(.2, 1, 'flying', widths(2.5));
+    const person = (t: number) => t < .3 ? .08 : .08 + widths(5) * (t - .3);
+    const states: { t: number; idle: boolean }[] = [];
+    for (let frame = 0; frame < .5 * fps; frame++) { const t = frame / fps; tracker.choose([pose(person(t))], t); states.push({ t, idle: tracker.idle }); }
+    expect(states.filter(s => s.t > .1 && s.t < .29).every(s => s.idle)).toBe(true);    // standing
+    expect(states.filter(s => s.t > .33 && s.t < .45).some(s => s.idle)).toBe(false);   // moving off
+    expect(new SprintTracker(.2, 1, 'standing').idle).toBe(false);
+  });
+  it('searches again when the person taken disappears before the entry gate', () => {
+    // Someone sprints in at the left edge for 0.4 s and drops out of the picture before the gate; the runner comes 2 s later.
+    const tracker = new SprintTracker(.3, 1, 'flying', sprint);
+    const first = (t: number) => .03 + widths(7) * t, runner = (t: number) => -.05 + widths(8) * (t - 2);
+    const chosen = run(tracker, t => {
+      const poses: Point[][] = [];
+      if (t < .4 && inFrame(first(t))) poses.push(pose(first(t), .6));
+      if (inFrame(runner(t))) poses.push(pose(runner(t), .7));
+      return poses;
+    }, 4);
+    const later = chosen.filter(c => c.t > 1);
+    expect(later.length).toBeGreaterThan(100);
+    for (const c of later) expect(Math.abs(c.x - runner(c.t))).toBeLessThan(1e-9);
+  });
+  it('lets the crop follow a provisional runner at sprint speed before the decision, but not a jogger', () => {
+    const tracker = new SprintTracker(.09, 1, 'flying', sprint);
+    for (let frame = 0; frame < .15 * fps; frame++) tracker.choose([pose(.05 + widths(8) * frame / fps), pose(.03 + widths(3) * frame / fps, .5)], frame / fps);
+    const t = .15, runnerAt = .05 + widths(8) * t;
+    expect(Math.abs(tracker.expected(t) - runnerAt)).toBeLessThan(.01);
+    const slow = new SprintTracker(.09, 1, 'flying', sprint);
+    for (let frame = 0; frame < .15 * fps; frame++) slow.choose([pose(.03 + widths(3) * frame / fps, .5)], frame / fps);
+    expect(slow.expected(t)).toBeCloseTo(.02, 9);   // the seed, 0.08 on the run-in side, kept inside the picture
   });
   it('seeds the crop on the run-in side of the gate and falls back to standing without a direction', () => {
     expect(new SprintTracker(.2, 1, 'flying').expected(0)).toBeCloseTo(.12, 9);

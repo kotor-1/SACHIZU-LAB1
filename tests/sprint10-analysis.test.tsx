@@ -59,6 +59,61 @@ describe('10m sprint experiment', () => {
     const r = analyzeSprint(synthetic().filter(s => s.pts > .6), .2, .8);
     expect(r.reason).toContain('スタートラインより後ろにいる選手を確認できません');
   });
+  it('words gate failures for a flying section as entry and exit, never asking for a standing athlete', () => {
+    const noEntry = analyzeSprint(synthetic().filter(s => s.pts > .6), .2, .8, 10, 'flying');
+    expect(noEntry.reason).toContain('入口の線を越える選手を捉えられませんでした');
+    expect(noEntry.reason).not.toMatch(/立ち位置|走り出す前/);
+    expect(analyzeSprint(synthetic().filter(s => s.pts < .35 || s.pts > .65), .2, .8, 10, 'flying').reason).toContain('入口の線を越える瞬間');
+    expect(analyzeSprint(synthetic().filter(s => s.pts < 2.4), .2, .8, 10, 'flying').reason).toContain('出口の線の通過を確認できません');
+    // On clean, steady running both kinds of run measure the same.
+    const flying = analyzeSprint(synthetic(), .2, .8, 10, 'flying'), standing = analyzeSprint(synthetic(), .2, .8, 10);
+    expect(flying.duration).toBeCloseTo(standing.duration!, 9); expect(flying.count).toBeCloseTo(standing.count!, 6);
+    expect(flying.steps).toEqual(standing.steps);
+  });
+  it('flying section: estimates a gate crossed out of view by extending the pelvis motion up to 0.1 s, and says so', () => {
+    // The pelvis (0.3 widths/s) crosses the entry .2 at 0.5 s and the exit .8 at 2.5 s.
+    const hidden = (from: number, to: number) => synthetic().map(s => s.pts > from && s.pts < to
+      ? { ...s, hipX: null, ankleGap: null, kneeGap: null, legLength: null } : s);
+    const entry = analyzeSprint(hidden(.45, .55), .2, .8, 10, 'flying');     // entry crossing not seen for 50 ms after it
+    expect(entry.reason).toBeNull();
+    expect(entry.start!.pts).toBeCloseTo(.5, 6); expect(entry.start!.extendedSeconds).toBeCloseTo(.05 - 1 / 240, 2);
+    expect(entry.duration).toBeCloseTo(2, 6);
+    expect(entry.warnings[0]).toContain('入口の線を越える瞬間の骨盤は映っていない');
+    const exit = analyzeSprint(hidden(2.46, 3.1), .2, .8, 10, 'flying');      // the body leaves the picture before the exit
+    expect(exit.reason).toBeNull();
+    expect(exit.finish!.pts).toBeCloseTo(2.5, 6); expect(exit.warnings[0]).toContain('出口の線を越える瞬間の骨盤は映っていない');
+    // Never further than 0.1 s, never outside the video, never for a standing start.
+    expect(analyzeSprint(hidden(.35, .65), .2, .8, 10, 'flying').duration).toBeNull();
+    expect(analyzeSprint(hidden(2.38, 3.1), .2, .8, 10, 'flying').duration).toBeNull();
+    expect(analyzeSprint(synthetic().filter(s => s.pts > .52), .2, .8, 10, 'flying').duration).toBeNull();
+    expect(analyzeSprint(hidden(.45, .55), .2, .8).reason).toContain('スタートラインを越える瞬間');
+    // An unseen span at the gate is not counted as a tracking dropout of the legs.
+    expect(entry.count).toBeCloseTo(analyzeSprint(synthetic(), .2, .8, 10, 'flying').count!, 1);
+  });
+  it('flying section: a one-frame pose error at a gate does not move its time', () => {
+    // Recorded: the pelvis read 0.528 for one frame, 0.025 behind its path, just after crossing the entry 0.53.
+    const glitch = (at: number, dx: number) => synthetic(120).map(s => Math.abs(s.pts - at) < 1e-9 ? { ...s, hipX: s.hipX! + dx } : s);
+    const clean = analyzeSprint(synthetic(120), .2, .8, 10, 'flying');
+    const back = analyzeSprint(glitch(.55, -.025), .2, .8, 10, 'flying');        // back behind the entry 50 ms after it
+    const ahead = analyzeSprint(glitch(2.475, .025), .2, .8, 10, 'flying');      // past the exit 25 ms early
+    expect(clean.duration).toBeCloseTo(2, 6);
+    expect(back.start!.pts).toBeCloseTo(.5, 4); expect(back.duration).toBeCloseTo(2, 4);
+    expect(ahead.finish!.pts).toBeCloseTo(2.5, 4); expect(ahead.duration).toBeCloseTo(2, 4);
+    // A standing start keeps the last time behind the line (sway on the line), as before.
+    expect(analyzeSprint(glitch(.55, -.025), .2, .8).start!.pts).toBeGreaterThan(.55);
+  });
+  it('flying section: one frame of another person 0.06 ahead, just past the entry and followed by a gap, does not move the entry', () => {
+    // Recorded (IMG_4835 cropped): the pelvis read 0.06 ahead of the runner for one frame at the entry
+    // line, then the runner was not seen for 0.1 s; the entry came out 98 ms early.
+    const samples = synthetic(120).map(s => Math.abs(s.pts - .45) < 1e-9 ? { ...s, hipX: s.hipX! + .06 }
+      : s.pts > .45 && s.pts < .56 ? { ...s, hipX: null } : s);
+    const r = analyzeSprint(samples, .2, .8, 10, 'flying');
+    expect(r.reason).toBeNull();
+    expect(Math.abs(r.start!.pts - .5)).toBeLessThan(.002);
+    expect(r.duration).toBeCloseTo(2, 2);
+    // A standing start is unchanged (no such filtering).
+    expect(analyzeSprint(samples, .2, .8).start!.pts).toBeLessThan(.46);
+  });
   it('counts one missed overlap (a cycle about twice the usual) as two steps and leaves its distance blank', () => {
     const missed = synthetic(120).map(s => Math.abs(s.pts - 1.375) < .07 ? { ...s, ankleGap: .2, kneeGap: .1 } : s);
     const clean = analyzeSprint(synthetic(120), .2, .8), r = analyzeSprint(missed, .2, .8);
@@ -67,7 +122,7 @@ describe('10m sprint experiment', () => {
     expect(r.warnings[0]).toContain('2歩分');
     expect(r.strideIntervals.some(s => s.reason === '入れ替わりの見逃しで2歩分の区間です' && s.distanceM === null)).toBe(true);
   });
-  it('counts a cycle up to 1.5x the median as one, about 1.7x as two, and withholds the band between', () => {
+  it('counts a cycle up to 1.5x the usual one as one, about 1.7x as two, and between them as two with a caution', () => {
     // Overlaps every 30 frames (0.25 s at 120 fps) except one longer cycle after 1.375 s.
     const gait = (longFrames: number) => {
       const overlaps: number[] = [];
@@ -83,9 +138,26 @@ describe('10m sprint experiment', () => {
     // Start .5 is half a cycle before .625; the finish 2.5 is 2 frames after the overlap at frame 298.
     expect(single.count).toBeCloseTo(.5 + 7 + (2.5 - 298 / 120) / .25, 6);
     expect(single.warnings[0]).not.toContain('2歩分');
-    expect(analyzeSprint(gait(47), .2, .8).count).toBeNull(); // 1.57x: ambiguous
+    const between = analyzeSprint(gait(47), .2, .8);         // 1.57x: hard to call, counted and flagged
+    expect(between.count).toBeCloseTo(single.count! + 1 + (2.5 - 302 / 120) / .25 - (2.5 - 298 / 120) / .25, 1);
+    expect(between.warnings.some(w => w.includes('1歩ずれている可能性'))).toBe(true);
     const double = analyzeSprint(gait(52), .2, .8);            // 1.73x: one missed overlap
     expect(double.count).not.toBeNull(); expect(double.warnings[0]).toContain('2歩分');
+  });
+  it('judges a missed overlap against the usual cycle, not one raised by the missed overlap itself', () => {
+    // Recorded (IMG_4837, entry 10%): four cycles of 0.508 (one missed overlap), 0.284, 0.275 and 0.350 s.
+    // Taking the upper-middle 0.350 as the usual cycle made 0.508 look like one long cycle (one step short).
+    const overlaps = [8, 42, 76, 110, 171, 205, 238, 280, 314, 348];   // frames at 120 fps: cycles 61, 34, 33, 42 between the gates
+    const samples = Array.from({ length: 361 }, (_, i) => {
+      const k = overlaps.filter(o => o <= i).length - 1, a = overlaps[k] ?? overlaps[0] - 34, b = overlaps[k + 1] ?? a + 34;
+      const gap = .03 + .25 * Math.sin(Math.PI * (i - a) / (b - a));
+      return { frame: i, pts: i / 120, hipX: .05 + .3 * i / 120, ankleGap: gap, kneeGap: gap * .5, legLength: .3 };
+    });
+    const r = analyzeSprint(samples, .05 + .3 * 100 / 120, .05 + .3 * 300 / 120);   // gates at frames 100 and 300
+    expect(r.steps).toHaveLength(5);
+    expect(r.warnings[0]).toContain('2歩分');
+    // Five elapsed cycles plus the partial ones at the gates (the detector places overlaps within a frame).
+    expect(Math.abs(r.count! - (5 + (110 - 100) / 34 + (300 - 280) / 34))).toBeLessThan(.07);
   });
   it('detects the first leg crossing out of a standing stance narrower than a running stride', () => {
     // Stance gap 0.45 (scaled by leg length) lies between the closed (0.28) and open (0.51) levels;
@@ -164,7 +236,8 @@ describe('10m sprint experiment', () => {
     });
     const result = analyzeSprint(samples, .2, .8);
     if (a === 1) {
-      expect(result.duration).toBeCloseTo(2); expect(result.count).toBeNull();
+      // The time stays exact; the steps are still counted, and that interval's distance is withheld.
+      expect(result.duration).toBeCloseTo(2); expect(result.count).toBeCloseTo(analyzeSprint(synthetic(60), .2, .8).count!, 6);
       expect(result.strideIntervals.some(s => s.reason === 'この区間の追跡が途切れています')).toBe(true);
     } else expect(result.duration).toBeNull();
   });
@@ -192,14 +265,14 @@ describe('10m sprint experiment', () => {
     expect(events(.12)).toHaveLength(10); expect(events(.12, 10)).toHaveLength(10);
     expect(events(.119999)).toHaveLength(5);
   });
-  it('accepts 650 ms overlap cycles but still withholds counts for longer cycles', () => {
+  it('counts 650 ms overlap cycles, and longer ones too, without per-step distances for the long ones', () => {
     const evaluate = (period: number) => analyzeSprint(synthetic().map(s => {
       const gap = .03 + .25 * Math.abs(Math.cos(Math.PI * s.pts / period));
       return { ...s, ankleGap: gap, kneeGap: gap * .5 };
     }), .2, .8);
     expect(evaluate(.65).count).toBeCloseTo(2 / .65, 9);
     const tooLong = evaluate(.75);
-    expect(tooLong.duration).toBeCloseTo(2); expect(tooLong.count).toBeNull();
+    expect(tooLong.duration).toBeCloseTo(2); expect(tooLong.count).toBeCloseTo(2 / .75, 9);
     expect(tooLong.strideIntervals.every(s => s.reason === '入れ替わり周期を確認できません')).toBe(true);
   });
   it('keeps gait measurements invariant to stationary padding before or after the run', () => {
@@ -227,9 +300,35 @@ describe('10m sprint experiment', () => {
     expect(result.steps.at(-1)!.pts).toBeCloseTo(2.375, 2);
     expect(result.strideIntervals).toHaveLength(7);
   });
-  it('withholds gait metrics after a tracking dropout, while keeping time', () => {
+  it('counts steps through a leg-tracking dropout from the usual cycle, and says so', () => {
+    // The legs are not seen for 0.2 s, hiding the overlap at 1.125 s.
     const r = analyzeSprint(synthetic().map(s => s.pts > 1 && s.pts < 1.2 ? { ...s, ankleGap: null, kneeGap: null } : s), .2, .8);
-    expect(r.duration).toBeCloseTo(2); expect(r.count).toBeNull(); expect(r.stride).toBeNull();
+    expect(r.duration).toBeCloseTo(2); expect(r.count).toBeCloseTo(analyzeSprint(synthetic(), .2, .8).count!, 6);
+    expect(r.stride).toBeCloseTo(10 / r.count!, 9);
+    expect(r.warnings[0]).toContain('1回見逃した区間');
+  });
+  it('always counts: missed overlaps at a gate, several missed in a row, a false detection, or none between the gates', () => {
+    // Overlaps every 0.25 s at 0.125 + 0.25k (synthetic); gates at 0.5 s and 2.5 s; 8 cycles.
+    const without = (times: number[], width = .06) => synthetic(120).map(s => times.some(t => Math.abs(s.pts - t) < width)
+      ? { ...s, ankleGap: .2, kneeGap: .1 } : s);
+    const clean = analyzeSprint(synthetic(120), .2, .8).count!;
+    expect(Math.abs(clean - 8)).toBeLessThan(.05);
+    // The overlap just before the exit is not seen (body leaving the picture): estimated from the cycle.
+    const exit = analyzeSprint(without([2.375, 2.625]), .2, .8);
+    expect(exit.count).toBeCloseTo(clean, 1); expect(exit.warnings.join()).toContain('出口の直前の入れ替わりが映っていない');
+    const entry = analyzeSprint(without([.375, .625]), .2, .8);
+    expect(entry.count).toBeCloseTo(clean, 1); expect(entry.warnings.join()).toContain('入口の直後の入れ替わりが映っていない');
+    // Two overlaps missed in a row: one interval of three cycles.
+    const three = analyzeSprint(without([1.125, 1.375]), .2, .8);
+    expect(three.count).toBeCloseTo(clean, 1); expect(three.warnings[0]).toContain('2回見逃した');
+    expect(three.strideIntervals.some(s => s.reason === '入れ替わりの見逃しで3歩分の区間です')).toBe(true);
+    // A false overlap in the middle of a cycle is dropped.
+    const spurious = synthetic(120).map(s => Math.abs(s.pts - 1.25) < .03 ? { ...s, ankleGap: .03, kneeGap: .015 } : s);
+    const dropped = analyzeSprint(spurious, .2, .8);
+    expect(dropped.count).toBeCloseTo(clean, 1); expect(dropped.warnings[0]).toContain('誤検出');
+    // No overlap seen between the gates at all: the usual cycle from just outside them.
+    const none = analyzeSprint(without([.625, .875, 1.125, 1.375, 1.625, 1.875, 2.125, 2.375], .1), .2, .8);
+    expect(Math.abs(none.count! - 8)).toBeLessThan(.2); expect(none.warnings.join()).toContain('区間内の入れ替わりを捉えられなかった');
   });
   it('rejects stationary noise, missing legs and non-monotonic timestamps', () => {
     expect(stepCandidates(synthetic().map(s => ({ ...s, ankleGap: .005 }))).events).toEqual([]);
@@ -247,7 +346,7 @@ describe('10m sprint experiment', () => {
   it('renders upload, playback, gates and analyze, with no first-step or foot input', () => {
     const html = renderToStaticMarkup(<Sprint10Lab />);
     expect(html).not.toContain('type="radio"'); expect(html).not.toContain('左足から'); expect(html).not.toContain('1歩目');
-    expect(html).toContain('3　解析する'); expect(html).toContain('解析v8'); expect(html).toContain('aria-label="10mの動画を選ぶ"');
+    expect(html).toContain('3　解析する'); expect(html).toContain('解析v9'); expect(html).toContain('aria-label="10mの動画を選ぶ"');
     expect(html).toContain('この2本のラインで決定'); expect(html).toContain('解析する'); expect(html).toContain('<video');
     expect(html).toContain('スタート10m'); expect(html).toContain('最高速度区間');
   });

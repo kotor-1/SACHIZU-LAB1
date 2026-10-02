@@ -25,7 +25,11 @@ export function mobileSample(points: readonly NormalizedLandmark[][], frame: num
   return { frame, pts, hipY: (p[23].y + p[24].y) * 480, footY: Math.max(p[31].y, p[32].y) * 960 };
 }
 export class MobileCMJPose {
-  constructor(readonly variant: PoseVariant = 'lite', private selectPose?: PoseSelector, private delegate: 'CPU' | 'GPU' = 'CPU') {}
+  /** numPoses: people detected per frame (CMJ/RJ: 2; sprint: more, see measureSprint).
+   * runningMode 'IMAGE' detects everyone afresh in every frame instead of
+   * following the people found before (for watching who comes into a region). */
+  constructor(readonly variant: PoseVariant = 'lite', private selectPose?: PoseSelector, private delegate: 'CPU' | 'GPU' = 'CPU',
+    private numPoses = 2, private runningMode: 'VIDEO' | 'IMAGE' = 'VIDEO') {}
   private model: PoseLandmarker | null = null;
   get backend(): 'CPU' | 'GPU' { return this.delegate; }
   async initialize(signal: AbortSignal, status: (message: string) => void = () => {}) {
@@ -46,7 +50,7 @@ export class MobileCMJPose {
     const files = { wasmLoaderPath: simd ? loader : noSimdLoader, wasmBinaryPath: simd ? wasm : noSimdWasm };
     status(this.variant === 'heavy' ? '録画解析用の高精度姿勢モデルを準備しています。' : '姿勢モデルを準備しています。');
     this.model = await PoseLandmarker.createFromOptions(files, {
-      baseOptions: { modelAssetBuffer: bytes, delegate: this.delegate }, runningMode: 'VIDEO', numPoses: 2,
+      baseOptions: { modelAssetBuffer: bytes, delegate: this.delegate }, runningMode: this.runningMode, numPoses: this.numPoses,
       outputSegmentationMasks: false,
     });
     if (signal.aborted) { this.dispose(); check(); }
@@ -55,7 +59,7 @@ export class MobileCMJPose {
   estimate(image: HTMLVideoElement | HTMLCanvasElement | ImageBitmap | OffscreenCanvas, frame: number, pts: number) {
     if (!this.model) throw new Error('MODEL_NOT_READY');
     const start = performance.now();
-    const result = this.model.detectForVideo(image, pts * 1000 + 1);
+    const result = this.runningMode === 'IMAGE' ? this.model.detect(image) : this.model.detectForVideo(image, pts * 1000 + 1);
     const landmarks = this.selectPose ? this.selectPose(result.landmarks, pts) : result.landmarks;
     return { comSample: centerOfMassSample(landmarks, frame, pts), landmarks,
       inferenceMs: performance.now() - start };

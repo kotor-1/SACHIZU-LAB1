@@ -7,7 +7,10 @@ import StrideResults from './StrideResults';
 import './sprint10.css';
 
 type Gate = 'start' | 'finish';
-const GATE_LABEL: Record<Gate, string> = { start: 'スタート', finish: 'ゴール' };
+/** A flying section is entered and left at speed: its gates are the entry and the exit. */
+const GATE_LABELS: Record<SprintStart, Record<Gate, string>> = {
+  standing: { start: 'スタート', finish: 'ゴール' }, flying: { start: '入口', finish: '出口' },
+};
 /** Standing 10 m from the start line, or a known section the athlete runs through at speed. */
 const MODES: { id: SprintStart; label: string; hint: string }[] = [
   { id: 'standing', label: 'スタート10m', hint: 'スタートラインから10m。選手は走り出す前から映っている。' },
@@ -29,6 +32,7 @@ export default function Sprint10Lab() {
   const [sectionStartM, setSectionStartM] = useState(50), [sectionLengthM, setSectionLengthM] = useState(10);
   const distanceM = mode === 'flying' ? sectionLengthM : 10;
   const sectionLabel = mode === 'flying' ? `${sectionStartM}〜${sectionStartM + sectionLengthM}m区間` : '10m';
+  const GATE_LABEL = GATE_LABELS[mode];
   const [active, setActive] = useState<Gate>('start');
   // Where along the line the user is looking (fraction of the frame height): the touch point while dragging.
   const focusY = useRef(.75);
@@ -36,7 +40,7 @@ export default function Sprint10Lab() {
   const [ready, setReady] = useState(false), [busy, setBusy] = useState(false), [progress, setProgress] = useState(0);
   const [message, setMessage] = useState(''), [samples, setSamples] = useState<SprintSample[] | null>(null);
   const [review, setReview] = useState('');
-  const result = useMemo(() => samples && confirmed && distanceM > 0 ? analyzeSprint(samples, start, finish, distanceM) : null, [samples, start, finish, confirmed, distanceM]);
+  const result = useMemo(() => samples && confirmed && distanceM > 0 ? analyzeSprint(samples, start, finish, distanceM, mode) : null, [samples, start, finish, confirmed, distanceM, mode]);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   useEffect(() => () => { owner.current?.abort(); owner.current = null; }, []);
   // Bring the numbers into view once, when a new analysis finishes.
@@ -100,7 +104,7 @@ export default function Sprint10Lab() {
     try {
       const data = await measureSprint(file, start, control.signal, (value, text) => {
         if (owner.current === control) { setProgress(value); setMessage(text); }
-      }, finish, mode);
+      }, finish, mode, distanceM);
       if (owner.current === control && !control.signal.aborted) { showResult.current = true; setSamples(data); }
     } catch (error) {
       if (owner.current === control && !control.signal.aborted) setMessage(error instanceof Error ? error.message : String(error));
@@ -142,9 +146,11 @@ export default function Sprint10Lab() {
         <span className="sprint10-upload-button" aria-hidden="true"><Upload size={19} />{file ? '別の動画を選ぶ' : '動画を選ぶ'}</span></label>
       {file && <p className="sprint10-file">{file.name} · {(file.size / 1024 / 1024).toFixed(1)} MB</p>}
     </section>
-    <section className="sprint10-card"><h2>2　スタートとゴールを合わせる</h2>
-      <p>再生して、骨盤がスタートを越える前からゴールを越えた後まで映っていることを確認します。次に、2本の線を走路上の白線・コーンに合わせてください。目印は選手が走るコース上（同じ奥行き）に置きます。画面の端ほど奥行きの差でタイムがずれます。{mode === 'flying'
-        ? '選手が入ってくる側の線は、画面の端から2割以上内側に置いてください。線より手前で走っている選手を捉えてから区間を測ります。線の手前に人が立っていると選手を見失うことがあります。'
+    <section className="sprint10-card"><h2>{`2　${GATE_LABEL.start}と${GATE_LABEL.finish}を合わせる`}</h2>
+      <p>{mode === 'flying'
+        ? '再生して、選手が入口と出口の線を越えて走る様子が映っていることを確認します。最初は選手が画面に入っていなくて構いません。'
+        : '再生して、骨盤がスタートを越える前からゴールを越えた後まで映っていることを確認します。'}次に、2本の線を走路上の白線・コーンに合わせてください。目印は選手が走るコース上（同じ奥行き）に置きます。画面の端ほど奥行きの差でタイムがずれます。{mode === 'flying'
+        ? '線は画面の端の近くでも構いません。線を越える瞬間に体が画面の端にかかっている場合は、その前後の動きから通過時刻を推定し、結果にその旨を表示します。'
         : 'スタートの線は、選手の立ち位置より少し後ろに置いてください。'}</p>
       {ready && <figure className="sprint10-loupe"><canvas ref={loupe} aria-label={`${GATE_LABEL[active]}ライン付近の拡大表示`} />
         <figcaption className={active}>{GATE_LABEL[active]}の拡大（{LOUPE_ZOOM}倍）</figcaption></figure>}
@@ -152,11 +158,12 @@ export default function Sprint10Lab() {
         <video ref={video} src={url || undefined} controls playsInline preload="auto" onLoadedData={() => setReady(true)} onError={() => { setReady(false); setMessage('この動画を再生できません。対応形式を確認してください。'); }} />
         {ready && <div className="sprint10-gates">{(['start', 'finish'] as const).map(which => <button key={which} type="button" role="slider"
           aria-label={`${GATE_LABEL[which]}ライン`} aria-valuemin={1} aria-valuemax={99} aria-valuenow={Math.round(position(which) * 100)}
-          className={`sprint10-gate ${which}`} style={{ left: `${position(which) * 100}%` }} disabled={busy}
+          // Near a frame edge the label sits beside the line, inside the picture.
+          className={`sprint10-gate ${which}${position(which) < .1 ? ' at-left' : position(which) > .9 ? ' at-right' : ''}`} style={{ left: `${position(which) * 100}%` }} disabled={busy}
           onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); setActive(which); drag(which, e); }} onPointerMove={e => drag(which, e)}
           onPointerUp={e => { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); }}
           onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); move(which, position(which) + (e.key === 'ArrowLeft' ? -NUDGE : NUDGE)); } }}>
-          <span>{which === 'start' ? 'START' : 'FINISH'}</span></button>)}</div>}
+          <span>{mode === 'flying' ? GATE_LABEL[which] : which === 'start' ? 'START' : 'FINISH'}</span></button>)}</div>}
       </div>
       {review && <p aria-live="polite">確認中：{review}</p>}
       <p className="sprint10-hint">線をドラッグして大まかに合わせ、◀ ▶ で少しずつ動かします。</p>
@@ -185,13 +192,13 @@ export default function Sprint10Lab() {
       <details className="sprint10-more"><summary>1歩ごとの詳細を見る</summary><StrideResults intervals={result.strideIntervals} seek={seek} /></details>
       <details className="sprint10-more"><summary>検出位置を動画で確認</summary>
         <div className="sprint10-events">
-          {result.start && <button onClick={() => seek(result.start!.pts, 'スタート')}>スタート {result.start.pts.toFixed(3)}秒</button>}
+          {result.start && <button onClick={() => seek(result.start!.pts, GATE_LABEL.start)}>{GATE_LABEL.start} {result.start.pts.toFixed(3)}秒</button>}
           {result.steps.map((s, i) => <button key={s.frame} onClick={() => seek(s.pts, `${i + 1}回目の入れ替わり`)}>
             {i + 1}回目の入れ替わり · {s.pts.toFixed(3)}秒</button>)}
-          {result.finish && <button onClick={() => seek(result.finish!.pts, 'ゴール')}>ゴール {result.finish.pts.toFixed(3)}秒</button>}
+          {result.finish && <button onClick={() => seek(result.finish!.pts, GATE_LABEL.finish)}>{GATE_LABEL.finish} {result.finish.pts.toFixed(3)}秒</button>}
         </div><p>ボタンでその時刻へ移動します。遊脚が支持脚を追い越す瞬間で、接地のコマではありません。</p></details>
       <button onClick={save}>結果と判定データを保存（JSON）</button>
     </section>}
-    <footer>解析v8 · 動画はこの端末内で処理します。全フレームの解析時間は端末性能により変わります。2本のラインだけで遠近やカメラの揺れを補正することはできません。</footer>
+    <footer>解析v9 · 動画はこの端末内で処理します。全フレームの解析時間は端末性能により変わります。2本のラインだけで遠近やカメラの揺れを補正することはできません。</footer>
   </main>;
 }

@@ -102,6 +102,24 @@ export class SequentialRecordingDecoder {
     }
   }
   async decodeExactFrame(index: number) {
+    const frame = await this.decodedFrame(index);
+    try {
+      // Keep the same bitmap conversion as the reference exact decoder, so
+      // inference receives the same pixels, dimensions and color conversion.
+      const bitmap = await createImageBitmap(frame);
+      if (this.disposed) { bitmap.close(); this.check(); }
+      this.bitmap = bitmap;
+    } finally { frame.close(); }
+    this.nextIndex++;
+    return { status: 'SUCCESS' as const, bitmap: this.bitmap!, actualDecodedFrameIndex: index };
+  }
+  /** Decodes the next frame in order without converting it, for a frame the
+   * analysis does not look at (the codec still needs every frame). */
+  async skipExactFrame(index: number) {
+    (await this.decodedFrame(index)).close();
+    this.nextIndex++;
+  }
+  private async decodedFrame(index: number) {
     this.check();
     if (index !== this.nextIndex || !this.frames[index]) throw new Error('録画フレームは先頭から順番に解析してください。');
     this.bitmap?.close(); this.bitmap = null;
@@ -119,15 +137,7 @@ export class SequentialRecordingDecoder {
       this.check();
     }
     const frame = this.outputs.get(index)!; this.outputs.delete(index);
-    try {
-      // Keep the same bitmap conversion as the reference exact decoder, so
-      // inference receives the same pixels, dimensions and color conversion.
-      const bitmap = await createImageBitmap(frame);
-      if (this.disposed) { bitmap.close(); this.check(); }
-      this.bitmap = bitmap;
-    } finally { frame.close(); }
-    this.nextIndex++;
-    return { status: 'SUCCESS' as const, bitmap: this.bitmap!, actualDecodedFrameIndex: index };
+    return frame;
   }
   dispose() {
     this.disposed = true; this.wake?.();

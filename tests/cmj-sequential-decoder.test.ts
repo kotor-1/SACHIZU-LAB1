@@ -54,6 +54,17 @@ describe('continuous recorded decode without frame thinning', () => {
     expect(configures).toBe(1); expect(flushes).toBe(1);
     for (const resource of [...outputs, ...bitmaps]) expect(resource.close).toHaveBeenCalledTimes(1);
   });
+  it('skips frames in order without converting them, and still decodes the next one exactly', async () => {
+    const d = decoder();
+    for (let i = 0; i < 40; i++) {
+      if (i % 2) { await d.skipExactFrame(i); continue; }
+      expect(await d.decodeExactFrame(i)).toMatchObject({ actualDecodedFrameIndex: i, status: 'SUCCESS' });
+    }
+    d.dispose();
+    expect(bitmaps).toHaveLength(20);                      // only the analysed frames are converted
+    for (const resource of [...outputs, ...bitmaps]) expect(resource.close).toHaveBeenCalledTimes(1);
+    await expect(decoder().skipExactFrame(1)).rejects.toThrow('先頭から順番');
+  });
   it('maps reordered decode samples by timestamp, not callback/index order', async () => {
     const s = samples(4); [s[1], s[2]] = [s[2], s[1]];
     const d = decoder(frames(4), s);
