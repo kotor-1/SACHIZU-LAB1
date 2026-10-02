@@ -52,6 +52,20 @@ export function continuityLimit(samples: SprintSample[]) {
     if (samples[i].hipX !== null && samples[i - 1].hipX !== null) intervals.push(samples[i].pts - samples[i - 1].pts);
   return Math.max(.05, 2.5 * (intervals.length ? median(intervals) : 0));
 }
+/** Live camera: two processed frames in a row that both show the pelvis are
+ * continuous up to this far apart (the subject was not missed, the frames
+ * were). Processing stalled for 0.1 s at the finish line on the public site and
+ * the crossing was not measured. A recorded video keeps a gap in its frames a
+ * gap (its frames are all processed; a missing stretch is missing footage). */
+export const LIVE_STALL_SECONDS = .2;
+type Continuity = (a: SprintSample, b: SprintSample) => boolean;
+/** Whether observations a (earlier) and b of `samples` are continuous: within
+ * `gap`, or consecutive processed frames within `stall`. */
+function continuityOf(samples: SprintSample[], gap = continuityLimit(samples), stall = 0): Continuity {
+  const previous = new Map<SprintSample, SprintSample>();
+  for (let i = 1; i < samples.length; i++) previous.set(samples[i], samples[i - 1]);
+  return (a, b) => !exceedsTime(b.pts - a.pts, gap) || (previous.get(b) === a && !exceedsTime(b.pts - a.pts, stall));
+}
 const belowTime = (seconds: number, limit: number) => limit - seconds > TIME_EPSILON;
 const MAX_CYCLE_SECONDS = .65;
 // Pose estimation occasionally puts both ankles on one leg for 1-2 frames in
@@ -73,13 +87,13 @@ export function sprintSample(points: Point[], frame: number, pts: number, aspect
     legLength: legs ? (length(23, 25) + length(25, 27) + length(24, 26) + length(26, 28)) / 2 : null };
 }
 
-function crossings(samples: SprintSample[], gate: number, direction: number, gap = continuityLimit(samples)): Crossing[] {
+function crossings(samples: SprintSample[], gate: number, direction: number, continuous = continuityOf(samples)): Crossing[] {
   const found: Crossing[] = [];
   const good = samples.filter(s => s.hipX !== null);
   for (let i = 1; i < good.length; i++) {
     const a = good[i - 1], b = good[i];
     const x = (a.hipX! - gate) * direction, y = (b.hipX! - gate) * direction;
-    if (x > 0 || y <= 0 || exceedsTime(b.pts - a.pts, gap)) continue;
+    if (x > 0 || y <= 0 || !continuous(a, b)) continue;
     // Require movement on both sides, not repeated jitter on the line.
     const before = good.some(s => s.pts <= a.pts && !exceedsTime(a.pts - s.pts, .15) && (s.hipX! - gate) * direction < -.003);
     const after = good.some(s => s.pts >= b.pts && !exceedsTime(s.pts - b.pts, .15) && (s.hipX! - gate) * direction > .003);
@@ -235,11 +249,12 @@ function fittedCrossing(tracked: SprintSample[], gate: number, direction: number
   return { ...crossing, pts };
 }
 function extendedCrossing(segment: SprintSample[], gate: number, direction: number, side: 'entry' | 'exit', video: [number, number],
-  gap: number): Crossing | null {
+  continuous: Continuity): Crossing | null {
   // The contiguous observations (no gap over the continuity limit) nearest the gate, up to 0.25 s.
   const ordered = side === 'entry' ? segment : [...segment].reverse(), near = [ordered[0]];
   for (const s of ordered.slice(1)) {
-    if (exceedsTime(Math.abs(s.pts - near.at(-1)!.pts), gap) || exceedsTime(Math.abs(s.pts - near[0].pts), EXTEND_FIT_SECONDS)) break;
+    const [a, b] = side === 'entry' ? [near.at(-1)!, s] : [s, near.at(-1)!];
+    if (!continuous(a, b) || exceedsTime(Math.abs(s.pts - near[0].pts), EXTEND_FIT_SECONDS)) break;
     near.push(s);
   }
   if (near.length < 3 || belowTime(Math.abs(near.at(-1)!.pts - near[0].pts), .05)) return null;
@@ -326,7 +341,7 @@ function withoutSpikes(samples: SprintSample[]): SprintSample[] {
 }
 /** distanceM: the real distance between the two gates (10 m for the standing 10 m; any known section otherwise). */
 export function analyzeSprint(samples: SprintSample[], startX: number, finishX: number, distanceM = 10,
-  run: 'standing' | 'flying' = 'standing'): SprintResult {
+  run: 'standing' | 'flying' = 'standing', stall = 0): SprintResult {
   const reasons = GATE_REASONS[run];
   const base: SprintResult = { start: null, finish: null, duration: null, steps: [], count: null, speed: null, cadence: null, stride: null,
     edgeFractions: null, strideIntervals: [], warnings: [], reason: null };
@@ -339,13 +354,13 @@ export function analyzeSprint(samples: SprintSample[], startX: number, finishX: 
   const gateSamples = run === 'flying' ? withoutSpikes(samples) : samples;
   const tracked = gateSamples.filter(s => s.hipX !== null);
   const video: [number, number] = [samples[0].pts, samples.at(-1)!.pts];
-  const gap = continuityLimit(gateSamples);
-  const finishes = crossings(gateSamples, finishX, direction, gap);
+  const gap = continuityLimit(gateSamples), continuous = continuityOf(gateSamples, gap, stall);
+  const finishes = crossings(gateSamples, finishX, direction, continuous);
   if (!finishes.length && run === 'flying') {
     // The exit was not seen being crossed: extend the last observations before it.
     let lastBehind = tracked.length - 1;
     while (lastBehind >= 0 && (tracked[lastBehind].hipX! - finishX) * direction > 0) lastBehind--;
-    const exit = lastBehind < 0 ? null : extendedCrossing(tracked.slice(0, lastBehind + 1), finishX, direction, 'exit', video, gap);
+    const exit = lastBehind < 0 ? null : extendedCrossing(tracked.slice(0, lastBehind + 1), finishX, direction, 'exit', video, continuous);
     if (exit) finishes.push(exit);
   }
   if (!finishes.length) return { ...base, reason: reasons.noFinish };
@@ -359,10 +374,10 @@ export function analyzeSprint(samples: SprintSample[], startX: number, finishX: 
     while (i >= 0 && (before[i].hipX! - startX) * direction > 0) i--;
     if (i === before.length - 1) continue;
     const a = before[i], b = before[i + 1];
-    if (i < 0 || exceedsTime(b.pts - a.pts, gap)) {
+    if (i < 0 || !continuous(a, b)) {
       // Flying section: the entry crossing itself was not seen (the body was cut
       // by the frame edge, or hidden): extend the first observations after it.
-      const entry = run === 'flying' ? extendedCrossing(before.slice(i + 1), startX, direction, 'entry', video, gap) : null;
+      const entry = run === 'flying' ? extendedCrossing(before.slice(i + 1), startX, direction, 'entry', video, continuous) : null;
       if (entry) { start = entry; finish = candidate; break; }
       if (i >= 0) startGap = true;
       continue;

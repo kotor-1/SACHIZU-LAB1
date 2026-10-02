@@ -31,6 +31,12 @@ describe('live sprint runs', () => {
     const run = settledRun(hidden, options, 103) as { duration: number | null; failure: string | null; finishPts: number };
     expect(run.duration).toBeNull(); expect(run.failure).toContain('入口の線'); expect(run.finishPts).toBeGreaterThan(102.4);
   });
+  it('asks about the exit, not the video, when the exit crossing was not seen', () => {
+    // Hidden from 0.3 s before the exit (2.5 s) until after it: too long to extend.
+    const hidden = camera(3).map(s => s.pts - 100 > 2.2 && s.pts - 100 < 2.7 ? { ...s, hipX: null } : s);
+    const run = settledRun(hidden, options, 103) as { duration: number | null; failure: string };
+    expect(run.duration).toBeNull(); expect(run.failure).toContain('出口の線の通過'); expect(run.failure).not.toContain('動画');
+  });
   it('ignores someone walking through both gates', () => {
     const slow = camera(13.5, 30).map(s => ({ ...s, hipX: .05 + .06 * (s.pts - 100) }));    // 1 m/s, exit at 12.5 s
     expect(settledRun(slow, options, 113.5)).toBe('invalid');

@@ -1,6 +1,6 @@
 import { CameraClock, drawCameraFrame } from '../cmj/camera-clock';
 import { MobileCMJPose } from '../cmj/mobile-pose';
-import { analyzeSprint, type SprintSample } from './analysis';
+import { analyzeSprint, LIVE_STALL_SECONDS, type SprintSample } from './analysis';
 import { SPRINT_POSES, SprintFrameProcessor } from './frame-processor';
 import type { SprintStart } from './tracker';
 
@@ -32,7 +32,11 @@ export const MIN_RUN_SPEED = 2;
 /** A wrong person's time is worse than none: see SprintTracker.contested. */
 export const CONTESTED_RUN = '別の人と重なって選手を見分けられなかったため、この1本は計測できませんでした。';
 export const LOST_RUN = '走っている途中で選手を見失ったため、この1本は計測できませんでした。';
-const NO_EXIT = '出口の線の通過を確認できませんでした。出口の付近で選手が他の人と重なっていないか確認してください。';
+/** The analysis asks about the video for these; a live camera has none. */
+const NO_FINISH: Record<SprintStart, string> = {
+  standing: 'ゴール通過を確認できませんでした。ゴールの付近で選手が他の人と重なっていないか確認してください。',
+  flying: '出口の線の通過を確認できませんでした。出口の付近で選手が他の人と重なっていないか確認してください。',
+};
 
 /** The run in `samples` once `now` is SETTLE_SECONDS past its exit: every
  * subject that passed the exit gives one, with its time or why there is none,
@@ -44,13 +48,13 @@ export function settledRun(samples: SprintSample[], options: LiveSprintOptions, 
   contested = false): Omit<LiveSprintRun, 'id'> | 'invalid' | null {
   const tracked = samples.filter(s => s.hipX !== null);
   if (!tracked.length) return null;
-  const r = analyzeSprint(samples, options.startX, options.finishX, options.distanceM, options.start);
+  const r = analyzeSprint(samples, options.startX, options.finishX, options.distanceM, options.start, LIVE_STALL_SECONDS);
   const direction = Math.sign(options.finishX - options.startX);
   const passed = r.finish?.pts ?? tracked.find(s => (s.hipX! - options.finishX) * direction > 0)?.pts;
   if (passed === undefined || now - passed < SETTLE_SECONDS) return null;
   const failed = (failure: string) => ({ duration: null, speed: null, startPts: r.start?.pts ?? null, finishPts: passed, notes: [], failure });
   if (r.duration === null || !r.start || !r.finish || r.speed === null)
-    return failed(!r.reason ? LOST_RUN : r.reason.includes('動画') ? NO_EXIT : r.reason);
+    return failed(!r.reason || r.reason.includes('動画の時刻') ? LOST_RUN : r.reason.includes('動画') ? NO_FINISH[options.start] : r.reason);
   if (r.speed < MIN_RUN_SPEED) return 'invalid';
   const seen = [r.start.pts, ...tracked.filter(s => s.pts > r.start!.pts && s.pts < r.finish!.pts).map(s => s.pts), r.finish.pts];
   if (seen.some((t, i) => i > 0 && t - seen[i - 1] > MAX_RUN_GAP_SECONDS)) return failed(LOST_RUN);
@@ -79,14 +83,14 @@ export async function measureSprintLive(video: HTMLVideoElement, options: LiveSp
     };
     const fresh = () => new SprintFrameProcessor(source, model, watching, options.startX, options.finishX, options.start, options.distanceM, true);
     const clock = new CameraClock();
-    let processor = fresh(), frame = 0, runs = 0, busy = false, callback = 0, done = false;
+    let processor = fresh(), frame = 0, runs = 0, busy = false, callback = 0, done = false, lastPts = -Infinity;
     // Starts over, first reporting a run that already crossed the exit: the camera
     // clock can restart (recorded with a looping test stream) before a run settled.
     const restart = () => {
       const last = processor.samples.at(-1);
       const run = last ? settledRun(processor.samples, options, last.pts + SETTLE_SECONDS, processor.tracker.contested) : null;
       if (run && run !== 'invalid') onRun({ ...run, id: ++runs });
-      processor = fresh();
+      processor = fresh(); lastPts = -Infinity;
     };
     const times: number[] = [];
     await new Promise<void>((resolve, reject) => {
@@ -109,7 +113,10 @@ export async function measureSprintLive(video: HTMLVideoElement, options: LiveSp
         const timing = clock.read(now, { ...metadata, frameTime });
         if (timing.reset) restart();
         const pts = timing.measurementPts;
-        if (pts === null) { busy = false; return; }
+        // A frame already processed (or an earlier one) is skipped: samples must move forward in
+        // time, and one repeated time stopped every run until the samples were dropped (public site).
+        if (pts === null || pts <= lastPts) { busy = false; return; }
+        lastPts = pts;
         void (async () => {
           try {
             await processor.process(w, h, { frameIndex: frame++, pts });
