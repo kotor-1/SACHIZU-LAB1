@@ -50,8 +50,9 @@ describe('10m subject acquisition', () => {
     expect(tracker.choose([target], .05)).toBe(target);
   });
 
-  it('accepts exactly 50 ms acquisition spacing but restarts after 50.001 ms', () => {
+  it('at 120 frames/s bridges a gap of exactly 50 ms in acquisition but restarts after 50.001 ms', () => {
     const target = pose(.2), exact = new SprintTracker(.2), longer = new SprintTracker(.2);
+    for (const tracker of [exact, longer]) for (let i = 0; i < 6; i++) tracker.choose([], .4 + i / 120);
     expect(exact.choose([target], .5)).toEqual([]);
     expect(exact.choose([target], .55)).toEqual([]);
     expect(exact.choose([target], .6)).toBe(target);
@@ -59,6 +60,18 @@ describe('10m subject acquisition', () => {
     expect(longer.choose([target], .550001)).toEqual([]);
     expect(longer.choose([target], .600001)).toEqual([]);
     expect(longer.choose([target], .650001)).toBe(target);
+  });
+
+  it('at a live camera rate bridges one missed frame in acquisition, not two', () => {
+    // Processed at 15 frames/s: three sightings with one frame missed between them are one person.
+    const target = pose(.2), bridged = new SprintTracker(.2), restarted = new SprintTracker(.2);
+    for (const tracker of [bridged, restarted]) for (let i = 0; i < 4; i++) tracker.choose([], i / 15);
+    expect(bridged.choose([target], 4 / 15)).toEqual([]);
+    expect(bridged.choose([target], 6 / 15)).toEqual([]);
+    expect(bridged.choose([target], 8 / 15)).toBe(target);
+    expect(restarted.choose([target], 4 / 15)).toEqual([]);
+    expect(restarted.choose([target], 7 / 15)).toEqual([]);
+    expect(restarted.choose([target], 10 / 15)).toEqual([]);
   });
 
   it.each(['horizontal', 'vertical'])('restarts a discontinuous %s candidate from the original seed', axis => {
@@ -501,5 +514,88 @@ describe('flying start (maximal-velocity section)', () => {
     expect(t.expected(0)).toBe(.2);
     t.choose([target], 0); t.choose([target], .01);
     expect(t.choose([target], .02)).toBe(target);                       // standing acquisition
+  });
+});
+
+describe('at a live camera frame rate', () => {
+  const widths = (mps: number) => mps * .084;
+  /** Frames at about `fps`, unevenly spaced as a live camera is processed (every third interval 70% longer). */
+  const times = (fps: number, seconds: number) => {
+    const out: number[] = [];
+    for (let t = 0, i = 0; t < seconds; i++) { out.push(t); t += (i % 3 === 2 ? 1.7 : 1) / fps; }
+    return out;
+  };
+  const inFrame = (x: number) => x > .01 && x < .99;
+  type Published = Map<number, number>;
+  /** Runs the tracker over the scene, applying retraction and backfill as the frame processor does. */
+  function live(tracker: SprintTracker, frames: number[], scene: (t: number) => Point[][], watchEvery = 2) {
+    const published: Published = new Map();
+    frames.forEach((t, i) => {
+      const poses = scene(t);
+      // Everyone is visible to the subject's crop; the watch crop adds the same poses on every `watchEvery` frame.
+      const c = tracker.choose(poses, t, [0, 1], i % watchEvery === 0 ? { poses, view: [0, 1] } : undefined);
+      const from = tracker.takeRetraction();
+      if (from !== null) for (const k of [...published.keys()]) if (k >= from) published.delete(k);
+      for (const b of tracker.takeBackfill()) published.set(b.pts, (b.pose[23].x + b.pose[24].x) / 2);
+      if (c.length) published.set(t, (c[23].x + c[24].x) / 2);
+    });
+    return published;
+  }
+
+  it('follows a runner through a flying section at 30 frames/s with uneven frame spacing', () => {
+    const tracker = new SprintTracker(.1, .8, 'flying', widths(2.5));
+    const runner = (t: number) => -.05 + widths(8) * (t - .3);
+    const published = live(tracker, times(30, 2.5), t => inFrame(runner(t)) ? [pose(runner(t))] : []);
+    const kept = [...published.entries()].sort((a, b) => a[0] - b[0]);
+    for (const [t, x] of kept) expect(Math.abs(x - runner(t))).toBeLessThan(1e-9);
+    expect(kept[0][1]).toBeLessThan(.1); expect(kept.at(-1)![1]).toBeGreaterThan(.9);   // both gates observed
+    // No gap longer than one missed frame between the gates.
+    const inside = kept.filter(([, x]) => x > .05 && x < .95);
+    expect(Math.max(...inside.slice(1).map(([t], i) => t - inside[i][0]))).toBeLessThan(.06);
+  });
+
+  it('replaces a person jogging with the nearer runner, and keeps it while hidden for 0.6 s passing them, at 15 frames/s', () => {
+    const tracker = new SprintTracker(.1, .8, 'flying', widths(2.5));
+    const jogger = (t: number) => .03 + widths(3.2) * t, runner = (t: number) => -.05 + widths(6) * (t - .6);
+    const hidden = (t: number) => Math.abs(runner(t) - jogger(t)) < .07;      // undetected while overlapping
+    const published = live(tracker, times(15, 3.5), t => {
+      const poses: Point[][] = [];
+      if (inFrame(jogger(t))) poses.push(pose(jogger(t), .6));
+      if (inFrame(runner(t)) && !hidden(t)) poses.push(pose(runner(t), .67));
+      return poses;
+    }, 1);
+    const kept = [...published.entries()].sort((a, b) => a[0] - b[0]);
+    expect(kept.at(-1)![1]).toBeGreaterThan(.9);
+    for (const [t, x] of kept) expect(Math.abs(x - runner(t))).toBeLessThan(1e-9);
+    expect(kept[0][1]).toBeLessThan(.1);                 // the runner's entry is measured
+    expect(tracker.contested).toBe(false);
+  });
+
+  it('marks the run contested when a nearer, faster person is seen but never followed', () => {
+    // The subject jogs through; someone nearer the camera sprints past in the middle of the picture only.
+    const scene = (nearerY: number, speed: number) => (t: number) => {
+      const poses = [pose(.03 + widths(3.2) * t, .6)];
+      const other = .35 + widths(speed) * (t - 1);
+      if (t > 1 && other < .9) poses.push(pose(other, nearerY));
+      return poses;
+    };
+    const contested = (nearerY: number, speed: number) => {
+      const tracker = new SprintTracker(.1, .8, 'flying', widths(2.5));
+      live(tracker, times(15, 2.2), scene(nearerY, speed));
+      return tracker.contested;
+    };
+    expect(contested(.67, 7)).toBe(true);     // nearer and faster: the time may be the wrong person's
+    expect(contested(.55, 7)).toBe(false);    // farther
+    expect(contested(.67, 3.4)).toBe(false);  // nearer but not faster than the subject
+  });
+
+  it('follows the first step of a standing start at 30 frames/s', () => {
+    // Recorded (live, 30 frames/s): the pelvis moved 0.036 between two frames at the first step,
+    // the subject was missed across the start line, and its crossing could not be measured.
+    const recorded = [[.708, .045], [.744, .05], [.773, .051], [.809, .056], [.842, .062], [.877, .069], [.911, .061], [.944, .075],
+      [.975, .06], [1.011, .072], [1.037, .108], [1.075, .117], [1.103, .126], [1.142, .131], [1.177, .142], [1.211, .151], [1.242, .163], [1.275, .174]];
+    const tracker = new SprintTracker(.12, .76, 'standing');
+    const chosen = recorded.filter(([t, x]) => tracker.choose([pose(x, .55)], t).length).map(([t]) => t);
+    for (const t of [1.011, 1.037, 1.075, 1.103, 1.142]) expect(chosen).toContain(t);
   });
 });

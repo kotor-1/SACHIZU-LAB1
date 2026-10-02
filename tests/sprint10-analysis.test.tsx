@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import Sprint10Lab from '../src/sprint10/Sprint10Lab';
 import StrideResults from '../src/sprint10/StrideResults';
-import { analyzeSprint, sprintSample, stepCandidates, strideIntervals, type SprintSample, type Point } from '../src/sprint10/analysis';
+import { analyzeSprint, continuityLimit, sprintSample, stepCandidates, strideIntervals, type SprintSample, type Point } from '../src/sprint10/analysis';
 import { SprintTracker } from '../src/sprint10/tracker';
 
 const synthetic = (fps = 240): SprintSample[] => Array.from({ length: 3 * fps + 1 }, (_, i) => {
@@ -69,6 +69,24 @@ describe('10m sprint experiment', () => {
     const flying = analyzeSprint(synthetic(), .2, .8, 10, 'flying'), standing = analyzeSprint(synthetic(), .2, .8, 10);
     expect(flying.duration).toBeCloseTo(standing.duration!, 9); expect(flying.count).toBeCloseTo(standing.count!, 6);
     expect(flying.steps).toEqual(standing.steps);
+  });
+  it('treats gaps up to 2.5 frame intervals as continuous when frames come less often than every 20 ms', () => {
+    // A live camera at 30 frames/s, unevenly processed: every third interval is 57 ms, one of them across each gate.
+    const live: SprintSample[] = [];
+    for (let pts = 0, i = 0; pts <= 3; i++) {
+      const gap = .03 + .25 * Math.abs(Math.cos(4 * Math.PI * pts));
+      live.push({ frame: i, pts, hipX: .05 + .3 * pts, ankleGap: gap, kneeGap: gap * .5, legLength: .3 });
+      pts += i % 3 === 2 || Math.abs(pts - .48) < .02 || Math.abs(pts - 2.48) < .02 ? .057 : 1 / 30;
+    }
+    expect(continuityLimit(live)).toBeCloseTo(2.5 / 30, 6);
+    for (const run of ['standing', 'flying'] as const) {
+      const r = analyzeSprint(live, .2, .8, 10, run);
+      expect(r.reason).toBeNull(); expect(r.duration).toBeCloseTo(2, 2);
+    }
+    // At 120 frames/s the limit stays 50 ms: a 57 ms gap across the start is a gap.
+    expect(continuityLimit(synthetic(120))).toBe(.05);
+    const gapped = synthetic(120).filter(s => s.pts < .48 || s.pts > .537);
+    expect(analyzeSprint(gapped, .2, .8).reason).toContain('スタートラインを越える瞬間');
   });
   it('flying section: estimates a gate crossed out of view by extending the pelvis motion up to 0.1 s, and says so', () => {
     // The pelvis (0.3 widths/s) crosses the entry .2 at 0.5 s and the exit .8 at 2.5 s.
@@ -346,7 +364,8 @@ describe('10m sprint experiment', () => {
   it('renders upload, playback, gates and analyze, with no first-step or foot input', () => {
     const html = renderToStaticMarkup(<Sprint10Lab />);
     expect(html).not.toContain('type="radio"'); expect(html).not.toContain('左足から'); expect(html).not.toContain('1歩目');
-    expect(html).toContain('3　解析する'); expect(html).toContain('解析v9'); expect(html).toContain('aria-label="10mの動画を選ぶ"');
+    expect(html).toContain('3　解析する'); expect(html).toContain('解析v10');
+    expect(html).toContain('録画した動画'); expect(html).toContain('カメラでリアルタイム計測'); expect(html).toContain('aria-label="10mの動画を選ぶ"');
     expect(html).toContain('この2本のラインで決定'); expect(html).toContain('解析する'); expect(html).toContain('<video');
     expect(html).toContain('スタート10m'); expect(html).toContain('最高速度区間');
   });

@@ -26,6 +26,12 @@ const MAX_PREDICTION_SECONDS = 1.5;
  * than 0.005 image widths per frame at 120 fps even at full speed), and the
  * wider radius for continuity of provisional observations. */
 const FRAME_RADIUS = .03;
+/** Frames further apart than at 120 frames/s widen the frame-to-frame radius by
+ * this speed (image widths/s), up to TRACK_RADIUS: at a live camera's 30
+ * frames/s the pelvis moved 0.036 between two frames at the first step of a
+ * standing start, the subject was missed across the start line, and its
+ * crossing could not be measured (recorded). */
+const FRAME_REACH = 1;
 const TRACK_RADIUS = .06;
 /** Initial search radius around the start gate. */
 const SEED_RADIUS = .15;
@@ -64,6 +70,21 @@ const REPLACE_FASTER = 1.2;
  * history handed to the confirmed track use only the last 0.1 s, so those edge
  * points neither delay confirmation nor skew the trajectory reference. */
 const FLYING_DECISION_SECONDS = .1;
+/** The time limits were set for 120 frames/s. A live camera is processed at
+ * 15-30 frames/s, and the watch crop every other one of those: with the fixed
+ * 50 ms continuity limit the watch dropped the runner arriving behind a person
+ * jogging at every sighting and never decided it (recorded). The limits widen
+ * to these multiples of the observed frame interval (the watch's own interval
+ * for its tracks) when that is longer; at 120 frames/s they are unchanged.
+ * GAP_FRAMES: one missed frame is bridged. */
+const GAP_FRAMES = 2.5;
+/** A track already moving at a known speed is predicted across this many
+ * frame intervals without a sighting (50 ms at 120 frames/s): passing in front
+ * of a person jogging, the runner was not detected for 0.27 s at a live
+ * camera's 15 frames/s, and its watch track was dropped (recorded). */
+const COAST_FRAMES = 4.5;
+const DECISION_FRAMES = 4.5;
+const SPAN_FRAMES = 2.5;
 /** Body points that must lie inside the frame for a flying-start observation:
  * shoulders, hips, knees and ankles. A runner cut by the frame edge has a
  * pelvis estimate that jumps between frames and skews the trajectory. */
@@ -91,13 +112,21 @@ const TRACE_ACCELERATION = .5;
 const EDGE_MARGIN = .01;
 const insideFrame = (p: Point[], view: readonly [number, number]) => BODY_POINTS.every(i => !p[i]
   || (p[i].x > view[0] + EDGE_MARGIN * (view[1] - view[0]) / .36 && p[i].x < view[1] - EDGE_MARGIN * (view[1] - view[0]) / .36));
+/** Recent frame intervals kept for the median. */
+const INTERVALS_KEPT = 15;
+function keepLast(list: number[], value: number) { list.push(value); if (list.length > INTERVALS_KEPT) list.shift(); }
+function median(values: number[]): number | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[sorted.length >> 1];
+}
 function fitLine(points: Position[]) {
   const mt = points.reduce((s, h) => s + h.t, 0) / points.length, mx = points.reduce((s, h) => s + h.x, 0) / points.length;
   const den = points.reduce((s, h) => s + (h.t - mt) ** 2, 0);
   return { mt, mx, slope: den > 0 ? points.reduce((s, h) => s + (h.t - mt) * (h.x - mx), 0) / den : 0 };
 }
-function candidatesNear(poses: Candidate[], centre: number, radius: number, y: number | null) {
-  return poses.filter(p => Math.abs(p.x - centre) < radius && (y === null || Math.abs(p.y - y) < .08))
+function candidatesNear(poses: Candidate[], centre: number, radius: number, y: number | null, height = .08) {
+  return poses.filter(p => Math.abs(p.x - centre) < radius && (y === null || Math.abs(p.y - y) < height))
     .sort((a, b) => Math.abs(a.x - centre) - Math.abs(b.x - centre));
 }
 const duplicate = (a: Candidate, b: Candidate) => Math.abs(a.x - b.x) < DUPLICATE_X && Math.abs(a.y - b.y) < DUPLICATE_Y;
@@ -111,8 +140,30 @@ const ambiguous = (poses: Candidate[], centre: number) => poses.length > 1
  * the track's height is a rival, and the nearest candidate is chosen by both
  * coordinates. */
 const RIVAL_HEIGHT = .03;
-function nearestOnTrack(poses: Candidate[], centre: number, radius: number, y: number | null) {
-  return poses.filter(p => Math.abs(p.x - centre) < radius && (y === null || Math.abs(p.y - y) < .08))
+/** Frames further apart than this are sparse (a live camera, or a video under
+ * 50 frames/s). The search radii then widen and the horizontal position alone
+ * no longer tells people apart, so the pelvis height must:
+ *  - provisional tracks and a flying subject continue only on a pelvis within
+ *    SPARSE_TRACK_HEIGHT of their own (0.08 otherwise). Recorded, live: the
+ *    runner's pelvis moved 0.01 between sightings 0.13 s apart; with 0.08 a
+ *    track of a person jogging (0.616) took the runner (0.658) passing in front
+ *    of them, and a hidden runner was resumed on that person.
+ *  - a decided subject starts from its track's speed (see adopt).
+ * At 120 frames/s neither applies: there 0.035 dropped a runner whose pelvis
+ * jumped 0.04 beside two people 0.02-0.04 higher or lower, and the track's
+ * speed moved the crop and changed later poses (recorded, 3 of 152 videos). */
+const SPARSE_INTERVAL = 1 / 50;
+const SPARSE_TRACK_HEIGHT = .035;
+const TRACK_HEIGHT = .08;
+/** Fastest runner considered (m/s): a track seen once has no speed yet, so the
+ * next sighting is searched as far as this speed reaches after the first 50 ms. */
+const TRACK_MAX_SPEED_MPS = 12;
+/** Two sightings of a nearer person this far apart (within RIVAL_PAIR_SECONDS)
+ * show its speed for SprintTracker.contested. */
+const RIVAL_MIN_SECONDS = .1;
+const RIVAL_PAIR_SECONDS = .5;
+function nearestOnTrack(poses: Candidate[], centre: number, radius: number, y: number | null, height = .08) {
+  return poses.filter(p => Math.abs(p.x - centre) < radius && (y === null || Math.abs(p.y - y) < height))
     .sort((a, b) => Math.hypot(a.x - centre, y === null ? 0 : a.y - y) - Math.hypot(b.x - centre, y === null ? 0 : b.y - y));
 }
 const ambiguousOnTrack = (poses: Candidate[], centre: number, y: number | null) => {
@@ -153,8 +204,15 @@ export class SprintTracker {
   private behindStart = false;
   private backfill: { pts: number; pose: Point[] }[] = [];
   private watchTracks: Acquisition[] = [];
+  private intervals: number[] = [];
+  private watchIntervals: number[] = [];
+  private lastPts: number | null = null;
+  private lastWatchPts: number | null = null;
+  private lastInterval = 1 / 120;
   private publishedFrom: number | null = null;
   private retraction: number | null = null;
+  private rivalSeen = false;
+  private nearer: { t: number; x: number; y: number }[] = [];
   private readonly finishX: number;
   private readonly seed: number;
   private readonly direction: number;
@@ -170,6 +228,19 @@ export class SprintTracker {
     this.sprintSpeed = Math.max(RUNNING_SPEED, sprintSpeed);
     this.x = this.flyingSeed();
   }
+  /** Median interval between the frames given while something moved: frames
+   * thinned while idle (IDLE_FPS) are not the rate a runner is followed at. */
+  private frameInterval() { return median(this.intervals) ?? this.lastInterval; }
+  /** Median interval between the frames that came with the watch crop. */
+  private watchInterval() { return median(this.watchIntervals) ?? 2 * this.frameInterval(); }
+  private gapLimit(interval = this.frameInterval()) { return Math.max(.05, GAP_FRAMES * interval); }
+  private get sparse() { return this.frameInterval() > SPARSE_INTERVAL; }
+  /** Pelvis height within which a provisional track or a flying subject continues (see SPARSE_INTERVAL). */
+  private trackHeight() { return this.sparse ? SPARSE_TRACK_HEIGHT : TRACK_HEIGHT; }
+  private frameRadius() { return Math.min(TRACK_RADIUS, FRAME_RADIUS + FRAME_REACH * Math.max(0, this.frameInterval() - 1 / 120)); }
+  private shortGap() { return Math.max(SHORT_GAP_SECONDS, GAP_FRAMES * this.frameInterval()); }
+  private decisionWindow(interval = this.frameInterval()) { return Math.max(FLYING_DECISION_SECONDS, DECISION_FRAMES * interval); }
+  private minSpan(interval = this.frameInterval()) { return Math.max(FLYING_MIN_SPAN_SECONDS, SPAN_FRAMES * interval); }
   private flyingSeed() {
     return this.start === 'flying' ? Math.max(.02, Math.min(.98, this.seed - this.direction * FLYING_SEED_OFFSET)) : this.seed;
   }
@@ -180,6 +251,7 @@ export class SprintTracker {
   private searchAgain() {
     this.x = this.flyingSeed(); this.y = null; this.pts = null; this.velocity = 0; this.history = [];
     this.provisional = []; this.watchTracks = []; this.resumption = null; this.running = false; this.behindStart = false;
+    this.rivalSeen = false; this.nearer = [];
   }
   /** Crop centre: the track is extrapolated while it is briefly unobserved.
    * Flying start, before the decision: the most advanced provisional track
@@ -195,13 +267,13 @@ export class SprintTracker {
   /** Predicted position of the most advanced provisional track already moving at sprint speed. */
   private leadCentre(tracks: Acquisition[], pts: number): number | null {
     const sprinting = tracks.filter(track => {
-      const recent = track.points.filter(h => track.pts - h.t <= FLYING_DECISION_SECONDS + TIME_EPSILON);
-      return recent.length >= FLYING_MIN_OBSERVATIONS && recent.at(-1)!.t - recent[0].t >= FLYING_MIN_SPAN_SECONDS - TIME_EPSILON
+      const recent = track.points.filter(h => track.pts - h.t <= this.decisionWindow() + TIME_EPSILON);
+      return recent.length >= FLYING_MIN_OBSERVATIONS && recent.at(-1)!.t - recent[0].t >= this.minSpan() - TIME_EPSILON
         && fitLine(recent).slope * this.direction >= this.sprintSpeed;
     });
     const lead = sprinting.sort((a, b) => (b.x - a.x) * this.direction)[0];
-    if (!lead || pts - lead.pts > SHORT_GAP_SECONDS + TIME_EPSILON) return null;
-    const recent = lead.points.filter(h => lead.pts - h.t <= FLYING_DECISION_SECONDS + TIME_EPSILON);
+    if (!lead || pts - lead.pts > this.shortGap() + TIME_EPSILON) return null;
+    const recent = lead.points.filter(h => lead.pts - h.t <= this.decisionWindow() + TIME_EPSILON);
     return Math.max(0, Math.min(1, lead.x + fitLine(recent).slope * (pts - lead.pts)));
   }
   /** Flying start with a subject not yet past the exit: the crop centre for
@@ -217,9 +289,22 @@ export class SprintTracker {
    * moves. Judged on recent motion only: over a track's whole 0.4 s, a person
    * just starting to run still looked still (recorded: frames were thinned
    * while the runner set off, and the runner was never decided). */
+  /** A subject is being followed (its samples are published). */
+  get following() { return this.pts !== null; }
+  /** Someone on the watched run-in side was just seen or is moving forward:
+   * a live camera then watches every frame instead of every other one. */
+  /** While the subject was followed, a nearer runner at sprint speed was seen
+   * and never replaced the subject: the result may be the wrong person. Judged
+   * from the watch tracks and, as they can miss a runner hidden while passing a
+   * person jogging (recorded, live at 9 frames/s), from any two sightings of
+   * someone nearer moving forward faster than the subject. */
+  get contested() { return this.rivalSeen; }
+  get watching() {
+    return this.watchTracks.some(track => track.points.length < 2 || fitLine(track.points).slope * this.direction >= RUNNING_SPEED);
+  }
   get idle() {
     return this.start === 'flying' && this.pts === null && this.provisional.every(track => {
-      const recent = track.points.filter(h => track.pts - h.t <= FLYING_DECISION_SECONDS + TIME_EPSILON);
+      const recent = track.points.filter(h => track.pts - h.t <= this.decisionWindow() + TIME_EPSILON);
       return recent.length >= 4 && recent.at(-1)!.t - recent[0].t >= .06 - TIME_EPSILON && Math.abs(fitLine(recent).slope) < RUNNING_SPEED / 2;
     });
   }
@@ -238,6 +323,15 @@ export class SprintTracker {
     watched?: { poses: Point[][]; view: readonly [number, number] }): Point[] {
     if (!Number.isFinite(pts)) { this.acquisition = null; this.provisional = []; this.resumption = null; return []; }
     if (this.pts !== null && pts <= this.pts) return [];
+    if (this.lastPts !== null && pts > this.lastPts) {
+      this.lastInterval = pts - this.lastPts;
+      if (!this.idle) keepLast(this.intervals, this.lastInterval);
+    }
+    this.lastPts = pts;
+    if (watched && this.pts !== null) {
+      if (this.lastWatchPts !== null && pts > this.lastWatchPts) keepLast(this.watchIntervals, pts - this.lastWatchPts);
+      this.lastWatchPts = pts;
+    }
     const candidates = (list: Point[][], extent: readonly [number, number]) => list.filter(p => [23, 24].every(k => p[k] && Number.isFinite(p[k].x) && Number.isFinite(p[k].y)
       && p[k].x > 0 && p[k].x < 1 && p[k].y > 0 && p[k].y < 1 && (p[k].visibility ?? 0) >= .3)
       && (this.start !== 'flying' || insideFrame(p, extent)))
@@ -258,8 +352,19 @@ export class SprintTracker {
    * person jogging behind the track was taken 0.9 s before the runner came. */
   private watch(others: Candidate[], pts: number): Point[] | null {
     if ((this.x - this.finishX) * this.direction >= 0) { this.watchTracks = []; return null; }
-    const { next, confirmed } = this.advance(this.watchTracks, others, pts);
+    const { next, confirmed } = this.advance(this.watchTracks, others, pts, this.watchInterval());
     this.watchTracks = next;
+    const subjectY = this.y;
+    if (subjectY !== null && next.some(track => track.points.length >= FLYING_MIN_OBSERVATIONS && track.y - subjectY >= REPLACE_NEARER
+      && fitLine(track.points).slope * this.direction >= this.sprintSpeed)) this.rivalSeen = true;
+    if (subjectY !== null) {
+      const pace = Math.max(this.sprintSpeed, REPLACE_FASTER * Math.abs(this.velocity)), fastest = TRACK_MAX_SPEED_MPS * this.sprintSpeed / FLYING_MIN_SPEED_MPS;
+      const seen = others.filter(c => c.y - subjectY >= REPLACE_NEARER).map(c => ({ t: pts, x: c.x, y: c.y }));
+      this.nearer = this.nearer.filter(h => pts - h.t <= RIVAL_PAIR_SECONDS);
+      if (seen.some(b => this.nearer.some(a => b.t - a.t >= RIVAL_MIN_SECONDS - TIME_EPSILON && Math.abs(b.y - a.y) < SPARSE_TRACK_HEIGHT
+        && (b.x - a.x) * this.direction >= pace * (b.t - a.t) && (b.x - a.x) * this.direction <= fastest * (b.t - a.t)))) this.rivalSeen = true;
+      this.nearer.push(...seen);
+    }
     if (!confirmed || this.y === null) return null;
     const speed = fitLine(confirmed.points).slope * this.direction;
     if (!(confirmed.y - this.y >= REPLACE_NEARER && speed >= REPLACE_FASTER * Math.abs(this.velocity))) return null;
@@ -269,20 +374,20 @@ export class SprintTracker {
   private follow(valid: Candidate[], pts: number): Point[] {
     if (this.start === 'flying' && this.pts !== null) {
       const since = pts - this.pts, beforeEntry = (this.x - this.seed) * this.direction < 0;
-      if (since - MAX_PREDICTION_SECONDS > TIME_EPSILON || (beforeEntry && since - SHORT_GAP_SECONDS > TIME_EPSILON)) this.searchAgain();
+      if (since - MAX_PREDICTION_SECONDS > TIME_EPSILON || (beforeEntry && since - this.shortGap() > TIME_EPSILON)) this.searchAgain();
     }
     if (this.pts === null) return this.start === 'flying' ? this.acquireFlying(valid, pts) : this.acquire(valid, pts);
     const replaced = this.challenge(valid, pts);
     if (replaced) return replaced;
     const since = pts - this.pts;
     if (since - MAX_PREDICTION_SECONDS > TIME_EPSILON) return [];
-    if (since - SHORT_GAP_SECONDS > TIME_EPSILON || this.resumption) return this.resume(valid, pts);
+    if (since - this.shortGap() > TIME_EPSILON || this.resumption) return this.resume(valid, pts);
     const centre = this.reference(pts) ?? this.expected(pts);
     if (this.start === 'flying') {
-      const near = nearestOnTrack(valid, centre, FRAME_RADIUS, this.y);
+      const near = nearestOnTrack(valid, centre, this.frameRadius(), this.y, this.trackHeight());
       return !near.length || ambiguousOnTrack(near, centre, this.y) ? [] : this.accept(near[0], pts);
     }
-    const candidates = candidatesNear(valid, centre, FRAME_RADIUS, this.y);
+    const candidates = candidatesNear(valid, centre, this.frameRadius(), this.y);
     if (!candidates.length || ambiguous(candidates, centre)) return [];
     return this.accept(candidates[0], pts);
   }
@@ -319,7 +424,7 @@ export class SprintTracker {
     const best = candidatesNear(valid, this.seed, Math.min(SEED_RADIUS, own - .03), null)[0];
     const previous = this.challenger;
     if (!best) { this.challenger = null; return null; }
-    const continues = previous && pts - previous.pts - .05 <= TIME_EPSILON
+    const continues = previous && pts - previous.pts - this.gapLimit() <= TIME_EPSILON
       && Math.abs(best.x - previous.x) < TRACK_RADIUS && Math.abs(best.y - previous.y) < .08;
     const count = continues ? previous!.count + 1 : 1;
     if (count < 3) { this.challenger = { x: best.x, y: best.y, pts, count }; return null; }
@@ -338,11 +443,11 @@ export class SprintTracker {
     const moving = Math.abs(this.velocity) >= RUNNING_SPEED || this.velocity * this.direction >= HEADING_SPEED;
     // A runner does not stay behind: a person still at the last position (someone
     // the runner passed) is not a candidate even if the prediction lagged.
-    const candidates = candidatesNear(valid, expected, radius, this.y).filter(c => !moving
+    const candidates = candidatesNear(valid, expected, radius, this.y, this.start === 'flying' ? this.trackHeight() : TRACK_HEIGHT).filter(c => !moving
       || (c.x - this.x) * Math.sign(this.velocity) >= .4 * Math.abs(this.velocity) * Math.min(MAX_PREDICTION_SECONDS, gap));
     if (!candidates.length || ambiguous(candidates, expected)) { this.resumption = null; return []; }
     const best = candidates[0], previous = this.resumption;
-    const continues = previous && pts - previous.pts - .05 <= TIME_EPSILON
+    const continues = previous && pts - previous.pts - this.gapLimit() <= TIME_EPSILON
       && Math.abs(best.x - (previous.x + this.velocity * (pts - previous.pts))) < TRACK_RADIUS && Math.abs(best.y - previous.y) < .08;
     const current: Resumption = continues
       ? { ...previous!, x: best.x, y: best.y, pts, count: previous!.count + 1 }
@@ -359,7 +464,7 @@ export class SprintTracker {
   }
   private acquire(valid: Candidate[], pts: number): Point[] {
     const previous = this.acquisition;
-    if (previous && pts > previous.pts && pts - previous.pts - .05 <= TIME_EPSILON) {
+    if (previous && pts > previous.pts && pts - previous.pts - this.gapLimit() <= TIME_EPSILON) {
       const velocity = previous.points.length > 1 ? fitLine(previous.points).slope : 0;
       const expected = previous.x + velocity * (pts - previous.pts);
       const candidates = candidatesNear(valid, expected, TRACK_RADIUS, previous.y);
@@ -396,13 +501,18 @@ export class SprintTracker {
   }
   /** One frame of provisional tracking (acquisition or watch): extends the
    * tracks, starts new ones on the run-in side, and returns the one decided. */
-  private advance(tracks: Acquisition[], valid: Candidate[], pts: number): { next: Acquisition[]; confirmed: Acquisition | null } {
-    const live = tracks.filter(track => pts > track.pts && pts - track.pts - .05 <= TIME_EPSILON);
+  private advance(tracks: Acquisition[], valid: Candidate[], pts: number, interval = this.frameInterval()): { next: Acquisition[]; confirmed: Acquisition | null } {
+    const live = tracks.filter(track => pts > track.pts && pts - track.pts - (track.points.length >= FLYING_MIN_OBSERVATIONS
+      ? Math.max(.05, COAST_FRAMES * interval) : this.gapLimit(interval)) <= TIME_EPSILON);
     const next: Acquisition[] = [], taken = new Set<Candidate>(), reserved = new Set<Candidate>();
     for (const track of live) {
       const velocity = track.points.length > 1 ? fitLine(track.points).slope : 0;
       const expected = track.x + velocity * (pts - track.pts);
-      const candidates = nearestOnTrack(valid.filter(c => !taken.has(c)), expected, TRACK_RADIUS, track.y);
+      // Seen once, the runner may be anywhere a sprint takes it: at 120 frames/s
+      // within the usual radius, at a live camera's watch crop (0.13 s) beyond it.
+      const reach = track.points.length < 2
+        ? TRACK_MAX_SPEED_MPS * this.sprintSpeed / FLYING_MIN_SPEED_MPS * Math.max(0, pts - track.pts - .05) : 0;
+      const candidates = nearestOnTrack(valid.filter(c => !taken.has(c)), expected, TRACK_RADIUS + reach, track.y, this.trackHeight());
       // A frame without a clear match keeps the track for up to 50 ms: a small or
       // distant runner is often missed for a frame or two, and dropping the track
       // then restarted the 0.25 s needed at sprint speed (recorded: never decided).
@@ -428,11 +538,11 @@ export class SprintTracker {
     // one-sighting tracks of people ahead.
     next.sort((a, b) => b.points.length - a.points.length || (b.x - a.x) * this.direction);
     const kept = next.slice(0, FLYING_MAX_TRACKS);
-    const recent = (track: Acquisition) => track.points.filter(h => pts - h.t <= FLYING_DECISION_SECONDS + TIME_EPSILON);
+    const recent = (track: Acquisition) => track.points.filter(h => pts - h.t <= this.decisionWindow(interval) + TIME_EPSILON);
     const confirmed = kept.filter(track => {
       if (track.pts !== pts) return false;   // decided only on a frame it was seen in
       const points = recent(track), span = points.length ? points.at(-1)!.t - points[0].t : 0;
-      if (points.length < FLYING_MIN_OBSERVATIONS || span - FLYING_MIN_SPAN_SECONDS < -TIME_EPSILON) return false;
+      if (points.length < FLYING_MIN_OBSERVATIONS || span - this.minSpan(interval) < -TIME_EPSILON) return false;
       const slope = fitLine(points).slope * this.direction;
       const advance = (points.at(-1)!.x - points[0].x) * this.direction;
       const whole = track.points, wholeSpan = whole.at(-1)!.t - whole[0].t;
@@ -456,8 +566,12 @@ export class SprintTracker {
   /** Makes a decided provisional track the subject, handing back its path. */
   private adopt(best: Acquisition, pts: number): Point[] {
     const path = traceBack(best.points);
-    this.x = best.x; this.y = best.y; this.pts = pts; this.provisional = []; this.watchTracks = [];
-    this.velocity = 0; this.resumption = null;
+    this.x = best.x; this.y = best.y; this.pts = pts; this.provisional = []; this.watchTracks = []; this.rivalSeen = false; this.nearer = [];
+    // Sparse frames: the track's own speed until the subject's history gives one.
+    // With a live camera the 0.2 s history held too few sightings, the speed
+    // stayed 0, and the runner left the predicted position at once (recorded).
+    const recent = best.points.filter(h => pts - h.t <= Math.max(VELOCITY_WINDOW_SECONDS, this.decisionWindow()) + TIME_EPSILON);
+    this.velocity = this.sparse && recent.length >= 2 ? Math.max(-1, Math.min(1, fitLine(recent).slope)) : 0; this.resumption = null;
     this.behindStart = true; this.history = path.map(({ t, x }) => ({ t, x })); this.updateVelocity(pts);
     this.running = true;
     this.backfill = path.slice(0, -1).map(h => ({ pts: h.t, pose: h.p! }));

@@ -1,4 +1,4 @@
-export const SPRINT10_ANALYSIS_VERSION = 'sprint10-experimental-v9';
+export const SPRINT10_ANALYSIS_VERSION = 'sprint10-experimental-v10';
 /** Standing explanations appended to every result's warnings, after any run-specific ones. */
 export const SPRINT10_NOTES: readonly string[] = ['歩数は、2本のラインの間に経過した脚の入れ替わり（遊脚が支持脚を追い越す動き）の周期の数です。ライン上の半端な1歩は周期の割合で数えます。接地回数を1つずつ数えた値ではありません。',
   '各歩の距離は骨盤の画面内移動をライン間隔（既知の距離）で比例換算した推定です。真の全身重心・接地位置間の距離ではなく、遠近やカメラの揺れも補正していません。'];
@@ -41,6 +41,17 @@ const valid = (p: Point | undefined) => !!p && Number.isFinite(p.x) && Number.is
 // One nanosecond absorbs subtraction rounding, not an extra missing frame.
 const TIME_EPSILON = 1e-9;
 const exceedsTime = (seconds: number, limit: number) => seconds - limit > TIME_EPSILON;
+/** Longest gap between observations still treated as continuous: 50 ms, or
+ * 2.5 frame intervals (one missed frame) when the subject was observed less
+ * often than every 20 ms. A live camera is processed at 15-30 frames/s with
+ * uneven spacing: with 50 ms, a 57 ms interval before the exit stopped its
+ * crossing from being measured (recorded). Unchanged from 50 frames/s up. */
+export function continuityLimit(samples: SprintSample[]) {
+  const intervals: number[] = [];
+  for (let i = 1; i < samples.length; i++)
+    if (samples[i].hipX !== null && samples[i - 1].hipX !== null) intervals.push(samples[i].pts - samples[i - 1].pts);
+  return Math.max(.05, 2.5 * (intervals.length ? median(intervals) : 0));
+}
 const belowTime = (seconds: number, limit: number) => limit - seconds > TIME_EPSILON;
 const MAX_CYCLE_SECONDS = .65;
 // Pose estimation occasionally puts both ankles on one leg for 1-2 frames in
@@ -62,13 +73,13 @@ export function sprintSample(points: Point[], frame: number, pts: number, aspect
     legLength: legs ? (length(23, 25) + length(25, 27) + length(24, 26) + length(26, 28)) / 2 : null };
 }
 
-function crossings(samples: SprintSample[], gate: number, direction: number): Crossing[] {
+function crossings(samples: SprintSample[], gate: number, direction: number, gap = continuityLimit(samples)): Crossing[] {
   const found: Crossing[] = [];
   const good = samples.filter(s => s.hipX !== null);
   for (let i = 1; i < good.length; i++) {
     const a = good[i - 1], b = good[i];
     const x = (a.hipX! - gate) * direction, y = (b.hipX! - gate) * direction;
-    if (x > 0 || y <= 0 || exceedsTime(b.pts - a.pts, .05)) continue;
+    if (x > 0 || y <= 0 || exceedsTime(b.pts - a.pts, gap)) continue;
     // Require movement on both sides, not repeated jitter on the line.
     const before = good.some(s => s.pts <= a.pts && !exceedsTime(a.pts - s.pts, .15) && (s.hipX! - gate) * direction < -.003);
     const after = good.some(s => s.pts >= b.pts && !exceedsTime(s.pts - b.pts, .15) && (s.hipX! - gate) * direction > .003);
@@ -81,7 +92,8 @@ function crossings(samples: SprintSample[], gate: number, direction: number): Cr
 
 /** Experimental label-invariant open/close/open cycles; NOT contact events.
  * Thresholds are engineering settings, not an externally validated gait model. */
-export function stepCandidates(samples: SprintSample[], interval?: { startPts: number; finishPts: number }): { events: Step[]; gaps: [number, number][] } {
+export function stepCandidates(samples: SprintSample[], interval?: { startPts: number; finishPts: number },
+  gap = continuityLimit(samples)): { events: Step[]; gaps: [number, number][] } {
   const calibration = interval ? samples.filter(s => !belowTime(s.pts, interval.startPts) && !exceedsTime(s.pts, interval.finishPts)) : samples;
   const scale = median(calibration.flatMap(s => s.legLength !== null && s.legLength > .01 ? [s.legLength] : []));
   if (!scale) return { events: [], gaps: [] };
@@ -104,7 +116,7 @@ export function stepCandidates(samples: SprintSample[], interval?: { startPts: n
   let ties: typeof smooth = [];
   for (const s of smooth) {
     const prior = previous;
-    if (previous && exceedsTime(s.pts - previous.pts, .05)) { gaps.push([previous.pts, s.pts]); armed = false; low = null; ties = []; }
+    if (previous && exceedsTime(s.pts - previous.pts, gap)) { gaps.push([previous.pts, s.pts]); armed = false; low = null; ties = []; }
     previous = s;
     // A standing start holds the feet only partly apart, so the first crossing
     // is armed from halfway between the closed and open levels.
@@ -126,7 +138,7 @@ export function stepCandidates(samples: SprintSample[], interval?: { startPts: n
 /** Per-cycle pelvis displacement, NOT 10m divided equally among the steps.
  * Both endpoints use the SAME leg-overlap phase. */
 export function strideIntervals(samples: SprintSample[], steps: Step[], startX: number, finishX: number,
-  startPts: number, finishPts: number, distanceM = 10): StrideInterval[] {
+  startPts: number, finishPts: number, distanceM = 10, gap = continuityLimit(samples)): StrideInterval[] {
   const output: StrideInterval[] = [];
   for (let i = 1; i < steps.length; i++) {
     const a = steps[i - 1], b = steps[i];
@@ -139,8 +151,8 @@ export function strideIntervals(samples: SprintSample[], steps: Step[], startX: 
     if (belowTime(a.pts, startPts) || exceedsTime(b.pts, finishPts)) reason = '区間外を含むため未算出';
     else if (belowTime(dt, .12) || exceedsTime(dt, MAX_CYCLE_SECONDS)) reason = '入れ替わり周期を確認できません';
     else if (first?.hipX == null || last?.hipX == null || !Number.isFinite(first.hipX) || !Number.isFinite(last.hipX)) reason = '端点の骨盤位置がありません';
-    else if (!validTimes.length || exceedsTime(validTimes[0] - a.pts, .05) || exceedsTime(b.pts - validTimes.at(-1)!, .05)
-      || validTimes.some((t, j) => j > 0 && exceedsTime(t - validTimes[j - 1], .05))) reason = 'この区間の追跡が途切れています';
+    else if (!validTimes.length || exceedsTime(validTimes[0] - a.pts, gap) || exceedsTime(b.pts - validTimes.at(-1)!, gap)
+      || validTimes.some((t, j) => j > 0 && exceedsTime(t - validTimes[j - 1], gap))) reason = 'この区間の追跡が途切れています';
     const distance = first?.hipX != null && last?.hipX != null ? distanceM * (last.hipX - first.hipX) / (finishX - startX) : NaN;
     if (!reason && (!Number.isFinite(distance) || distance <= 0 || distance > 10)) reason = '進行方向の移動距離を確認できません';
     output.push({ fromStep: i, toStep: i + 1, fromPts: a.pts, toPts: b.pts,
@@ -222,11 +234,12 @@ function fittedCrossing(tracked: SprintSample[], gate: number, direction: number
   }
   return { ...crossing, pts };
 }
-function extendedCrossing(segment: SprintSample[], gate: number, direction: number, side: 'entry' | 'exit', video: [number, number]): Crossing | null {
-  // The contiguous observations (no gap over 50 ms) nearest the gate, up to 0.25 s.
+function extendedCrossing(segment: SprintSample[], gate: number, direction: number, side: 'entry' | 'exit', video: [number, number],
+  gap: number): Crossing | null {
+  // The contiguous observations (no gap over the continuity limit) nearest the gate, up to 0.25 s.
   const ordered = side === 'entry' ? segment : [...segment].reverse(), near = [ordered[0]];
   for (const s of ordered.slice(1)) {
-    if (exceedsTime(Math.abs(s.pts - near.at(-1)!.pts), .05) || exceedsTime(Math.abs(s.pts - near[0].pts), EXTEND_FIT_SECONDS)) break;
+    if (exceedsTime(Math.abs(s.pts - near.at(-1)!.pts), gap) || exceedsTime(Math.abs(s.pts - near[0].pts), EXTEND_FIT_SECONDS)) break;
     near.push(s);
   }
   if (near.length < 3 || belowTime(Math.abs(near.at(-1)!.pts - near[0].pts), .05)) return null;
@@ -326,12 +339,13 @@ export function analyzeSprint(samples: SprintSample[], startX: number, finishX: 
   const gateSamples = run === 'flying' ? withoutSpikes(samples) : samples;
   const tracked = gateSamples.filter(s => s.hipX !== null);
   const video: [number, number] = [samples[0].pts, samples.at(-1)!.pts];
-  const finishes = crossings(gateSamples, finishX, direction);
+  const gap = continuityLimit(gateSamples);
+  const finishes = crossings(gateSamples, finishX, direction, gap);
   if (!finishes.length && run === 'flying') {
     // The exit was not seen being crossed: extend the last observations before it.
     let lastBehind = tracked.length - 1;
     while (lastBehind >= 0 && (tracked[lastBehind].hipX! - finishX) * direction > 0) lastBehind--;
-    const exit = lastBehind < 0 ? null : extendedCrossing(tracked.slice(0, lastBehind + 1), finishX, direction, 'exit', video);
+    const exit = lastBehind < 0 ? null : extendedCrossing(tracked.slice(0, lastBehind + 1), finishX, direction, 'exit', video, gap);
     if (exit) finishes.push(exit);
   }
   if (!finishes.length) return { ...base, reason: reasons.noFinish };
@@ -345,10 +359,10 @@ export function analyzeSprint(samples: SprintSample[], startX: number, finishX: 
     while (i >= 0 && (before[i].hipX! - startX) * direction > 0) i--;
     if (i === before.length - 1) continue;
     const a = before[i], b = before[i + 1];
-    if (i < 0 || exceedsTime(b.pts - a.pts, .05)) {
+    if (i < 0 || exceedsTime(b.pts - a.pts, gap)) {
       // Flying section: the entry crossing itself was not seen (the body was cut
       // by the frame edge, or hidden): extend the first observations after it.
-      const entry = run === 'flying' ? extendedCrossing(before.slice(i + 1), startX, direction, 'entry', video) : null;
+      const entry = run === 'flying' ? extendedCrossing(before.slice(i + 1), startX, direction, 'entry', video, gap) : null;
       if (entry) { start = entry; finish = candidate; break; }
       if (i >= 0) startGap = true;
       continue;
@@ -364,13 +378,13 @@ export function analyzeSprint(samples: SprintSample[], startX: number, finishX: 
   if (!start || !finish) return { ...base, reason: startGap ? reasons.startGap : reasons.noStart };
   const duration = finish.pts - start.pts;
   const laterRuns = finishes.filter(f => f.pts > finish!.pts + 1);
-  const detected = stepCandidates(samples, { startPts: start.pts, finishPts: finish.pts });
+  const detected = stepCandidates(samples, { startPts: start.pts, finishPts: finish.pts }, gap);
   const observedFrom = start.extendedSeconds ? start.after : start.pts, observedTo = finish.extendedSeconds ? finish.before : finish.pts;
   const interior = samples.filter(s => s.pts >= observedFrom && s.pts <= observedTo);
   const coverage = interior.filter(s => s.ankleGap !== null && s.kneeGap !== null).length / Math.max(1, interior.length);
   const coveredTimes = [observedFrom, ...interior.filter(s => s.ankleGap !== null && s.kneeGap !== null).map(s => s.pts), observedTo];
   const legsMissing = coverage < .9 || detected.gaps.some(([a, b]) => a < observedTo && b > observedFrom)
-    || coveredTimes.some((t, i) => i > 0 && exceedsTime(t - coveredTimes[i - 1], .05));
+    || coveredTimes.some((t, i) => i > 0 && exceedsTime(t - coveredTimes[i - 1], gap));
   const steps = detected.events.filter(s => s.pts > start.pts && s.pts < finish.pts);
   const step = countSteps(detected, steps, start.pts, finish.pts);
   const count = step?.count ?? null;
@@ -397,7 +411,7 @@ export function analyzeSprint(samples: SprintSample[], startX: number, finishX: 
   if (start.extendedSeconds) warnings.unshift(extendedNote('入口', start, '直後'));
   const counted = step?.steps ?? steps, multiples = step?.multiples ?? [];
   return { ...base, start, finish, duration, speed: distanceM / duration, steps: counted, count, edgeFractions: step?.edges ?? null,
-    strideIntervals: strideIntervals(samples, counted, startX, finishX, start.pts, finish.pts, distanceM).map((interval, i) => (multiples[i] ?? 1) > 1
+    strideIntervals: strideIntervals(samples, counted, startX, finishX, start.pts, finish.pts, distanceM, gap).map((interval, i) => (multiples[i] ?? 1) > 1
       ? { ...interval, distanceM: null, reason: `入れ替わりの見逃しで${multiples[i]}歩分の区間です` } : interval),
     cadence: count === null ? null : count / duration, stride: count === null ? null : distanceM / count, warnings };
 }
