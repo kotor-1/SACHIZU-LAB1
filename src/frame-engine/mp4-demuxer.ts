@@ -11,6 +11,7 @@ import {
   buildDisplayTimelineForFrameGridFps,
   detectFrameGridFps,
   DisplayTimeline,
+  FpsGridCapacityConflictError,
 } from './display-timeline';
 
 /** Demuxer のパース結果 */
@@ -342,6 +343,15 @@ export function buildPresentationTimeline(
 /**
  * File または Blob から MP4 メタデータ、全フレームの PTS リスト、およびサンプルデータを抽出
  */
+/** The display grid at 2-8 times the detected cadence, the first that keeps every source frame. */
+export function finerDisplayTimeline(frames: FrameInfo[], duration: number, fps: number, timescale?: number): DisplayTimeline | null {
+  for (let k = 2; k <= 8; k++) {
+    try { return buildDisplayTimelineForFrameGridFps(frames, duration, fps * k, timescale); }
+    catch (err) { if (!(err instanceof FpsGridCapacityConflictError)) throw err; }
+  }
+  return null;
+}
+
 export async function demuxMP4(file: File | Blob): Promise<DemuxResult> {
   return new Promise((resolve, reject) => {
     const mp4File = MP4Box.createFile();
@@ -456,8 +466,18 @@ export async function demuxMP4(file: File | Blob): Promise<DemuxResult> {
           timescale
         );
       } catch (err) {
-        reject(err);
-        return;
+        // A phone or browser camera recording (MediaRecorder) stamps each frame
+        // with its capture time, which jitters around the cadence: a 30 fps
+        // recording of 420 frames did not fit the 419 slots of its grid. The
+        // grid is diagnostic only, so a finer grid that keeps every source frame
+        // is used; no source frame is dropped or invented.
+        const finer = err instanceof FpsGridCapacityConflictError
+          ? finerDisplayTimeline(frames, totalDuration, timeline.detectedFrameGridFps, timescale) : null;
+        if (!finer) {
+          reject(err);
+          return;
+        }
+        displayTimeline = finer;
       }
       const nominalFps = intervalStats.nominalFps || Math.round(frames.length / (totalDuration || 1));
       const fpsCategory = classifyFps(displayTimeline.detectedFrameGridFps);

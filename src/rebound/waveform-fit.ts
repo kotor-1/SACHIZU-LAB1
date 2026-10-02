@@ -1,4 +1,5 @@
 import { G, quadratic } from '../cmj/analysis';
+import { RJ_MIN_FPS } from './frame-interval';
 import type { COMSample } from '../cmj/center-of-mass';
 import { MODELS, modelDisplacement, type Estimate, type ModelId } from './analysis';
 import { SIGNALS, type SignalId } from './lower-body';
@@ -34,7 +35,7 @@ export function detectLowerPeaks(samples: readonly COMSample[], signal: SignalId
   if (samples.some((s, i) => !Number.isFinite(s.pts) || !Number.isInteger(s.frame) ||
     [s.comX, s.comY, s.bodyScale].some(v => v !== null && !Number.isFinite(v)) ||
     (i > 0 && (s.pts <= samples[i - 1].pts || s.frame <= samples[i - 1].frame)))) return fail('INVALID_TIMELINE');
-  if (1 / median(samples.slice(1).map((s, i) => s.pts - samples[i].pts)) < 90) return fail('FRAME_RATE_TOO_LOW');
+  if (1 / median(samples.slice(1).map((s, i) => s.pts - samples[i].pts)) < RJ_MIN_FPS) return fail('FRAME_RATE_TOO_LOW');
   const good = samples.filter(valid); if (good.length < 30) return fail('LOWER_POINTS_UNAVAILABLE');
   const threshold = median(good.map(s => s.bodyScale!)) * .07;
   const smooth = samples.map((s, i) => {

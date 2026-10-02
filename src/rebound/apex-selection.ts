@@ -1,4 +1,5 @@
 import type { COMSample } from '../cmj/center-of-mass';
+import { gapLimit } from './frame-interval';
 import type { Apex } from './waveform-fit';
 
 /** Engineering signal-completeness checks, not observed contact events or a
@@ -59,7 +60,7 @@ export function selectBilateralApexes(samples: readonly ApexMotionSample[], cand
         if (rows.length < APEX_SELECTION_SETTINGS.minimumSamplesPerSection ||
           rows.length / Math.max(1, all.length) < APEX_SELECTION_SETTINGS.minimumCoverage ||
           (rows.at(-1)!.pts - rows[0].pts) / (nominalBounds[i][1] - nominalBounds[i][0]) < APEX_SELECTION_SETTINGS.minimumTimeCoverage - 1e-9 ||
-          times.some((t, j) => j > 0 && t - times[j - 1] > APEX_SELECTION_SETTINGS.maximumGapSeconds + 1e-6))
+          times.some((t, j) => j > 0 && t - times[j - 1] > gapLimit(APEX_SELECTION_SETTINGS.maximumGapSeconds, all.map(s => s.pts)) + 1e-6))
           return unresolved(side === 0 ? 'APEX_LEFT_TOE_GAP' : 'APEX_RIGHT_TOE_GAP');
         values.push(rows.map(s => s[key]!));
       }

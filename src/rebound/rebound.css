@@ -52,6 +52,10 @@
 .rj-auto-headline strong { display: block; color: #d9ff8c; font-size: clamp(52px, 12vw, 88px); line-height: 1.2; }
 .rj-auto-headline small { font-size: 20px; }
 .rj-public input[type=file] { width: 100%; min-width: 0; }
+.rj-public .rj-legs { display: flex; gap: 6px; margin: 4px 0 8px; }
+.rj-public .rj-legs button { flex: 1; min-height: 42px; border: 1px solid #c9d6cf; border-radius: 10px; background: #fff; color: #4d6259; font-weight: 650; }
+.rj-public .rj-legs button.is-selected { border-color: #173a36; color: #173a36; background: #eaf3ee; }
+.rj-public .rj-link-button { margin-left: 10px; border: 0; background: none; color: #135a48; font-weight: 700; text-decoration: underline; padding: 4px; }
 .rj-public .rj-viewer > .rj-pose-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .rj-public .rj-table { border-collapse: collapse; width: 100%; font-size: 13px; }
 .rj-public .rj-table td, .rj-public .rj-table th { padding: 12px 8px; border-bottom: 1px solid #dce5df; text-align: left; }

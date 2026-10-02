@@ -1,4 +1,5 @@
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
+import { gapLimit } from './frame-interval';
 import { brightFootEdge, darkFootEdge, type FootBox, type GrayImage } from './pixel-foot';
 import { footBoxesForPair } from './foot-boxes';
 import { fractionRSI } from './hybrid-physics';
@@ -100,10 +101,10 @@ function smooth(series: readonly Point[]): Point[] {
 /** First fast upward step (image y decreasing) that continues into the air.
  * Returns the midpoint between the last support sample and the first air sample. */
 function firstLift(series: readonly Point[], speed: number, travel: number): { t: number } | { reason: string } {
-  const s = smooth(series), S = SOLE_CONTACT_SETTINGS;
+  const s = smooth(series), S = SOLE_CONTACT_SETTINGS, gap = gapLimit(S.maximumGapSeconds, s.map(p => p.t));
   for (let i = 1; i < s.length; i++) {
     const dt = s[i].t - s[i - 1].t;
-    if (!(dt > 0) || dt > S.maximumGapSeconds + 1e-9) return { reason: 'SOLE_EDGE_GAP' };
+    if (!(dt > 0) || dt > gap + 1e-9) return { reason: 'SOLE_EDGE_GAP' };
     if ((s[i - 1].y - s[i].y) / dt < speed) continue;
     const later = s.slice(i, i + S.continuationSamples);
     if (later.length < S.monotoneSteps + 1 || s[i - 1].y - Math.min(...later.map(p => p.y)) < travel) continue;

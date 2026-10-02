@@ -41,8 +41,11 @@ describe('continuous toe-cycle result presentation', () => {
     // No old automatic RJ, research screens or track-and-field modules on the public site.
     expect(main).not.toMatch(/AutomaticReboundLab|CMJStage1|CMJResearch|hurdle|high-jump|long-jump|throwing|crouch/i);
     const component = readFileSync('src/rebound/ToeCycleLab.tsx', 'utf8');
-    expect(component).toContain('toeCycleReport(observation.poses');
-    expect(component).toContain('soleContactReport(result, observation.soles)');
+    // Both-legs RJ analyses the observed poses and soles as they are; single-leg ones the stance leg of the same observation.
+    expect(component).toContain('const analysed = single ? stanceLegFrames(observation.poses) : observation.poses;');
+    expect(component).toContain('const soles = single && observation.soles ? stanceSoles(observation.poses, observation.soles) : observation.soles;');
+    expect(component).toContain('toeCycleReport(analysed');
+    expect(component).toContain('soleContactReport(result, soles)');
     // Shoe pixels are read in the single pose pass; no second decode of the video.
     expect(component).not.toMatch(/collectPixelRows|refineAutomaticReview|automaticFootResult/);
     expect(component).toContain('cached.current?.file === file');
@@ -158,13 +161,13 @@ describe('continuous toe-cycle result presentation', () => {
     expect(html).not.toContain('追跡不足などで頂点確認を保留した候補があります');
   });
   it('identifies the new model while preserving saved-JSON recalculation and source provenance', () => {
-    expect(TOE_CYCLE_PRESENTATION_VERSION).toBe('rj-toe-cycle-presentation-v7');
+    expect(TOE_CYCLE_PRESENTATION_VERSION).toBe('rj-toe-cycle-presentation-v8');
     const component = readFileSync('src/rebound/ToeCycleLab.tsx', 'utf8');
     expect(component).toContain('parseToeCycleImport(text, selected.size)');
     expect(component).toContain("origin: 'SAVED_JSON'");
     expect(component).toContain("sourceVideoVerified: observation.origin === 'VIDEO'");
     expect(component).toContain("version: 'rj-toe-cycle-export-v1'");
-    expect(component).toContain('toeCycleReport(observation.poses, observation.hash, observation.filename)');
+    expect(component).toContain('toeCycleReport(analysed, observation.hash, observation.filename)');
     expect(component).toContain('soles: observation.soles');
   });
   it('explains a missing shoe trace from an older saved JSON without falling back to the template', () => {

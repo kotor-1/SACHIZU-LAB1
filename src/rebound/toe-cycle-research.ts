@@ -1,4 +1,5 @@
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
+import { gapLimit, sampleMinimum } from './frame-interval';
 import type { COMSample } from '../cmj/center-of-mass';
 import type { PoseFrame } from './prediction-observations';
 import { createLowerSubjectSelector, lowerBodySamples } from './lower-body';
@@ -117,8 +118,9 @@ export function fitToeCycle(samples: readonly ToeSample[], a: Apex, b: Apex): To
     const rows = all.filter(s => s[key] !== null && Number.isFinite(s[key]));
     out.coverage[side] = rows.length / Math.max(1, all.length);
     const times = [a.pts, ...rows.map(s => s.pts), b.pts];
-    if (rows.length < TOE_CYCLE_SETTINGS.minimumSamples || out.coverage[side] < TOE_CYCLE_SETTINGS.minimumCoverage ||
-      times.some((v, j) => j > 0 && v - times[j - 1] > TOE_CYCLE_SETTINGS.maximumGapSeconds + 1e-6)) return fail(side === 0 ? 'LEFT_TOE_TRACKING_GAP' : 'RIGHT_TOE_TRACKING_GAP');
+    const frames = all.map(s => s.pts), gap = gapLimit(TOE_CYCLE_SETTINGS.maximumGapSeconds, frames);
+    if (rows.length < sampleMinimum(TOE_CYCLE_SETTINGS.minimumSamples, frames) || out.coverage[side] < TOE_CYCLE_SETTINGS.minimumCoverage ||
+      times.some((v, j) => j > 0 && v - times[j - 1] > gap + 1e-6)) return fail(side === 0 ? 'LEFT_TOE_TRACKING_GAP' : 'RIGHT_TOE_TRACKING_GAP');
     const t = rows.map(s => (s.pts - a.pts) / period), y = rows.map(s => s[key]!);
     // Quantile span resists a single erroneous toe landmark without filtering
     // high-RSI cycles. Absolute leg-normalized motion is needed on both toes.

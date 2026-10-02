@@ -1,4 +1,5 @@
 import type { COMSample } from '../cmj/center-of-mass';
+import { gapLimit, sampleMinimum } from './frame-interval';
 import { detectLowerPeaks, type Apex } from './waveform-fit';
 
 export const HYBRID_VERSION = 'rj-hybrid-physics-v1-research';
@@ -70,7 +71,8 @@ function profileFromPeaks(samples: readonly COMSample[], peaks: Apex[], out: Hyb
     const all = samples.filter(s => s.pts >= a && s.pts <= b);
     const rows = all.filter(s => s.comY !== null && s.comX !== null && s.bodyScale !== null && s.bodyScale > 0);
     const coverage = rows.length / Math.max(1, all.length), times = [a, ...rows.map(s => s.pts), b];
-    if (rows.length < 20 || coverage < .95 || times.some((v, j) => j > 0 && v - times[j - 1] > .025 + 1e-6)) return fail('TRACKING_GAP');
+    const frames = all.map(s => s.pts), gap = gapLimit(.025, frames);
+    if (rows.length < sampleMinimum(20, frames) || coverage < .95 || times.some((v, j) => j > 0 && v - times[j - 1] > gap + 1e-6)) return fail('TRACKING_GAP');
     const leg = median(rows.map(s => s.bodyScale!));
     if (Math.max(...rows.map(s => s.comX!)) - Math.min(...rows.map(s => s.comX!)) > .25 * leg) return fail('SUBJECT_DRIFT');
     const t = rows.map(s => (s.pts - a) / period), y = rows.map(s => s.comY!);

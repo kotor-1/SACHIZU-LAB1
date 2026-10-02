@@ -176,7 +176,7 @@ describe('continuous bilateral toe-constrained cycle: implementation, not accura
   it('does not use malformed report timelines or low-rate recordings', () => {
     const base = poses();
     for (const bad of [[...base].reverse(), base.map(s => ({ ...s, pts: 0 })),
-      base.map(s => ({ ...s, pts: NaN })), base.filter((_, i) => i % 4 === 0)]) {
+      base.map(s => ({ ...s, pts: NaN })), base.filter((_, i) => i % 12 === 0)]) {   // 20 frames/s: below RJ_MIN_FPS
       const r = toeCycleReport(bad, 'synthetic', 'invalid.mov');
       expect(r.mean).toBeNull(); expect(r.acceptedCycles).toBe(0); expect(r.reason).not.toBeNull();
     }
@@ -199,6 +199,13 @@ describe('continuous bilateral toe-constrained cycle: implementation, not accura
     expect(r.detected).toBe(count); expect(r.totalCycles).toBe(count - 1); expect(r.acceptedCycles).toBe(count - 1);
     expect(r.acceptedCycleIds).toEqual(Array.from({ length: count - 1 }, (_, i) => i + 1));
     expect(r.cycles.at(-1)?.toPeak).toBe(count); expect(r.mean).toBeCloseTo(fractionRSI(.6, .6), 3);
+  });
+
+  it('analyses the same jumps recorded by a camera at 60 or 30 frames/s', () => {
+    for (const k of [4, 8]) {
+      const r = toeCycleReport(poses(12).filter((_, i) => i % k === 0), 'synthetic', 'camera.mp4');
+      expect(r.acceptedCycles, `${240 / k} fps ${r.reason}`).toBe(11); expect(r.mean).toBeCloseTo(fractionRSI(.6, .6), 1);
+    }
   });
 
   it('keeps all adjacent cycle identities when one cycle fails; no stitching or zero-fill', () => {

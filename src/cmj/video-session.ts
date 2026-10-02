@@ -1,5 +1,6 @@
 import { MobileCMJPose } from './mobile-pose';
 import { COMStream, type COMPhase, type COMResult, type COMStreamDiagnostics } from './com-stream';
+import type { JumpLegs } from './single-leg';
 import { untilAborted } from './session-lifecycle';
 import { CameraClock, drawCameraFrame } from './camera-clock';
 
@@ -31,7 +32,8 @@ export interface SessionSummary { resultCount: number; estimateCount: number; re
 /** Recorded playback can slow down without changing source timestamps.
  * A camera cannot slow physical time: gaps are rejected, never interpolated. */
 export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'file', signal: AbortSignal,
-  update: (state: SessionUpdate) => void, status: (message: string) => void = () => {}, allowMovement: () => boolean = () => true): Promise<SessionSummary> {
+  update: (state: SessionUpdate) => void, status: (message: string) => void = () => {}, allowMovement: () => boolean = () => true,
+  legs: JumpLegs = 'BOTH'): Promise<SessionSummary> {
   if (!video.requestVideoFrameCallback) throw new Error('このブラウザは映像の時刻取得に未対応です。OSとブラウザを更新してください。');
   if (mode === 'camera' && typeof Worker !== 'undefined') {
     const live = await import('./live-session');
@@ -43,7 +45,7 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
   const pose = new MobileCMJPose('full');
   const clock = new CameraClock();
   let callback = 0;
-  let stream = new COMStream();
+  let stream = new COMStream(undefined, legs);
   const results: COMResult[] = [];
   let lastPts = -1, frame = 0, averageMs = 0, slowSince: number | null = null;
   let validFrames = 0, poseFrames = 0;
@@ -64,7 +66,7 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
       (sourceWidth !== video.videoWidth || sourceHeight !== video.videoHeight)))) {
       // Pixel axes/scale changed: never join motion across a camera rotation.
       // Keep completed results, discard the incomplete jump, require readiness again.
-      stream = new COMStream(); prepared = false; slowSince = null; cameraTurned = false; observed.length = 0;
+      stream = new COMStream(undefined, legs); prepared = false; slowSince = null; cameraTurned = false; observed.length = 0;
     }
     sourceWidth = video.videoWidth; sourceHeight = video.videoHeight;
     const scale = Math.min(1, 720 / Math.max(video.videoWidth, video.videoHeight));
@@ -112,7 +114,7 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
             const frameTime = snapshot();
             const timing = mode === 'camera' ? clock.read(now, { ...meta, frameTime }) : null;
             const pts = timing ? timing.inferencePts : meta.mediaTime; lastPts = pts;
-            if (timing?.reset) { stream = new COMStream(); prepared = false; observed.length = 0; }
+            if (timing?.reset) { stream = new COMStream(undefined, legs); prepared = false; observed.length = 0; }
             const r = pose.estimate(canvas, frame++, pts);
             if (r.landmarks.length === 1) poseFrames++;
             if (r.comSample.comY !== null) validFrames++;

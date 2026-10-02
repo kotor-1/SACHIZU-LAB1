@@ -7,6 +7,7 @@ import { untilAborted } from './session-lifecycle';
 import { cameraConstraints, cameraDimensions } from './camera-geometry';
 import { recordCamera } from './camera-recording';
 import { cameraStopReason, displayedResult, isPreviousResult, CMJ_LIVE_VERSION } from './session-diagnostics';
+import { JUMP_LEGS, LEG_LABELS, SINGLE_LEG_READY, singleLeg, type JumpLegs } from './single-leg';
 import './mobile-ui.css';
 
 const phases = { PREPARING: '全身を確認しています', READY: 'いつでも跳べます', MOVING: 'ジャンプを検出しました', RECOVERING: '着地を確認しています' };
@@ -31,6 +32,8 @@ export default function CMJMobile() {
   const [recordingNote, setRecordingNote] = useState('');
   const [refining, setRefining] = useState(false);
   const [keepRecording, setKeepRecording] = useState(false);
+  // Recordings may be single-leg CMJs; the camera measures both legs for now.
+  const [legs, setLegs] = useState<JumpLegs>('BOTH'), [analysedLegs, setAnalysedLegs] = useState<JumpLegs>('BOTH');
 
   function cancel() {
     owner.current?.abort();
@@ -80,6 +83,7 @@ export default function CMJMobile() {
   }
   async function start(captured?: File) {
     const sourceMode = captured ? 'file' : mode, sourceFile = captured ?? file;
+    const sourceLegs: JumpLegs = sourceMode === 'file' && !captured ? legs : 'BOTH';
     if (!video.current || busy || (sourceMode === 'file' && !sourceFile)) return;
     if (captured) fileSelected(captured);
     const element = video.current, control = new AbortController(); owner.current = control;
@@ -87,7 +91,7 @@ export default function CMJMobile() {
     setRefining(!!captured || sourceFile === recordedClip && sourceMode === 'file');
     if (sourceMode === 'camera') { setRecordedClip(null); setRecordingNote(''); liveSnapshot.current = null; }
     setBusy(true); setCancelling(false); setProblem(false); setReview(false); setState(null); setActiveResult(null);
-    setExact(false); setFailureReason(null);
+    setExact(false); setFailureReason(null); setAnalysedLegs(sourceLegs);
     if (canvas.current) canvas.current.getContext('2d')?.clearRect(0, 0, canvas.current.width, canvas.current.height);
     setMessage('計測の準備をしています…');
     const status = (value: string) => { if (owner.current === control && !control.signal.aborted) setMessage(value); };
@@ -121,11 +125,11 @@ export default function CMJMobile() {
         const recording = await import('./recording-session');
         if (control.signal.aborted) throw new DOMException('中止', 'AbortError');
         const useExact = recording.supportsExactRecording(sourceFile); setExact(useExact);
-        if (useExact) summary = await recording.measureRecording(sourceFile, canvas.current!, control.signal, update, status);
+        if (useExact) summary = await recording.measureRecording(sourceFile, canvas.current!, control.signal, update, status, { legs: sourceLegs });
         else {
           if (element.currentTime !== 0) element.currentTime = 0;
           await waitForCurrentFrame(element, control.signal);
-          summary = await measureVideo(element, 'file', control.signal, update, status);
+          summary = await measureVideo(element, 'file', control.signal, update, status, undefined, sourceLegs);
         }
       } else {
         setExact(false);
@@ -173,7 +177,7 @@ export default function CMJMobile() {
     }
   }
   function download() {
-    const blob = new Blob([JSON.stringify({ file: mode === 'file' ? file?.name : 'camera', acquisition: state?.acquisition,
+    const blob = new Blob([JSON.stringify({ file: mode === 'file' ? file?.name : 'camera', legs: analysedLegs, acquisition: state?.acquisition,
       poseModel: state?.poseModel, processingMs: state?.processingMs, decodeDiagnostics: state?.decodeDiagnostics,
       liveBeforeRefinement: refining ? liveSnapshot.current : undefined,
       diagnostics: { reason: failureReason, message, quality: state?.quality, processedFrames: state?.processedFrames,
@@ -205,6 +209,9 @@ export default function CMJMobile() {
     : mode === 'camera' ? 'カメラを起動して、全身をフレームに入れてください。' : file ? '準備ができました。動画を解析してください。' : '撮影したジャンプ動画を読み込んでください。');
   const showHeight = height != null && !review && (!busy || state?.phase === 'PREPARING' || state?.phase === 'READY');
   const showCanvas = mode === 'file' && exact && !review && (busy || state?.acquisition === 'EXACT_FRAMES');
+  // The legs the shown results were analysed on; before an analysis, the choice.
+  const shownLegs: JumpLegs = mode === 'camera' ? 'BOTH' : state ? analysedLegs : legs;
+  const single = mode === 'file' && singleLeg(legs);
   return <main className="cmj-mobile">
     <header className="cmj-header"><a href={import.meta.env.BASE_URL} aria-label="種目を選ぶ"><ArrowLeft size={20} /></a>
       <span className="cmj-brand">SACHIZU <span>LAB</span></span><span className="cmj-beta">BETA</span></header>
@@ -214,6 +221,10 @@ export default function CMJMobile() {
         <button className={mode === 'file' ? 'is-selected' : ''} aria-pressed={mode === 'file'} disabled={busy} onClick={() => selectMode('file')}><Upload size={17} />録画を解析</button>
         <button className={mode === 'camera' ? 'is-selected' : ''} aria-pressed={mode === 'camera'} disabled={busy} onClick={() => selectMode('camera')}><Camera size={17} />カメラで計測</button>
       </div>
+      {mode === 'file' && SINGLE_LEG_READY && <div className="cmj-legs" role="group" aria-label="跳び方">{JUMP_LEGS.map(id =>
+        <button key={id} type="button" className={legs === id ? 'is-selected' : ''} aria-pressed={legs === id} disabled={busy} onClick={() => setLegs(id)}>
+          {id === 'BOTH' ? '両脚' : `片脚・${id === 'RIGHT' ? '右' : '左'}`}</button>)}</div>}
+      {single && <p className="cmj-inline-note">片脚CMJ：反対の脚は床に着けずに保持し、同じ脚で着地してください。床に近い方の足（支持脚）のつま先で離地・着地を判定し、重心は全身から計算します。右・左は結果の記録用です（選手自身の左右）。</p>}
       {mode === 'camera' && <div className="cmj-inline-note"><p>全身が映ると計測が始まります。止まったり合図を待ったりする必要はありません。好きなタイミングで跳ぶと、着地の後に高さを自動で表示します。続けて何回でも跳べます。スマホは縦向き・横向きのどちらでも使えます。選手の腰付近の高さで固定し、頭から足先まで映してください。計測中はスマホの向きを変えないでください。</p>
         <label><input type="checkbox" checked={keepRecording} disabled={busy} onChange={e => setKeepRecording(e.target.checked)} /> 録画も残す（最長20秒で計測終了）</label>
         <p>{keepRecording ? '音声なしで端末内に録画します。映像は送信しません。停止後の再解析にも使えます。' : 'ライブ優先：録画せず連続計測します。撮影中はスマホの位置・向きを変えないでください。'}</p></div>}
@@ -231,7 +242,7 @@ export default function CMJMobile() {
           {skeleton.map(([a, b]) => <line key={`${a}-${b}`} x1={state.landmarks[a].x * dimensions.w} y1={state.landmarks[a].y * dimensions.h}
             x2={state.landmarks[b].x * dimensions.w} y2={state.landmarks[b].y * dimensions.h} strokeWidth={dimensions.w / 220} />)}
           {state.com && <circle cx={state.com.x * dimensions.w} cy={state.com.y * dimensions.h} r={dimensions.w / 70} />}</svg>}
-        <div className="cmj-viewer-top"><span><i className={busy ? 'is-live' : ''} />{busy ? mode === 'file' ? 'ANALYZING' : 'LIVE' : 'CMJ / 両脚ジャンプ'}</span>{busy && state && <span>{state.sourcePts.toFixed(2)} s</span>}</div>
+        <div className="cmj-viewer-top"><span><i className={busy ? 'is-live' : ''} />{busy ? mode === 'file' ? 'ANALYZING' : 'LIVE' : `CMJ / ${LEG_LABELS[shownLegs]}ジャンプ`}</span>{busy && state && <span>{state.sourcePts.toFixed(2)} s</span>}</div>
         {showHeight && <div className="cmj-score-overlay"><span>{isPreviousResult(state, latest?.id) ? `直近の成立結果（${latest?.id}回目）` : 'JUMP HEIGHT'}</span><strong>{height.toFixed(1)}<small>cm</small></strong><em>つま先の離地〜重心の最高点からの推定値</em></div>}
         {busy && !showHeight && <div className="cmj-stage-caption">{cancelling ? '停止中…' : rejected && state?.phase === 'READY' ? '要確認' : state?.phase === 'READY' ? 'Ready' : 'Tracking'}<span>{mode === 'file' ? progress === null ? '動画を確認しています' : `${progress}% 解析済み` : state?.phase === 'READY' ? '好きなタイミングで跳んでください' : '頭から足先まで映してください'}</span></div>}
       </div>
@@ -268,7 +279,7 @@ export default function CMJMobile() {
     </section><aside className="cmj-side">
       <section className="cmj-result-panel"><div className="cmj-section-heading"><h2>今回の結果</h2><span>{successful.length} REPS</span></div>
         {state?.results.length ? <><ol className="cmj-result-list">{state.results.map(r => <li key={r.id}><button className={latest?.id === r.id ? 'is-active' : ''} onClick={() => { setActiveResult(r.id); setReview(false); }}>
-          <span className="cmj-rep-index">{String(r.id).padStart(2, '0')}</span><span className="cmj-rep-label">両脚ジャンプ<small>{r.analysis.heightCm === null ? '測定条件を確認してください' : '離地〜最高点・推定'}</small></span>
+          <span className="cmj-rep-index">{String(r.id).padStart(2, '0')}</span><span className="cmj-rep-label">{LEG_LABELS[analysedLegs]}ジャンプ<small>{r.analysis.heightCm === null ? '測定条件を確認してください' : '離地〜最高点・推定'}</small></span>
           <strong>{r.analysis.heightCm === null ? '—' : r.analysis.heightCm.toFixed(1)}{r.analysis.heightCm !== null && <small>cm</small>}</strong></button>
           {r.analysis.heightCm === null && <p>{comFeedback(r.analysis.reason)}</p>}</li>)}</ol><button className="cmj-export" onClick={download}><Download size={16} />解析データを保存</button></>
           : <div className="cmj-no-results"><Activity size={27} /><p>ジャンプの結果が<br />ここに並びます。</p><small>解析後に高さと記録を確認できます</small></div>}
@@ -276,10 +287,11 @@ export default function CMJMobile() {
       <section className="cmj-setup"><p className="cmj-eyebrow">BEFORE YOU JUMP</p><h2>3つの準備で、撮影しやすく。</h2><ol>
         <li><span>01</span><div><strong>正面・全身・明るい場所</strong><p>頭から足先まで。ジャンプしても画面内に収まる距離に。</p></div></li>
         <li><span>02</span><div><strong>スマホを動かさず固定</strong><p>前後に移動せず、同じ場所でジャンプします。</p></div></li>
-        <li><span>03</span><div><strong>腰に手を置いて、両脚で跳ぶ</strong><p>止まる必要はありません。着地まで映してください。</p></div></li></ol>
+        <li><span>03</span><div><strong>{single ? '腰に手を置いて、片脚で跳ぶ' : '腰に手を置いて、両脚で跳ぶ'}</strong><p>{single ? '反対の脚は床に着けずに保持します。止まる必要はありません。着地まで映してください。' : '止まる必要はありません。着地まで映してください。'}</p></div></li></ol>
         <p className="cmj-format">録画の目安：30秒以内・3600フレーム以内（240fpsでは約15秒）。MOV・MP4推奨。高fpsの元動画を使用し、フレームを間引く書き出しは避けてください。</p></section>
       <details className="cmj-method"><summary>測定方法と精度について<ChevronDown size={16} /></summary>
         <p>つま先が床から離れる瞬間と、空中の重心の最高点までの時間から高さを計算します。両足が同時に床から離れた動きをジャンプとして検出するので、跳ぶ前に止まる必要はありません。</p>
+        <p>片脚（録画）では、各コマで床に近い方の足を支持脚とし、そのつま先が床から離れた動きをジャンプとして検出します。上げている脚の足先は離地・着地に使いません。</p>
         <p>表示する高さは離地から最高点までの重心上昇量の推定です。試験機能・精度未検証。撮影状態や身体の追跡に不確かさがある場合は数値を表示しません。</p>
         <p>動画は端末内で処理します。初回はモデルのダウンロードが必要です。</p>
         {state && <><p>{state.processedFrames}フレーム処理 / {state.acquisition === 'EXACT_FRAMES' ? '元フレーム解析' : '映像再生からの解析'} / {state.inferenceMs.toFixed(0)} ms</p>

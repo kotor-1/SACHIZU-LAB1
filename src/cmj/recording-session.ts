@@ -3,6 +3,7 @@ import { SequentialRecordingDecoder } from './sequential-decoder';
 import { trackRotation } from './video-orientation';
 import { MobileCMJPose, type PoseSelector } from './mobile-pose';
 import { COMStream, type COMResult } from './com-stream';
+import type { JumpLegs } from './single-leg';
 import type { SessionSummary, SessionUpdate } from './video-session';
 import { untilAborted } from './session-lifecycle';
 import { centerOfMassSample, type COMSample } from './center-of-mass';
@@ -24,6 +25,8 @@ export interface DecodedRecordingFrame {
 
 export interface RecordingOptions {
   analysis?: 'CMJ' | 'OBSERVATIONS';
+  /** CMJ on both legs or one (see COMStream). */
+  legs?: JumpLegs;
   /** RJ observation comparison only; CMJ keeps Full. */
   observationModel?: 'full' | 'heavy';
   onSample?: (sample: COMSample) => void;
@@ -59,7 +62,7 @@ export async function measureRecording(file: File, canvas: HTMLCanvasElement, si
   signal.addEventListener('abort', abortDecode, { once: true });
   // Full source sampling can resolve a shorter recorded standing segment;
   // keep live preparation longer for actionable real-time guidance.
-  const stream = new COMStream(.2);
+  const stream = new COMStream(.2, options.legs);
   const results: COMResult[] = [];
   const failures = new Map<string, number>();
   let valid = 0, poseFrames = 0, prepared = false, averageMs = 0, lastUpdate = -Infinity, lastYield = performance.now();

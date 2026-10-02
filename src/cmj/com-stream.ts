@@ -1,6 +1,7 @@
 import type { COMAnalysis } from './com-analysis';
 import { analyzeToeFlight } from './toe-flight';
 import type { COMSample } from './center-of-mass';
+import { stanceToes, type JumpLegs } from './single-leg';
 
 export type COMPhase = 'PREPARING' | 'READY' | 'MOVING' | 'RECOVERING';
 export interface COMResult { id: number; analysis: COMAnalysis; detectedAtPts: number }
@@ -33,9 +34,11 @@ const valid = (p: COMSample) => p.comY !== null && p.comX !== null && p.bodyScal
  * has risen. No standing still, baseline or countdown is needed before a jump,
  * and the next jump can follow right after a landing. Heel raises, squats and
  * walking never lift both toes together; anything detected still has to pass
- * the physical estimator (toe events, gravity arc, body-size scale). */
+ * the physical estimator (toe events, gravity arc, body-size scale).
+ * Single-leg jumps use the lower toe for both (see stanceToes): the held foot
+ * is off the floor throughout and is neither a takeoff nor a landing. */
 export class COMStream {
-  constructor(private readonly preparationSeconds = .3) {}
+  constructor(private readonly preparationSeconds = .3, private readonly legs: JumpLegs = 'BOTH') {}
   phase: COMPhase = 'PREPARING';
   private samples: COMSample[] = [];
   private id = 0;
@@ -56,7 +59,8 @@ export class COMStream {
       preparationSpanSeconds: tracked.length ? tracked.at(-1)!.pts - tracked[0].pts : 0, observationReason: this.observationReason };
   }
 
-  push(p: COMSample, allowMovement = true): COMResult | null {
+  push(sample: COMSample, allowMovement = true): COMResult | null {
+    const p = this.legs === 'BOTH' ? sample : stanceToes(sample);
     if (!Number.isFinite(p.pts) || (this.lastPts !== null && p.pts <= this.lastPts)) throw new Error('NON_MONOTONIC_STREAM');
     const gap = this.lastPts === null ? 0 : p.pts - this.lastPts;
     this.lastPts = p.pts;
