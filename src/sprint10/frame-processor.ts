@@ -23,14 +23,18 @@ export class SprintFrameProcessor {
     private readonly watcher: () => Promise<MobileCMJPose>,
     startX: number, finishX: number | undefined, start: SprintStart, distanceM: number,
     /** Live camera: watch every frame while someone comes in (see SprintTracker.watching). */
-    private readonly liveWatch = false) {
+    private readonly liveWatch = false,
+    /** Crouch start: the crop keeps the full picture height (narrowed to the
+     * crouched set, it cut off the athlete rising out of the blocks), and the
+     * tracker follows the athlete out of the blocks (see SprintTracker). */
+    private readonly fromBlocks = false) {
     this.crop = document.createElement('canvas');
     const cc = this.crop.getContext('2d');
     if (!cc) throw new Error('映像処理を開始できません。');
     this.cc = cc;
     // Flying section: the runner must move at sprint speed, which the gate spacing turns into image widths/s.
     const sprintSpeed = finishX === undefined || !(distanceM > 0) ? 0 : FLYING_MIN_SPEED_MPS * Math.abs(finishX - startX) / distanceM;
-    this.tracker = new SprintTracker(startX, finishX === undefined ? 0 : finishX - startX, start, sprintSpeed);
+    this.tracker = new SprintTracker(startX, finishX === undefined ? 0 : finishX - startX, start, sprintSpeed, fromBlocks);
   }
   get idle() { return this.tracker.idle; }
   /** Crops source-resolution pixels BEFORE resizing, so distant runners retain detail. */
@@ -68,7 +72,7 @@ export class SprintFrameProcessor {
     }
     // A newly decided subject may be outside the height band of the previous one.
     if (backfill.length) { this.top = 0; this.bottom = 1; }
-    if (selected.length) {
+    if (selected.length && !this.fromBlocks) {
       const ys = selected.filter(p => (p.visibility ?? 0) >= .3).map(p => p.y);
       const nextTop = Math.max(0, Math.min(...ys) - .12), nextBottom = Math.min(1, Math.max(...ys) + .12);
       if (nextBottom - nextTop > .2) { this.top = .8 * this.top + .2 * nextTop; this.bottom = .8 * this.bottom + .2 * nextBottom; }

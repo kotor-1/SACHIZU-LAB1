@@ -381,7 +381,8 @@ describe('10m sprint experiment', () => {
     const html = renderToStaticMarkup(<Sprint10Lab />);
     expect(html).not.toContain('type="radio"'); expect(html).not.toContain('左足から'); expect(html).not.toContain('1歩目');
     expect(html).toContain('3　解析する'); expect(html).toContain('解析v10');
-    expect(html).toContain('録画した動画'); expect(html).toContain('カメラでリアルタイム計測'); expect(html).toContain('aria-label="10mの動画を選ぶ"');
+    expect(html).toContain('録画した動画'); expect(html).toContain('カメラでリアルタイム計測');
+    expect(html).toContain('クラウチングスタート'); expect(html).toContain('aria-label="10mの動画を選ぶ"');
     expect(html).toContain('この2本のラインで決定'); expect(html).toContain('解析する'); expect(html).toContain('<video');
     expect(html).toContain('スタート10m'); expect(html).toContain('最高速度区間');
   });

@@ -222,7 +222,14 @@ export class SprintTracker {
    * and a flying start cannot tell the run-in side, so it behaves as standing).
    * sprintSpeed: the flying subject's minimum speed in image widths/s (from the
    * section length); without it only RUNNING_SPEED applies. */
-  constructor(startX: number, direction = 0, start: SprintStart = 'standing', sprintSpeed = 0) {
+  /** fromBlocks: a crouch start. The subject is followed at its predicted
+   * position without the reference to its own path 0.1-0.4 s earlier: that path
+   * was still the set, and the athlete exploding out of the blocks was lost for
+   * the whole clearance (recorded, 0.14-0.24 s). A crouch start is filmed with
+   * the athlete alone at the blocks, the case the reference protects against. */
+  private readonly fromBlocks: boolean;
+  constructor(startX: number, direction = 0, start: SprintStart = 'standing', sprintSpeed = 0, fromBlocks = false) {
+    this.fromBlocks = fromBlocks;
     this.seed = startX; this.direction = Math.sign(direction); this.finishX = startX + direction;
     this.start = this.direction && start === 'flying' ? 'flying' : 'standing';
     this.sprintSpeed = Math.max(RUNNING_SPEED, sprintSpeed);
@@ -393,7 +400,7 @@ export class SprintTracker {
   }
   /** While running: the subject's own path from 0.1-0.4 s earlier, extrapolated. */
   private reference(pts: number): number | null {
-    if (Math.abs(this.velocity) < RUNNING_SPEED) return null;
+    if (this.fromBlocks || Math.abs(this.velocity) < RUNNING_SPEED) return null;
     const older = this.history.filter(h => pts - h.t >= SHORT_GAP_SECONDS - TIME_EPSILON && pts - h.t <= .4 + TIME_EPSILON);
     if (older.length < 4 || older.at(-1)!.t - older[0].t < .08) return null;
     const line = fitLine(older);

@@ -3,7 +3,8 @@ import { SequentialRecordingDecoder } from '../cmj/sequential-decoder';
 import { MobileCMJPose } from '../cmj/mobile-pose';
 import { trackRotation } from '../cmj/video-orientation';
 import { untilAborted } from '../cmj/session-lifecycle';
-import type { SprintSample } from './analysis';
+import type { Point, SprintSample } from './analysis';
+import type { CrouchFrame } from './crouch';
 import type { SprintStart } from './tracker';
 import { SPRINT_POSES, SprintFrameProcessor } from './frame-processor';
 
@@ -15,8 +16,19 @@ export { SPRINT_POSES };
  * each (28 ms of pose estimation per frame). */
 export const ANALYSIS_FPS = 120;
 export const IDLE_FPS = 30;
+/** The crouch start is timed to the frame: every frame up to this rate is
+ * looked at (its events were checked against the picture at 240 fps). */
+export const CROUCH_FPS = 240;
+interface FrameOptions {
+  maxFps?: number;
+  /** A crouch start (see SprintFrameProcessor). */
+  fromBlocks?: boolean;
+  /** Each analysed frame's selected athlete (normalized landmarks; empty when not found) and picture size. */
+  onSelected?: (frame: { frameIndex: number; pts: number }, selected: Point[], width: number, height: number) => void;
+}
 export async function measureSprint(file: File, startX: number, signal: AbortSignal,
-  progress: (fraction: number, message: string) => void, finishX?: number, start: SprintStart = 'standing', distanceM = 10): Promise<SprintSample[]> {
+  progress: (fraction: number, message: string) => void, finishX?: number, start: SprintStart = 'standing', distanceM = 10,
+  options: FrameOptions = {}): Promise<SprintSample[]> {
   const check = () => { if (signal.aborted) throw new DOMException('中止', 'AbortError'); };
   check();
   if (!SequentialRecordingDecoder.isAvailable()) throw new Error('このブラウザではフレーム解析ができません。対応する最新のブラウザでお試しください。');
@@ -41,12 +53,12 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
   };
   const source = document.createElement('canvas'), ctx = source.getContext('2d');
   if (!ctx) throw new Error('映像処理を開始できません。');
-  const processor = new SprintFrameProcessor(source, model, watching, startX, finishX, start, distanceM);
+  const processor = new SprintFrameProcessor(source, model, watching, startX, finishX, start, distanceM, false, options.fromBlocks);
   const abort = () => decoder.dispose();
   signal.addEventListener('abort', abort, { once: true });
   let lastYield = performance.now(), lastUpdate = -Infinity;
   const span = d.frames.at(-1)!.pts - d.frames[0].pts, fps = span > 0 ? (d.frames.length - 1) / span : ANALYSIS_FPS;
-  const stride = Math.max(1, Math.round(fps / ANALYSIS_FPS)), idleStride = Math.max(stride, Math.round(fps / IDLE_FPS));
+  const stride = Math.max(1, Math.round(fps / (options.maxFps ?? ANALYSIS_FPS))), idleStride = Math.max(stride, Math.round(fps / IDLE_FPS));
   let nextAnalysed = 0;
   try {
     await untilAborted(model.initialize(signal, message => progress(0, message)), signal); check();
@@ -66,7 +78,8 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
       ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, w, h);
       ctx.translate(w / 2, h / 2); ctx.rotate(rotation * Math.PI / 180);
       ctx.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2); ctx.setTransform(1, 0, 0, 1, 0, 0);
-      await processor.process(w, h, frame);
+      const selected = await processor.process(w, h, frame);
+      options.onSelected?.(frame, selected, w, h);
       if (processor.idle) nextAnalysed = frame.frameIndex + idleStride;
       const now = performance.now();
       if (now - lastUpdate > 100) { progress((frame.frameIndex + 1) / d.frames.length, '選手と脚の動きを解析しています。'); lastUpdate = now; }
@@ -74,4 +87,17 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
     }
     progress(1, '解析が終わりました。'); return processor.samples;
   } finally { signal.removeEventListener('abort', abort); decoder.dispose(); model.dispose(); (watcher as MobileCMJPose | null)?.dispose(); source.width = 0; }
+}
+
+/** A crouch start: the athlete's pose in every frame (up to CROUCH_FPS), followed
+ * from the start line as in the standing 10 m. */
+export async function measureCrouch(file: File, startX: number, signal: AbortSignal,
+  progress: (fraction: number, message: string) => void): Promise<{ frames: CrouchFrame[]; width: number; height: number }> {
+  const frames: CrouchFrame[] = [];
+  let width = 0, height = 0;
+  await measureSprint(file, startX, signal, progress, undefined, 'standing', 10, { maxFps: CROUCH_FPS, fromBlocks: true, onSelected: (frame, selected, w, h) => {
+    width = w; height = h;
+    frames.push({ frame: frame.frameIndex, pts: frame.pts, pose: selected.length === 33 ? selected.map(p => ({ x: p.x, y: p.y, visibility: p.visibility })) : null });
+  } });
+  return { frames, width, height };
 }

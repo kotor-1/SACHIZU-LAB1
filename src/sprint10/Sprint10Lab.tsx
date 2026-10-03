@@ -6,6 +6,7 @@ import { measureSprintLive, type LiveSprintRun, type LiveSprintStatus } from './
 import { cameraConstraints } from '../cmj/camera-geometry';
 import type { SprintStart } from './tracker';
 import StrideResults from './StrideResults';
+import CrouchLab from './CrouchLab';
 import './sprint10.css';
 
 type Gate = 'start' | 'finish';
@@ -14,9 +15,10 @@ const GATE_LABELS: Record<SprintStart, Record<Gate, string>> = {
   standing: { start: 'スタート', finish: 'ゴール' }, flying: { start: '入口', finish: '出口' },
 };
 /** Standing 10 m from the start line, or a known section the athlete runs through at speed. */
-const MODES: { id: SprintStart; label: string; hint: string }[] = [
+const MODES: { id: SprintStart | 'crouch'; label: string; hint: string }[] = [
   { id: 'standing', label: 'スタート10m', hint: 'スタートラインから10m。選手は走り出す前から映っている。' },
   { id: 'flying', label: '最高速度区間', hint: '例：50〜60m。選手は走った状態で画面に入ってくる。' },
+  { id: 'crouch', label: 'クラウチングスタート', hint: 'ブロックから5歩目まで。各歩の接地・滞空・ピッチと姿勢。' },
 ];
 const DEFAULT_GATES: Record<SprintStart, [number, number]> = { standing: [.12, .88], flying: [.2, .8] };
 /** One ◀/▶ tap moves a line by 0.2% of the frame width. */
@@ -27,7 +29,7 @@ export default function Sprint10Lab() {
   const resultCard = useRef<HTMLElement>(null), showResult = useRef(false);
   const [file, setFile] = useState<File | null>(null), [url, setUrl] = useState('');
   const [start, setStart] = useState(.12), [finish, setFinish] = useState(.88);
-  const [mode, setMode] = useState<SprintStart>('standing');
+  const [mode, setMode] = useState<SprintStart>('standing'), [crouch, setCrouch] = useState(false);
   // Flying section: where it begins on the track (label only) and its real length (the scale).
   const [sectionStartM, setSectionStartM] = useState(50), [sectionLengthM, setSectionLengthM] = useState(10);
   const distanceM = mode === 'flying' ? sectionLengthM : 10;
@@ -86,8 +88,11 @@ export default function Sprint10Lab() {
     cancel(); setFile(next); setUrl(next ? URL.createObjectURL(next) : ''); setReady(false);
     setSamples(null); setConfirmed(false); setMessage(''); setProgress(0); setReview('');
   }
-  function changeMode(next: SprintStart) {
-    if (busy || next === mode) return;
+  function changeMode(next: SprintStart | 'crouch') {
+    if (busy) return;
+    if (next === 'crouch') { if (!crouch) { cancel(); stopCamera(); setCrouch(true); } return; }
+    setCrouch(false);
+    if (next === mode) return;
     setMode(next); setStart(DEFAULT_GATES[next][0]); setFinish(DEFAULT_GATES[next][1]);
     // Subject acquisition differs between modes: a fresh run is required.
     setConfirmed(false); setSamples(null); setReview('');
@@ -138,10 +143,13 @@ export default function Sprint10Lab() {
   const specific = result ? result.warnings.filter(w => !SPRINT10_NOTES.includes(w)) : [];
   return <main className="sprint10">
     <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
-    <header><p className="sprint10-eyebrow">SPRINT / {mode === 'flying' ? 'MAX VELOCITY SECTION' : '10 METRES'}</p><h1>{mode === 'flying' ? '最高速度区間の解析' : '10m スプリント解析'}</h1>
-      <p>2本のラインを設定するだけで、通過時間・歩数・ピッチ・歩幅を解析します。</p></header>
-    <div className="sprint10-modes" role="group" aria-label="解析の種類">{MODES.map(m => <button key={m.id} type="button" aria-pressed={mode === m.id} disabled={busy}
-      className={mode === m.id ? 'is-selected' : ''} onClick={() => changeMode(m.id)}><strong>{m.label}</strong><span>{m.hint}</span></button>)}</div>
+    <header><p className="sprint10-eyebrow">SPRINT / {crouch ? 'CROUCH START' : mode === 'flying' ? 'MAX VELOCITY SECTION' : '10 METRES'}</p>
+      <h1>{crouch ? 'クラウチングスタートの解析' : mode === 'flying' ? '最高速度区間の解析' : '10m スプリント解析'}</h1>
+      <p>{crouch ? 'ブロックから最大5歩目まで、各歩の接地・滞空・ピッチと姿勢の角度を解析します。' : '2本のラインを設定するだけで、通過時間・歩数・ピッチ・歩幅を解析します。'}</p></header>
+    <div className="sprint10-modes" role="group" aria-label="解析の種類">{MODES.map(m => { const selected = m.id === 'crouch' ? crouch : !crouch && mode === m.id;
+      return <button key={m.id} type="button" aria-pressed={selected} disabled={busy}
+        className={selected ? 'is-selected' : ''} onClick={() => changeMode(m.id)}><strong>{m.label}</strong><span>{m.hint}</span></button>; })}</div>
+    {crouch ? <CrouchLab /> : <>
     {mode === 'flying' && <div className="sprint10-section"><label>区間の入口<input type="number" inputMode="numeric" min={0} max={400} step={5} value={sectionStartM} disabled={busy}
         onChange={e => setSectionStartM(Math.max(0, Math.min(400, Math.round(Number(e.target.value) || 0))))} /><span>m地点</span></label>
       <label>区間の長さ<input type="number" inputMode="decimal" min={1} max={100} step={1} value={sectionLengthM} disabled={busy}
@@ -224,6 +232,7 @@ export default function Sprint10Lab() {
         </div><p>ボタンでその時刻へ移動します。遊脚が支持脚を追い越す瞬間で、接地のコマではありません。</p></details>
       <button onClick={save}>結果と判定データを保存（JSON）</button>
     </section>}
+    </>}
     <footer>解析v10 · 動画はこの端末内で処理します。全フレームの解析時間は端末性能により変わります。2本のラインだけで遠近やカメラの揺れを補正することはできません。</footer>
   </main>;
 }
