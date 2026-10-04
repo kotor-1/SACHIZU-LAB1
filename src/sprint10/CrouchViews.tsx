@@ -31,7 +31,8 @@ async function seekTo(v: HTMLVideoElement, t: number) {
 
 /** A picture of each phase: the athlete cut out of its frame, the skeleton and
  * the measured angles with their values. Made from a hidden copy of the video. */
-export function PhaseFigures({ url, frames, phases, onShow }: { url: string; frames: readonly CrouchFrame[]; phases: Phase[]; onShow: (p: Phase) => void }) {
+export function PhaseFigures({ url, frames, phases, onShow, guides = {} }: { url: string; frames: readonly CrouchFrame[]; phases: Phase[];
+  onShow: (p: Phase) => void; guides?: Record<string, string> }) {
   const [images, setImages] = useState<Record<string, string>>({}), [failed, setFailed] = useState(false);
   const interval = useMemo(() => frameInterval(frames), [frames]);
   useEffect(() => {
@@ -71,6 +72,7 @@ export function PhaseFigures({ url, frames, phases, onShow }: { url: string; fra
     {images[p.key] ? <img src={images[p.key]} alt={`${p.label}の骨格と角度`} />
       : <div className="sprint10-phase-wait">{failed ? '画像を作れませんでした' : '画像を作成しています…'}</div>}
     <p>{p.marks.length ? p.marks.map(markText).join(' · ') : '角度を測れませんでした'}</p>
+    {guides[p.key] && <small className="sprint10-guide">{guides[p.key]}</small>}
     <button type="button" onClick={() => onShow(p)}>スロー再生でこの瞬間を見る</button>
   </li>)}</ol>;
 }

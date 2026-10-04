@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { analyzeCrouchStart, MAX_STEPS, type CrouchFrame, type CrouchPoint } from '../src/sprint10/crouch';
 import { crouchPhases, drawCrouchFigure, figureView, markText } from '../src/sprint10/crouch-figure';
 import { frameInterval, insideFrame } from '../src/sprint10/CrouchViews';
+import { crouchAdvice, GUIDE } from '../src/sprint10/crouch-advice';
+import type { CrouchResult, StepResult } from '../src/sprint10/crouch';
 
 // A synthetic crouch start filmed from the side at 240 fps, 1920x1080, running to the right.
 // Leg length about 240 px; ground at y = 800 px. Set until 0.5 s; the rear foot (left landmarks)
@@ -131,6 +133,52 @@ describe('crouch start pictures', () => {
     const frames = startFrames();
     expect(frameInterval(frames)).toBeCloseTo(1 / 240, 9);
     expect(insideFrame(.5, 1 / 240)).toBeGreaterThan(.5); expect(insideFrame(.5, 1 / 240)).toBeLessThan(.5 + 1 / 240);
+  });
+});
+
+// A result with chosen values, for the advice and the graphs.
+function made({ front = 95, rear = 125, flight = .05, contacts = [.18, .16, .14], flights = [.05, .08, null], shanks = [45, 38, 30], trunks = [50, 47, 45] }:
+  { front?: number | null; rear?: number | null; flight?: number | null; contacts?: (number | null)[]; flights?: (number | null)[];
+    shanks?: (number | null)[]; trunks?: (number | null)[] } = {}): CrouchResult {
+  const steps: StepResult[] = contacts.map((c, i) => ({ step: i + 1, contactSeconds: c, flightSeconds: flights[i] ?? null, stepSeconds: flights[i] != null && c != null ? c + flights[i]! : null,
+    pitch: flights[i] != null && c != null ? 1 / (c + flights[i]!) : null, shankAngle: shanks[i] ?? null, trunkAngle: trunks[i] ?? null, side: (i % 2) as 0 | 1 }));
+  return { version: 'test', reason: null, direction: 1, blocks: null, contacts: [], steps, firstFlight: flight, notes: [],
+    set: { frame: 1, pts: .1, trunkAngle: 110, frontKnee: front, rearKnee: rear, frontSide: 1 }, blockClearance: null };
+}
+describe('crouch start advice', () => {
+  it('says where values sit against the general guides', () => {
+    const good = crouchAdvice(made());
+    expect(good.every(a => a.level === 'good')).toBe(true);
+    expect(good.map(a => a.topic)).toEqual(['構え', '構え', 'ブロックから1歩目', '1歩目', '接地時間', '滞空時間', '脛', '体幹']);
+    expect(good[0].text).toContain(`目安${GUIDE.frontKnee[0]}〜${GUIDE.frontKnee[1]}°の範囲`);
+    const off = crouchAdvice(made({ front: 75, rear: 150, flight: .09 }));
+    expect(off.slice(0, 3).map(a => a.level)).toEqual(['check', 'check', 'check']);
+    expect(off[0].text).toContain('深く曲がって'); expect(off[1].text).toContain('伸びて'); expect(off[2].text).toContain('長め');
+    // Just outside the range but within the error: near, not a warning.
+    const near = crouchAdvice(made({ front: 103 }))[0];
+    expect(near.level).toBe('good'); expect(near.text).toContain('近い値');
+  });
+  it('flags steps against the usual trend, beyond the error', () => {
+    const r = crouchAdvice(made({ contacts: [.18, .16, .19], flights: [.07, .04, null], shanks: [40, 46, -5], trunks: [50, 38, 45] }));
+    const of = (topic: string) => r.filter(a => a.topic === topic);
+    expect(of('接地時間')[0]).toMatchObject({ level: 'check' }); expect(of('接地時間')[0].text).toContain('3歩目');
+    expect(of('滞空時間')[0]).toMatchObject({ level: 'check' }); expect(of('滞空時間')[0].text).toContain('2歩目');
+    expect(of('脛').map(a => a.level)).toEqual(['check', 'check']);
+    expect(of('脛')[1].text).toContain('3歩目'); expect(of('脛')[1].text).toContain('後ろへ傾いた');
+    expect(of('体幹')[0].text).toContain('2歩目：体幹が急に起きて'); expect(of('体幹')[0].text).toContain('3歩目：体幹が前の歩より前に倒れて');
+    // Small differences (within the error) are not flagged.
+    const calm = crouchAdvice(made({ contacts: [.18, .17, .18], flights: [.06, .045, null], shanks: [40, 42, 30], trunks: [50, 42, 46] }));
+    expect(calm.filter(a => a.topic !== '構え').every(a => a.level === 'good')).toBe(true);
+  });
+  it('draws a graph of each step quantity, with round ticks around the values', async () => {
+    const { ticks, default: CrouchCharts } = await import('../src/sprint10/CrouchCharts');
+    expect(ticks(32, 49).at(-1)).toBeGreaterThanOrEqual(49); expect(ticks(32, 49)[0]).toBeLessThanOrEqual(32);
+    const same = ticks(4.44, 4.44); expect(same[0]).toBeLessThan(4.44); expect(same.at(-1)).toBeGreaterThan(4.44);
+    const { renderToStaticMarkup } = await import('react-dom/server');
+    const { createElement } = await import('react');
+    const html = renderToStaticMarkup(createElement(CrouchCharts, { result: made() }));
+    for (const text of ['接地時間・滞空時間', 'ピッチ', '接地時の角度', 'トップ選手の例（接地）', '1歩目 0.180']) expect(html).toContain(text);
+    expect(renderToStaticMarkup(createElement(CrouchCharts, { result: made({ contacts: [.18], flights: [null], shanks: [40], trunks: [50] }) }))).toContain('2歩以上');
   });
 });
 

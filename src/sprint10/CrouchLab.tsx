@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
 import { analyzeCrouchStart, CROUCH_VERSION, MAX_STEPS, type CrouchFrame, type CrouchResult } from './crouch';
 import { measureCrouch } from './recording';
+import { useFirstFrame } from './first-frame';
 import { crouchPhases, type Phase } from './crouch-figure';
+import { crouchAdvice, GUIDE } from './crouch-advice';
+import CrouchCharts from './CrouchCharts';
 import { CrouchReplay, frameInterval, insideFrame, PhaseFigures, type ReplayEvent } from './CrouchViews';
 
 /** One ◀/▶ tap moves the line by 0.2% of the frame width. */
@@ -17,7 +20,9 @@ export default function CrouchLab() {
   const video = useRef<HTMLVideoElement>(null), replay = useRef<HTMLVideoElement>(null), replayCard = useRef<HTMLDivElement>(null);
   const owner = useRef<AbortController | null>(null), resultCard = useRef<HTMLElement>(null);
   const [file, setFile] = useState<File | null>(null), [url, setUrl] = useState('');
-  const [ready, setReady] = useState(false), [busy, setBusy] = useState(false), [progress, setProgress] = useState(0);
+  const [loaded, setLoaded] = useState(false), [busy, setBusy] = useState(false), [progress, setProgress] = useState(0);
+  // The line can be placed on the first frame before the video is played.
+  const still = useFirstFrame(url), ready = loaded || !!still;
   const [start, setStart] = useState(.3);
   const [message, setMessage] = useState('');
   const [measured, setMeasured] = useState<{ frames: CrouchFrame[]; width: number; height: number } | null>(null);
@@ -25,6 +30,7 @@ export default function CrouchLab() {
   useEffect(() => () => { owner.current?.abort(); owner.current = null; }, []);
   const result: CrouchResult | null = useMemo(() => measured ? analyzeCrouchStart(measured.frames, { width: measured.width, height: measured.height }) : null, [measured]);
   const phases: Phase[] = useMemo(() => result && !result.reason ? crouchPhases(result) : [], [result]);
+  const advice = useMemo(() => result && !result.reason ? crouchAdvice(result) : [], [result]);
   const events: ReplayEvent[] = useMemo(() => !result || result.reason ? [] : [
     ...(result.set ? [{ label: '構え', pts: result.set.pts }] : []),
     ...(result.blockClearance ? [{ label: 'ブロックを離れる', pts: result.blockClearance.pts }] : []),
@@ -34,7 +40,7 @@ export default function CrouchLab() {
 
   function changeFile(next: File | null) {
     owner.current?.abort(); owner.current = null; setBusy(false);
-    setFile(next); setUrl(next ? URL.createObjectURL(next) : ''); setReady(false); setMeasured(null); setMessage('');
+    setFile(next); setUrl(next ? URL.createObjectURL(next) : ''); setLoaded(false); setMeasured(null); setMessage('');
   }
   function move(x: number) { if (!busy) setStart(Math.max(.01, Math.min(.99, x))); }
   function drag(event: React.PointerEvent<HTMLButtonElement>) {
@@ -77,8 +83,10 @@ export default function CrouchLab() {
     <section className="sprint10-card"><h2>2　スタートラインを合わせる</h2>
       <p>線を、走路のスタートラインに合わせます。選手はこの線の近くの人として選ばれます。</p>
       <div className="sprint10-player">
-        <video ref={video} src={url || undefined} controls playsInline preload="auto" onLoadedData={() => setReady(true)}
-          onError={() => { setReady(false); setMessage('この動画を再生できません。対応形式を確認してください。'); }} />
+        <video ref={video} src={url || undefined} controls playsInline preload="auto" poster={still?.image}
+          style={still ? { aspectRatio: `${still.width} / ${still.height}` } : undefined}
+          onLoadedMetadata={() => setLoaded(true)} onLoadedData={() => setLoaded(true)}
+          onError={() => { setLoaded(false); setMessage('この動画を再生できません。対応形式を確認してください。'); }} />
         {ready && <div className="sprint10-gates"><button type="button" role="slider"
           aria-label="スタートラインの線" aria-valuemin={1} aria-valuemax={99} aria-valuenow={Math.round(start * 100)}
           className={`sprint10-gate start${start < .1 ? ' at-left' : start > .9 ? ' at-right' : ''}`}
@@ -107,9 +115,17 @@ export default function CrouchLab() {
         <div className="sprint10-metrics">{[['解析した歩数', `${result.contacts.length}`, '歩'],
           ['ブロックを離れてから1歩目の接地まで', seconds(result.firstFlight), '秒']].map(([label, v, unit]) =>
           <div key={label}><span>{label}</span><strong>{v}</strong><small>{unit}</small></div>)}</div>
+        {advice.length > 0 && <><h3>見方のポイント</h3>
+          <ul className="sprint10-advice" aria-label="見方のポイント">{advice.map(a => <li key={a.topic + a.text} className={a.level}>
+            <span aria-hidden="true">{a.level === 'good' ? '✓' : '!'}</span><div><strong>{a.topic}</strong>{a.text}</div></li>)}</ul>
+          <p className="sprint10-hint">目安は短距離選手の研究で報告された一般的な値で、選手ごとの目標ではありません（出典は「数値の見方」）。</p></>}
         <h3>局面ごとの姿勢</h3>
         <p className="sprint10-hint">オレンジ：体幹（腰から肩）、水色：脛（足首から膝）、ピンク：前膝、紫：後膝。点線は鉛直で、弧が測った角度です。</p>
-        {phases.length ? <PhaseFigures url={url} frames={measured!.frames} phases={phases} onShow={show} /> : <p>角度を測れる局面がありませんでした。</p>}
+        {phases.length ? <PhaseFigures url={url} frames={measured!.frames} phases={phases} onShow={show}
+          guides={{ set: `目安：前膝 ${GUIDE.frontKnee[0]}〜${GUIDE.frontKnee[1]}°・後膝 ${GUIDE.rearKnee[0]}〜${GUIDE.rearKnee[1]}°` }} /> : <p>角度を測れる局面がありませんでした。</p>}
+        <h3>歩ごとの変化</h3>
+        <p className="sprint10-hint">加速では、接地時間は歩ごとに短く、滞空時間は長くなり、接地時の脛と体幹は歩ごとに起きていきます。点線はトップ選手1人の例です。</p>
+        <CrouchCharts result={result} />
         <h3>1歩ごとの時間</h3>
         <ol className="sprint10-strides" aria-label="1歩ごとの値">{result.steps.map(s => <li key={s.step}>
           <div><strong>{s.step}歩目</strong></div>
@@ -124,7 +140,9 @@ export default function CrouchLab() {
         <details className="sprint10-more"><summary>数値の見方</summary>
           <p>接地は、つま先が床の高さまで下りた時、離地はつま先が床から離れた時を、骨格の動きから判定しています。真横から1秒240コマで撮影した3人の検証動画では、映像で見た瞬間との差は最大でおよそ1/60秒でした。</p>
           <p>ピッチは接地から次の接地までの時間の逆数です。角度は鉛直を0°とし、進行方向へ倒れる向きを正とします（脛は足首から膝、体幹は腰から肩）。膝は伸び切った状態が180°です。</p>
-          <p>骨格の推定が崩れたコマの角度は出しません。</p></details>
+          <p>骨格の推定が崩れたコマの角度は出しません。</p>
+          <p>目安の出典：構えの膝はCavedonら（2019、地方〜全国レベルの短距離選手42人：前膝90〜92°、後膝112〜117°）とBezodisら（2019、総説：前膝91〜99°、後膝117〜136°）。ブロックを離れてから1歩目の接地までは0.045±0.025秒（Bezodisら 2019）。1歩目の接地はトップ選手の例0.177秒（Čoh・Tomazin 2006、100m 10.15秒の選手）、ダイヤモンドリーグの選手の平均0.210秒（男子）・0.225秒（女子）（Bezodisら 2019）。グラフの点線はČoh・Tomazin（2006）の1〜4歩目。歩ごとに脛と体幹が起きていくことはDonaldsonら（2022）。</p>
+          <p>この解析の時間はコマ単位（1/240秒）で判定しているため、0.01〜0.02秒の差は誤差の範囲です。ブロックを離れる瞬間は平均で約0.01秒早めに判定するため、1歩目の接地までの時間は少し長めに出ます。</p></details>
       </>}
       <button onClick={save}>結果を保存（JSON）</button>
     </section>}

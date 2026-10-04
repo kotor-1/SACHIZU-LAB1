@@ -35,3 +35,12 @@
 .sprint10 .sprint10-replay-controls button[aria-pressed=true]{background:#173a36;color:#fff;border-color:#173a36}
 .sprint10-check{display:inline-flex;align-items:center;gap:6px;min-height:44px}
 .sprint10-replay .sprint10-events{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+.sprint10-advice{list-style:none;padding:0;margin:0;display:grid;gap:8px}.sprint10-advice li{display:flex;gap:10px;align-items:flex-start;border-radius:10px;padding:10px 12px;background:#eef7f1;line-height:1.55}
+.sprint10-advice li.check{background:#fff5e2}.sprint10-advice li>span{flex:none;display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#127a55;color:#fff;font-weight:800;font-size:14px}
+.sprint10-advice li.check>span{background:#c77700}.sprint10-advice strong{display:block;font-size:13px;color:#3f5f55}
+.sprint10-guide{color:#557468}
+.sprint10-charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px}
+.sprint10-chart{margin:0;border:1px solid #d9e5df;border-radius:12px;padding:10px;background:#fff}.sprint10-chart figcaption{font-weight:700;margin-bottom:4px}.sprint10-chart figcaption small{font-weight:400;color:#557468}
+.sprint10-chart svg{display:block;width:100%;height:auto;overflow:visible}.sprint10-chart text{font-size:11px;fill:#557468}.sprint10-chart text.value{font-size:11px;font-weight:700}
+.sprint10-chart .grid{stroke:#e3ece8;stroke-width:1}
+.sprint10-legend{list-style:none;display:flex;flex-wrap:wrap;gap:4px 14px;padding:0;margin:6px 0 0;font-size:12px;color:#3f5f55}.sprint10-legend li{display:flex;align-items:center;gap:6px}.sprint10-legend span{display:inline-block;width:22px}

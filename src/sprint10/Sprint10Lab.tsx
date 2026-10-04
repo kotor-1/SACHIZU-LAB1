@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
 import { analyzeSprint, SPRINT10_ANALYSIS_VERSION, SPRINT10_NOTES, type SprintSample } from './analysis';
 import { measureSprint } from './recording';
+import { useFirstFrame } from './first-frame';
 import { measureSprintLive, type LiveSprintRun, type LiveSprintStatus } from './live';
 import { cameraConstraints } from '../cmj/camera-geometry';
 import type { SprintStart } from './tracker';
@@ -36,11 +37,13 @@ export default function Sprint10Lab() {
   const sectionLabel = mode === 'flying' ? `${sectionStartM}〜${sectionStartM + sectionLengthM}m区間` : '10m';
   const GATE_LABEL = GATE_LABELS[mode];
   const [confirmed, setConfirmed] = useState(false);
-  const [ready, setReady] = useState(false), [busy, setBusy] = useState(false), [progress, setProgress] = useState(0);
+  const [loaded, setReady] = useState(false), [busy, setBusy] = useState(false), [progress, setProgress] = useState(0);
   const [message, setMessage] = useState(''), [samples, setSamples] = useState<SprintSample[] | null>(null);
   const [review, setReview] = useState('');
   // Live camera: the stream stays on while runs are measured one after another.
   const [source, setSource] = useState<'file' | 'camera'>('file');
+  // A chosen video's lines can be placed on its first frame before it is played.
+  const still = useFirstFrame(source === 'file' ? url : ''), ready = loaded || (source === 'file' && !!still);
   const stream = useRef<MediaStream | null>(null);
   const [cameraOn, setCameraOn] = useState(false);
   const [runs, setRuns] = useState<LiveSprintRun[]>([]), [liveStatus, setLiveStatus] = useState<LiveSprintStatus | null>(null);
@@ -176,7 +179,8 @@ export default function Sprint10Lab() {
         : 'スタートの線は、選手の立ち位置より少し後ろに置いてください。'}</p>
       <div className="sprint10-player">
         <video ref={video} src={source === 'file' ? url || undefined : undefined} controls={source === 'file'} muted={source === 'camera'} playsInline preload="auto"
-          onLoadedData={() => setReady(true)} onError={() => { if (source === 'file') { setReady(false); setMessage('この動画を再生できません。対応形式を確認してください。'); } }} />
+          poster={source === 'file' ? still?.image : undefined} style={source === 'file' && still ? { aspectRatio: `${still.width} / ${still.height}` } : undefined}
+          onLoadedMetadata={() => { if (source === 'file') setReady(true); }} onLoadedData={() => setReady(true)} onError={() => { if (source === 'file') { setReady(false); setMessage('この動画を再生できません。対応形式を確認してください。'); } }} />
         {ready && <div className="sprint10-gates">{(['start', 'finish'] as const).map(which => <button key={which} type="button" role="slider"
           aria-label={`${GATE_LABEL[which]}ライン`} aria-valuemin={1} aria-valuemax={99} aria-valuenow={Math.round(position(which) * 100)}
           // Near a frame edge the label sits beside the line, inside the picture.
