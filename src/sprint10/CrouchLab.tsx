@@ -2,31 +2,39 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
 import { analyzeCrouchStart, CROUCH_VERSION, MAX_STEPS, type CrouchFrame, type CrouchResult } from './crouch';
 import { measureCrouch } from './recording';
+import { crouchPhases, type Phase } from './crouch-figure';
+import { CrouchReplay, frameInterval, insideFrame, PhaseFigures, type ReplayEvent } from './CrouchViews';
 
 /** One ◀/▶ tap moves the line by 0.2% of the frame width. */
 const NUDGE = .002;
 const seconds = (v: number | null | undefined, digits = 3) => v == null ? '—' : v.toFixed(digits);
 const value = (v: number | null | undefined, digits = 2) => v == null ? '—' : v.toFixed(digits);
-const angle = (v: number | null | undefined) => v == null ? '—' : `${Math.round(v)}°`;
 
 /** Crouch start from the blocks to the fifth step at most, filmed from the side.
  * Motion only: times and angles, nothing that needs a distance (the user,
  * 2026-10-03: 「距離が必要なものは無しにして動作解析に徹底する」). */
 export default function CrouchLab() {
-  const video = useRef<HTMLVideoElement>(null), owner = useRef<AbortController | null>(null), resultCard = useRef<HTMLElement>(null);
+  const video = useRef<HTMLVideoElement>(null), replay = useRef<HTMLVideoElement>(null), replayCard = useRef<HTMLDivElement>(null);
+  const owner = useRef<AbortController | null>(null), resultCard = useRef<HTMLElement>(null);
   const [file, setFile] = useState<File | null>(null), [url, setUrl] = useState('');
   const [ready, setReady] = useState(false), [busy, setBusy] = useState(false), [progress, setProgress] = useState(0);
   const [start, setStart] = useState(.3);
-  const [message, setMessage] = useState(''), [review, setReview] = useState('');
+  const [message, setMessage] = useState('');
   const [measured, setMeasured] = useState<{ frames: CrouchFrame[]; width: number; height: number } | null>(null);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   useEffect(() => () => { owner.current?.abort(); owner.current = null; }, []);
   const result: CrouchResult | null = useMemo(() => measured ? analyzeCrouchStart(measured.frames, { width: measured.width, height: measured.height }) : null, [measured]);
+  const phases: Phase[] = useMemo(() => result && !result.reason ? crouchPhases(result) : [], [result]);
+  const events: ReplayEvent[] = useMemo(() => !result || result.reason ? [] : [
+    ...(result.set ? [{ label: '構え', pts: result.set.pts }] : []),
+    ...(result.blockClearance ? [{ label: 'ブロックを離れる', pts: result.blockClearance.pts }] : []),
+    ...result.contacts.flatMap(c => [...(c.touchdown !== null ? [{ label: `${c.index}歩目の接地`, pts: c.touchdown }] : []),
+      ...(c.toeOff !== null ? [{ label: `${c.index}歩目の離地`, pts: c.toeOff }] : [])])], [result]);
   useEffect(() => { if (result) resultCard.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }); }, [measured]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   function changeFile(next: File | null) {
     owner.current?.abort(); owner.current = null; setBusy(false);
-    setFile(next); setUrl(next ? URL.createObjectURL(next) : ''); setReady(false); setMeasured(null); setMessage(''); setReview('');
+    setFile(next); setUrl(next ? URL.createObjectURL(next) : ''); setReady(false); setMeasured(null); setMessage('');
   }
   function move(x: number) { if (!busy) setStart(Math.max(.01, Math.min(.99, x))); }
   function drag(event: React.PointerEvent<HTMLButtonElement>) {
@@ -46,9 +54,10 @@ export default function CrouchLab() {
       if (!control.signal.aborted) setMessage(e instanceof Error ? e.message : String(e));
     } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
   }
-  function seek(pts: number, label: string) {
-    const v = video.current; if (!v) return;
-    v.pause(); v.currentTime = pts; setReview(`${label}（${pts.toFixed(3)}秒）`);
+  /** A phase in the slow replay: paused on its frame, scrolled into view. */
+  function show(p: Phase) {
+    const v = replay.current; if (!v) return;
+    v.pause(); v.currentTime = insideFrame(p.pts, measured ? frameInterval(measured.frames) : 1 / 240); replayCard.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
   }
   function save() {
     if (!result) return;
@@ -79,7 +88,6 @@ export default function CrouchLab() {
           onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); move(start + (e.key === 'ArrowLeft' ? -NUDGE : NUDGE)); } }}>
           <span>START</span></button></div>}
       </div>
-      {review && <p aria-live="polite">確認中：{review}</p>}
       <div className="sprint10-gate-controls"><div className="sprint10-gate-row start">
         <span>スタートライン</span>
         <button type="button" aria-label="スタートラインを左へ" disabled={!ready || busy} onClick={() => move(start - NUDGE)}>◀</button>
@@ -99,24 +107,20 @@ export default function CrouchLab() {
         <div className="sprint10-metrics">{[['解析した歩数', `${result.contacts.length}`, '歩'],
           ['ブロックを離れてから1歩目の接地まで', seconds(result.firstFlight), '秒']].map(([label, v, unit]) =>
           <div key={label}><span>{label}</span><strong>{v}</strong><small>{unit}</small></div>)}</div>
+        <h3>局面ごとの姿勢</h3>
+        <p className="sprint10-hint">オレンジ：体幹（腰から肩）、水色：脛（足首から膝）、ピンク：前膝、紫：後膝。点線は鉛直で、弧が測った角度です。</p>
+        {phases.length ? <PhaseFigures url={url} frames={measured!.frames} phases={phases} onShow={show} /> : <p>角度を測れる局面がありませんでした。</p>}
+        <h3>1歩ごとの時間</h3>
         <ol className="sprint10-strides" aria-label="1歩ごとの値">{result.steps.map(s => <li key={s.step}>
           <div><strong>{s.step}歩目</strong></div>
           <p>接地 {s.contactSeconds === null ? '—（離地が映っていません）' : `${seconds(s.contactSeconds)}秒`}{s.stepSeconds !== null && ` · 滞空 ${seconds(s.flightSeconds)}秒`}</p>
           {s.stepSeconds === null ? <p>滞空・ピッチ：次の接地が映っていません</p>
             : <p>ピッチ {value(s.pitch)}歩/秒</p>}
-          <p>接地時の脛 {angle(s.shankAngle)} · 体幹 {angle(s.trunkAngle)}</p>
         </li>)}</ol>
-        <div className="sprint10-metrics">{[['構え：体幹の前傾', angle(result.set?.trunkAngle)], ['構え：前膝', angle(result.set?.frontKnee)], ['構え：後膝', angle(result.set?.rearKnee)],
-          ['ブロックを離れる瞬間：体幹の前傾', angle(result.blockClearance?.trunkAngle)], ['ブロックを離れる瞬間：前膝', angle(result.blockClearance?.frontKnee)]].map(([label, v]) =>
-          <div key={label}><span>{label}</span><strong>{v}</strong></div>)}</div>
         {result.notes.map(n => <p className="sprint10-note" key={n}>{n}</p>)}
-        <details className="sprint10-more"><summary>判定した瞬間を動画で確認</summary>
-          <div className="sprint10-events">
-            {result.blockClearance && <button onClick={() => seek(result.blockClearance!.pts, 'ブロックを離れる')}>ブロックを離れる {result.blockClearance.pts.toFixed(3)}秒</button>}
-            {result.contacts.flatMap(c => [
-              c.touchdown !== null && <button key={`td${c.index}`} onClick={() => seek(c.touchdown!, `${c.index}歩目の接地`)}>{c.index}歩目の接地 {c.touchdown.toFixed(3)}秒</button>,
-              c.toeOff !== null && <button key={`to${c.index}`} onClick={() => seek(c.toeOff!, `${c.index}歩目の離地`)}>{c.index}歩目の離地 {c.toeOff.toFixed(3)}秒</button>])}
-          </div><p>ボタンでその時刻へ移動します。</p></details>
+        <div ref={replayCard} className="sprint10-replay"><h3>スロー再生（骨格つき）</h3>
+          <p className="sprint10-hint">1/8は実際の8分の1の速さ（1秒240コマの動画で毎秒30コマ）。判定した瞬間の前後では、測った線と角度を表示します。</p>
+          <CrouchReplay url={url} video={replay} frames={measured!.frames} phases={phases} events={events} /></div>
         <details className="sprint10-more"><summary>数値の見方</summary>
           <p>接地は、つま先が床の高さまで下りた時、離地はつま先が床から離れた時を、骨格の動きから判定しています。真横から1秒240コマで撮影した3人の検証動画では、映像で見た瞬間との差は最大でおよそ1/60秒でした。</p>
           <p>ピッチは接地から次の接地までの時間の逆数です。角度は鉛直を0°とし、進行方向へ倒れる向きを正とします（脛は足首から膝、体幹は腰から肩）。膝は伸び切った状態が180°です。</p>

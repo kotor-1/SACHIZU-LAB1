@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { analyzeCrouchStart, MAX_STEPS, type CrouchFrame, type CrouchPoint } from '../src/sprint10/crouch';
+import { crouchPhases, drawCrouchFigure, figureView, markText } from '../src/sprint10/crouch-figure';
+import { frameInterval, insideFrame } from '../src/sprint10/CrouchViews';
 
 // A synthetic crouch start filmed from the side at 240 fps, 1920x1080, running to the right.
 // Leg length about 240 px; ground at y = 800 px. Set until 0.5 s; the rear foot (left landmarks)
@@ -81,6 +83,54 @@ describe('crouch start (side view)', () => {
   });
   it('says so when the set position is not in the video', () => {
     expect(analyzeCrouchStart(startFrames({ set: false }), { width: W, height: H }).reason).toContain('構え');
+  });
+});
+
+describe('crouch start pictures', () => {
+  it('lists the set, the block clearance and each touchdown with the angles measured there', () => {
+    const r = analyzeCrouchStart(startFrames(), { width: W, height: H }), phases = crouchPhases(r);
+    expect(phases.map(p => p.label)).toEqual(['構え', 'ブロックを離れる瞬間', '1歩目の接地', '2歩目の接地', '3歩目の接地']);
+    const given = (pairs: [string, number | null][]) => pairs.filter(([, v]) => v !== null).map(([label]) => label);
+    expect(phases[0].marks.map(m => m.label)).toEqual(given([['体幹', r.set!.trunkAngle], ['前膝', r.set!.frontKnee], ['後膝', r.set!.rearKnee]]));
+    expect(phases[1].marks.map(m => m.label)).toEqual(given([['体幹', r.blockClearance!.trunkAngle], ['前膝', r.blockClearance!.frontKnee]]));
+    expect(phases[1].marks.length).toBeGreaterThan(0);
+    expect(phases[2].marks.map(markText)).toEqual([`脛 ${Math.round(r.steps[0].shankAngle!)}°`, `体幹 ${Math.round(r.steps[0].trunkAngle!)}°`]);
+    expect(phases[2].frame).toBe(r.contacts[0].touchdownFrame); expect(phases[2].pts).toBe(r.contacts[0].touchdown);
+    // The set's frame is one of the set frames, and the front knee is the front block's leg (the right landmarks here).
+    expect(r.set!.pts).toBeLessThan(.5); expect(r.set!.frontSide).toBe(1);
+    for (const m of phases[0].marks) if (m.kind === 'knee') expect(m.side).toBe(m.label === '前膝' ? 1 : 0);
+    // The first contact is made by the rear foot (left landmarks).
+    expect(r.steps[0].side).toBe(0);
+  });
+  it('cuts the picture around the athlete at the asked shape, inside the frame', () => {
+    const pose = startFrames()[0].pose!, v = figureView(pose, W, H, 4 / 3);
+    expect(v.w / v.h).toBeCloseTo(4 / 3, 6);
+    expect(v.x).toBeGreaterThanOrEqual(0); expect(v.y).toBeGreaterThanOrEqual(0);
+    expect(v.x + v.w).toBeLessThanOrEqual(W + 1e-9); expect(v.y + v.h).toBeLessThanOrEqual(H + 1e-9);
+    for (const k of [11, 23, 27, 31]) { expect(pose[k].x * W).toBeGreaterThan(v.x); expect(pose[k].x * W).toBeLessThan(v.x + v.w); }
+  });
+  it('draws an arc for every angle, and its value only when asked', () => {
+    const r = analyzeCrouchStart(startFrames(), { width: W, height: H }), touchdown = crouchPhases(r)[2];
+    expect(touchdown.marks.length).toBe(2);
+    const pose = startFrames().find(f => f.frame === touchdown.frame)!.pose!;
+    const calls: string[] = [], texts: string[] = [];
+    const ctx = new Proxy({ canvas: { width: 640, height: 480 }, measureText: (t: string) => ({ width: t.length * 10 }), fillText: (t: string) => texts.push(t) } as Record<string, unknown>, {
+      get: (target, key: string) => key in target ? target[key] : (...args: unknown[]) => { calls.push(key); return args; },
+      set: (target, key: string, value) => { target[key] = value; return true; },
+    }) as unknown as CanvasRenderingContext2D;
+    drawCrouchFigure(ctx, pose, p => ({ x: p.x * 640, y: p.y * 480 }), touchdown.marks, 10, true);
+    expect(texts).toEqual(touchdown.marks.map(markText));
+    texts.length = 0; calls.length = 0;
+    drawCrouchFigure(ctx, pose, p => ({ x: p.x * 640, y: p.y * 480 }), touchdown.marks, 10, false);
+    expect(texts).toEqual([]);
+    // Joint dots and the arcs: one arc per mark beyond the dots.
+    const dots = new Set([11, 12, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 13, 14, 15, 16]).size;
+    expect(calls.filter(c => c === 'arc').length).toBe(dots + touchdown.marks.length);
+  });
+  it('steps the replay frame by frame, inside each frame', () => {
+    const frames = startFrames();
+    expect(frameInterval(frames)).toBeCloseTo(1 / 240, 9);
+    expect(insideFrame(.5, 1 / 240)).toBeGreaterThan(.5); expect(insideFrame(.5, 1 / 240)).toBeLessThan(.5 + 1 / 240);
   });
 });
 

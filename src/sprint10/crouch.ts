@@ -31,8 +31,12 @@ export interface StepResult {
   contactSeconds: number | null; flightSeconds: number | null; stepSeconds: number | null; pitch: number | null;
   /** At touchdown: shank (knee ahead of the ankle, +) and trunk (forward lean) angles from vertical, degrees. */
   shankAngle: number | null; trunkAngle: number | null;
+  /** The pose model's side (0 left, 1 right landmarks) of the stance leg at touchdown, for the picture. */
+  side: 0 | 1 | null;
 }
-export interface Posture { frame: number; pts: number; trunkAngle: number | null; frontKnee: number | null; rearKnee: number | null }
+/** Angles at one moment (medians over a few frames); `frame` is the frame shown
+ * for it and `frontSide` the pose model's side of the front leg in that frame. */
+export interface Posture { frame: number; pts: number; trunkAngle: number | null; frontKnee: number | null; rearKnee: number | null; frontSide: 0 | 1 | null }
 export interface CrouchResult {
   version: string; reason: string | null; direction: number;
   set: Posture | null; blockClearance: Posture | null;
@@ -182,7 +186,7 @@ export function analyzeCrouchStart(frames: readonly CrouchFrame[], options: Crou
     const side = td?.pose ? sideNearest(td.pose, c.x / W, W) : null;
     return { step: c.index, contactSeconds, flightSeconds, stepSeconds, pitch: stepSeconds ? 1 / stepSeconds : null,
       shankAngle: td?.pose && side !== null ? shankAngle(td.pose, side, W, H, direction) : null,
-      trunkAngle: td?.pose ? trunkAngle(td.pose, W, H, direction, leg) : null };
+      trunkAngle: td?.pose ? trunkAngle(td.pose, W, H, direction, leg) : null, side };
   });
   if (!base.contacts.length) base.notes.push('ブロックを離れた後の接地が映っていません。');
   const partial = base.contacts.filter(c => c.toeOff === null).map(c => c.index);
@@ -252,12 +256,22 @@ function kneeAngle(pose: CrouchPoint[], side: 0 | 1, W: number, H: number, leg: 
 }
 /** Median angles over `frames`, each given only when at least half of the
  * frames yield it (a collapsed set pose left a few frames, all misread);
- * the front leg is the side whose toe is nearest the front block. */
-function posture(frames: CrouchFrame[], frontX: number, W: number, H: number, direction: number, leg: number, at = frames.at(-1)!): Posture {
-  const values = (get: (f: CrouchFrame, front: 0 | 1) => number | null) => {
-    const v = frames.flatMap(f => { const side = sideNearest(f.pose!, frontX, W); const a = side === null ? null : get(f, side); return a === null ? [] : [a]; });
+ * the front leg is the side whose toe is nearest the front block. The frame
+ * shown is `at`, or else the frame whose angles are nearest the medians. */
+function posture(frames: CrouchFrame[], frontX: number, W: number, H: number, direction: number, leg: number, at?: CrouchFrame): Posture {
+  const angles = (f: CrouchFrame) => {
+    const side = sideNearest(f.pose!, frontX, W);
+    return { side, trunk: trunkAngle(f.pose!, W, H, direction, leg), front: side === null ? null : kneeAngle(f.pose!, side, W, H, leg),
+      rear: side === null ? null : kneeAngle(f.pose!, (1 - side) as 0 | 1, W, H, leg) };
+  };
+  const each = frames.map(angles);
+  const values = (key: 'trunk' | 'front' | 'rear') => {
+    const v = each.flatMap(a => a[key] === null ? [] : [a[key]!]);
     return v.length * 2 >= frames.length ? median(v) : null;
   };
-  return { frame: at.frame, pts: at.pts, trunkAngle: values(f => trunkAngle(f.pose!, W, H, direction, leg)),
-    frontKnee: values((f, side) => kneeAngle(f.pose!, side, W, H, leg)), rearKnee: values((f, side) => kneeAngle(f.pose!, (1 - side) as 0 | 1, W, H, leg)) };
+  const trunk = values('trunk'), front = values('front'), rear = values('rear');
+  const off = (a: ReturnType<typeof angles>) => ([[a.trunk, trunk], [a.front, front], [a.rear, rear]] as const)
+    .reduce((sum, [v, m]) => m === null ? sum : v === null ? Infinity : sum + Math.abs(v - m), 0);
+  const shown = at ?? frames[each.reduce((best, a, i) => off(a) < off(each[best]) ? i : best, each.length - 1)];
+  return { frame: shown.frame, pts: shown.pts, trunkAngle: trunk, frontKnee: front, rearKnee: rear, frontSide: angles(shown).side };
 }
