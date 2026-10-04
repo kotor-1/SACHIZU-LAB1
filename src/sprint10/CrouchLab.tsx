@@ -3,6 +3,7 @@ import { Upload } from 'lucide-react';
 import { analyzeCrouchStart, CROUCH_VERSION, MAX_STEPS, type CrouchFrame, type CrouchResult } from './crouch';
 import { measureCrouch } from './recording';
 import { useFirstFrame } from './first-frame';
+import PlayerBar from './PlayerBar';
 import { crouchPhases, type Phase } from './crouch-figure';
 import { crouchAdvice, GUIDE } from './crouch-advice';
 import CrouchCharts from './CrouchCharts';
@@ -83,7 +84,7 @@ export default function CrouchLab() {
     <section className="sprint10-card"><h2>2　スタートラインを合わせる</h2>
       <p>線を、走路のスタートラインに合わせます。選手はこの線の近くの人として選ばれます。</p>
       <div className="sprint10-player">
-        <video ref={video} src={url || undefined} controls playsInline preload="auto" poster={still?.image}
+        <video ref={video} src={url || undefined} playsInline preload="auto" poster={still?.image}
           style={still ? { aspectRatio: `${still.width} / ${still.height}` } : undefined}
           onLoadedMetadata={() => setLoaded(true)} onLoadedData={() => setLoaded(true)}
           onError={() => { setLoaded(false); setMessage('この動画を再生できません。対応形式を確認してください。'); }} />
@@ -96,6 +97,7 @@ export default function CrouchLab() {
           onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); move(start + (e.key === 'ArrowLeft' ? -NUDGE : NUDGE)); } }}>
           <span>START</span></button></div>}
       </div>
+      {url && <PlayerBar video={video} url={url} disabled={busy} />}
       <div className="sprint10-gate-controls"><div className="sprint10-gate-row start">
         <span>スタートライン</span>
         <button type="button" aria-label="スタートラインを左へ" disabled={!ready || busy} onClick={() => move(start - NUDGE)}>◀</button>

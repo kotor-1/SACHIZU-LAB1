@@ -3,6 +3,7 @@ import { Upload } from 'lucide-react';
 import { analyzeSprint, SPRINT10_ANALYSIS_VERSION, SPRINT10_NOTES, type SprintSample } from './analysis';
 import { measureSprint } from './recording';
 import { useFirstFrame } from './first-frame';
+import PlayerBar from './PlayerBar';
 import { measureSprintLive, type LiveSprintRun, type LiveSprintStatus } from './live';
 import { cameraConstraints } from '../cmj/camera-geometry';
 import type { SprintStart } from './tracker';
@@ -178,7 +179,7 @@ export default function Sprint10Lab() {
         ? '線は画面の端の近くでも構いません。線を越える瞬間に体が画面の端にかかっている場合は、その前後の動きから通過時刻を推定し、結果にその旨を表示します。'
         : 'スタートの線は、選手の立ち位置より少し後ろに置いてください。'}</p>
       <div className="sprint10-player">
-        <video ref={video} src={source === 'file' ? url || undefined : undefined} controls={source === 'file'} muted={source === 'camera'} playsInline preload="auto"
+        <video ref={video} src={source === 'file' ? url || undefined : undefined} muted={source === 'camera'} playsInline preload="auto"
           poster={source === 'file' ? still?.image : undefined} style={source === 'file' && still ? { aspectRatio: `${still.width} / ${still.height}` } : undefined}
           onLoadedMetadata={() => { if (source === 'file') setReady(true); }} onLoadedData={() => setReady(true)} onError={() => { if (source === 'file') { setReady(false); setMessage('この動画を再生できません。対応形式を確認してください。'); } }} />
         {ready && <div className="sprint10-gates">{(['start', 'finish'] as const).map(which => <button key={which} type="button" role="slider"
@@ -190,6 +191,7 @@ export default function Sprint10Lab() {
           onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); move(which, position(which) + (e.key === 'ArrowLeft' ? -NUDGE : NUDGE)); } }}>
           <span>{mode === 'flying' ? GATE_LABEL[which] : which === 'start' ? 'START' : 'FINISH'}</span></button>)}</div>}
       </div>
+      {source === 'file' && url && <PlayerBar video={video} url={url} disabled={busy} />}
       {review && <p aria-live="polite">確認中：{review}</p>}
       <p className="sprint10-hint">線をドラッグして大まかに合わせ、◀ ▶ で少しずつ動かします。</p>
       <div className="sprint10-gate-controls">{(['start', 'finish'] as const).map(which => <div key={which} className={`sprint10-gate-row ${which}`}>

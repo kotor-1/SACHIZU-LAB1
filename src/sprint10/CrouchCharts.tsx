@@ -2,7 +2,7 @@ import type { CrouchResult } from './crouch';
 import { ELITE_EXAMPLE } from './crouch-advice';
 
 interface Series { label: string; color: string; values: (number | null)[]; dashed?: boolean }
-const W = 340, H = 180, LEFT = 44, RIGHT = 14, TOP = 26, BOTTOM = 26;
+const W = 340, H = 180, LEFT = 44, RIGHT = 14, TOP = 26, BOTTOM = 26, INSET = 18;
 
 /** Round ticks (1, 2 or 5 times a power of ten), about four, from below the
  * lowest value to at or above the highest; values all alike are given room. */
@@ -20,7 +20,8 @@ function StepChart({ title, steps, series, digits, unit }: { title: string; step
   const all = series.flatMap(s => s.values.filter((v): v is number => v !== null));
   if (!all.length) return null;
   const marks = ticks(Math.min(...all), Math.max(...all)), lo = marks[0], hi = marks.at(-1)!;
-  const x = (i: number) => LEFT + (steps > 1 ? i / (steps - 1) : .5) * (W - LEFT - RIGHT), y = (v: number) => TOP + (hi - v) / (hi - lo) * (H - TOP - BOTTOM);
+  // The points stand clear of the axis labels (a first value's label ran into them).
+  const x = (i: number) => LEFT + INSET + (steps > 1 ? i / (steps - 1) : .5) * (W - LEFT - RIGHT - 2 * INSET), y = (v: number) => TOP + (hi - v) / (hi - lo) * (H - TOP - BOTTOM);
   const summary = series.filter(s => !s.dashed).map(s => `${s.label}：${s.values.map((v, i) => `${i + 1}歩目 ${v === null ? 'なし' : v.toFixed(digits)}`).join('、')}`).join('。');
   return <figure className="sprint10-chart">
     <figcaption>{title}<small>（{unit}）</small></figcaption>

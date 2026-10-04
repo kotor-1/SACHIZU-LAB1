@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { nearestPoseFrame } from '../cmj/pose-drawing';
 import type { CrouchFrame } from './crouch';
 import { drawCrouchFigure, figureView, markText, type Phase } from './crouch-figure';
+import PlayerBar from './PlayerBar';
 
 /** Pictures are 4:3, drawn at this width (pixels). */
 const FIGURE_W = 720, FIGURE_H = 540;
@@ -13,8 +14,11 @@ export function frameInterval(frames: readonly CrouchFrame[]): number {
   const d = frames.slice(1).map((f, i) => f.pts - frames[i].pts).filter(v => v > 0).sort((a, b) => a - b);
   return d.length ? d[d.length >> 1] : 1 / 240;
 }
-/** A time inside the frame starting at `pts` (seeking to its very start may show the frame before). */
-export const insideFrame = (pts: number, interval: number) => pts + .3 * interval;
+/** The middle of the frame starting at `pts`, to seek to. Safari showed the
+ * frame before when asked for 0.3 of a frame past its start (it rounds seek
+ * times down to 1/600 s); the middle gave the right frame in Safari and Chrome
+ * (2026-10-04: the iPhone's pictures had the skeleton a frame off the body). */
+export const insideFrame = (pts: number, interval: number) => pts + .5 * interval;
 
 function once(target: HTMLVideoElement, event: string, ms: number) {
   return new Promise<void>((resolve, reject) => {
@@ -125,9 +129,10 @@ export function CrouchReplay({ url, video, frames, phases, events }: { url: stri
   function jump(pts: number) { const v = video.current; if (v) { v.pause(); v.currentTime = insideFrame(pts, interval); } }
   return <>
     <div className="sprint10-player">
-      <video ref={video} src={url} controls playsInline muted preload="auto" />
+      <video ref={video} src={url} playsInline muted preload="auto" />
       <canvas ref={canvas} className="sprint10-replay-overlay" aria-label="選手の骨格" />
     </div>
+    <PlayerBar video={video} url={url} />
     <p className="sprint10-replay-caption" aria-live="polite">{shown || ' '}</p>
     <div className="sprint10-replay-controls">
       <div role="group" aria-label="再生の速さ">{RATES.map(([label, r]) =>
