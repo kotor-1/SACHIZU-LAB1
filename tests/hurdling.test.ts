@@ -80,9 +80,11 @@ describe('hurdle clearance (side view)', () => {
     expect(r.overBar.atHurdle!).toBeLessThan(r.overBar.atPeak!);
     expect(r.overBar.atPeak! - r.overBar.atHurdle!).toBeCloseTo(9.81 / 2 * (PEAK_BEFORE * SCALE / SPEED) ** 2, 2);
     expect(r.notes).toEqual([]);
+    // Distances are reference records: the advice gives the ratio, not the centimetres.
     const advice = hurdleAdvice(r).map(a => a.text).join();
-    expect(advice).toContain(`踏切はハードルの ${Math.round(r.distances.takeoff! * 100)}cm 手前`);
-    expect(advice).toContain(`重心最高点はバーの ${Math.round(peakAboveBar * 100)}cm 上`);
+    expect(advice).not.toContain('踏切はハードルの'); expect(advice).not.toContain('バーの');
+    const p = Math.round(r.ratio! * 100);
+    expect(advice).toContain(`踏切：着地の距離の割合 ${p}:${100 - p}`);
   });
   it('reports a hurdle height or lines that do not fit, and goes by gravity without them', () => {
     const wrong = analyzeHurdle(frames(), { width: W, height: H, hurdleX: 960 / W, barY: (GROUND - .762 * SCALE) / H, groundY: GROUND / H, hurdleHeight: 1.067 });
@@ -91,6 +93,10 @@ describe('hurdle clearance (side view)', () => {
     expect(off.notes.join()).toContain('足元の線');
     const none = run();
     expect(none.ruler.source).toBe('gravity'); expect(none.overBar).toEqual({ atPeak: null, atHurdle: null });
+    // The takeoff : landing share needs no scale.
+    const takeoffToe = hipX((CONTACTS[1][0] + CONTACTS[1][1]) / 2) + 25, landingToe = hipX((CONTACTS[2][0] + CONTACTS[2][1]) / 2) + 25;
+    expect(none.ratio).toBeCloseTo((960 - takeoffToe) / (landingToe - takeoffToe), 6);
+    expect(wrong.ratio).toBeCloseTo(none.ratio!, 6);
     expect(none.distances.takeoff!).toBeGreaterThan(1);
   });
   it('gives the moments with their angles, legs chosen by place', () => {

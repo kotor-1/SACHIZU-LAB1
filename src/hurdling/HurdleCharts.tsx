@@ -50,27 +50,27 @@ export function ComPathChart({ result, width, height }: { result: HurdleResult; 
       {above && <text x={X(peak.x)} y={Y(peak.y) - 10} textAnchor={anchor} className="value" style={{ fill: '#b06a00' }}>{above}</text>}
     </svg>
     <ul className="sprint10-legend"><li><span style={{ borderTop: '3px solid #e08a00' }} />重心の放物線</li><li><span style={{ borderTop: '2px dotted #8aa89d' }} />各コマの重心</li><li><span style={{ borderTop: '3px solid #c0392b' }} />ハードル</li></ul>
-    <p className="sprint10-hint">縦軸は地面からの重心の高さ、横軸はハードルからの距離（踏切側がマイナス）。縮尺は{result.ruler.source === 'hurdle' ? 'ハードルの高さ' : '重心の放物線（重力）'}から。</p>
+    <p className="sprint10-hint">縦軸は地面からの重心の高さ、横軸はハードルからの距離（踏切側がマイナス）。縮尺は{result.ruler.source === 'hurdle' ? 'ハードルの高さ' : '重心の放物線（重力）'}から求め、撮影条件で±5%程度ずれます（最高点の位置では1〜3cm）。</p>
   </figure>;
 }
 
 const cm = (m: number | null) => m === null ? '—' : `${Math.round(m * 100)}`;
-/** Distances against the hurdle and the centre of mass over the bar, with the ruler used. */
-export function DistanceTable({ result }: { result: HurdleResult }) {
-  const d = result.distances, a = result.apex, o = result.overBar, r = result.ruler;
-  const ratio = d.takeoff !== null && d.landing !== null && d.takeoff + d.landing > 0 ? Math.round(d.takeoff / (d.takeoff + d.landing) * 100) : null;
+/** Reference records: distances against the hurdle and the centre of mass over the
+ * bar, with the ruler used. Not main measures: the scale drifts with the camera's
+ * pitch and where across the lane the athlete runs (the OptoJump comparison). */
+export function ReferenceTable({ result }: { result: HurdleResult }) {
+  const d = result.distances, o = result.overBar, r = result.ruler;
   const rows: [string, string, string][] = [
     ['踏切距離', cm(d.takeoff), '踏切のつま先 → ハードル'],
     ['着地距離', cm(d.landing), 'ハードル → 着地のつま先'],
-    ['踏切：着地', ratio === null ? '—' : `${ratio}:${100 - ratio}`, '踏切距離と着地距離の割合'],
-    ['重心最高点の位置', a?.beforeM == null ? '—' : `${cm(Math.abs(a.beforeM))}${a.beforeM >= 0 ? ' 手前' : ' 先'}`, 'ハードルからの距離'],
     ['重心最高点の高さ', cm(o.atPeak), 'バーの上端から重心まで（重心が一番高い時）'],
     ['ハードル上の重心の高さ', cm(o.atHurdle), 'バーの上端から重心まで（重心がハードルの線を越える時）'],
   ];
-  return <div className="sprint10-table-wrap"><table className="sprint10-table hurdle-distances" aria-label="ハードルに対する距離と高さ">
+  return <div className="sprint10-table-wrap hurdle-reference"><table className="sprint10-table hurdle-distances" aria-label="参考記録（距離と高さ）">
     <thead><tr><th scope="col">項目</th><th scope="col">cm</th></tr></thead>
     <tbody>{rows.map(([label, value, note]) => <tr key={label}><th scope="row">{label}<small>{note}</small></th><td>{value}</td></tr>)}</tbody>
-    <caption>縮尺：{r.source === 'hurdle' ? `ハードルの高さから ${r.scale!.toFixed(0)}画素/m` : r.source === 'gravity' ? `重心の放物線（重力）から ${r.scale!.toFixed(0)}画素/m` : 'なし'}
+    <caption>撮影条件（カメラの向き、選手がレーンのどこを走るか）で±5%程度ずれます。オプトジャンプとの比較では、踏切距離が7〜11cm長く出ました。
+      縮尺：{r.source === 'hurdle' ? `ハードルの高さから ${r.scale!.toFixed(0)}画素/m` : r.source === 'gravity' ? `重心の放物線（重力）から ${r.scale!.toFixed(0)}画素/m` : 'なし'}
       {r.source === 'hurdle' && r.gap !== null && `（重力からは ${r.gravityScale!.toFixed(0)}画素/m、差 ${r.gap >= 0 ? '+' : ''}${(r.gap * 100).toFixed(0)}%）`}</caption>
   </table></div>;
 }

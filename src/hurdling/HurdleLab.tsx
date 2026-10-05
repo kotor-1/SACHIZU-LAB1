@@ -8,13 +8,13 @@ import { CrouchReplay, frameInterval, insideFrame, PhaseFigures, type FigureOver
 import { analyzeHurdle, HURDLE_HEIGHTS, HURDLE_VERSION, type HurdleResult } from './analysis';
 import { HURDLE_GUIDE, hurdleAdvice } from './advice';
 import { measureHurdle } from './recording';
-import { ComPathChart, DistanceTable, TimeTable } from './HurdleCharts';
+import { ComPathChart, ReferenceTable, TimeTable } from './HurdleCharts';
 import '../sprint10/sprint10.css';
 
 /** One ◀/▶ (▲/▼) tap moves a line by 0.2% of the frame width (height). */
 const NUDGE = .002;
 type Tab = 'advice' | 'pose' | 'times' | 'replay';
-const TABS: [Tab, string][] = [['advice', 'ポイント'], ['pose', '姿勢'], ['times', '距離・時間'], ['replay', 'スロー']];
+const TABS: [Tab, string][] = [['advice', 'ポイント'], ['pose', '姿勢'], ['times', '時間'], ['replay', 'スロー']];
 /** The hurdle as set on the video: its line across, its top and foot down the picture (0-1), its height (m). */
 interface HurdleSetting { x: number; barY: number; groundY: number; height: number | null }
 const same = (a: HurdleSetting, b: HurdleSetting) => a.x === b.x && a.barY === b.barY && a.groundY === b.groundY && a.height === b.height;
@@ -134,13 +134,16 @@ export default function HurdleLab() {
     a.href = href; a.download = 'hurdle-result.json'; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
   }
   const apex = result?.apex ?? null, t = result?.times;
-  const peakText = apex?.beforeM != null ? [`${Math.round(Math.abs(apex.beforeM) * 100)}`, apex.beforeM >= 0 ? 'cm手前' : 'cm先']
+  // The peak: about how far before the hurdle (±5 cm), and how long before the centre of mass is over it (no scale needed).
+  const peakText = apex?.beforeM != null ? [`約${Math.round(Math.abs(apex.beforeM) * 100)}`, apex.beforeM >= 0 ? 'cm手前' : 'cm先']
     : apex?.beforeSeconds != null ? [`${Math.abs(apex.beforeSeconds).toFixed(3)}`, apex.beforeSeconds >= 0 ? '秒前' : '秒後'] : ['—', ''];
+  const peakNote = apex?.beforeM != null ? `±5cm${apex.beforeSeconds !== null ? `・ハードル上の${Math.abs(apex.beforeSeconds).toFixed(3)}秒${apex.beforeSeconds >= 0 ? '前' : '後'}` : ''}` : apex?.beforeSeconds != null ? 'ハードル上を通る時から' : '';
+  const ratio = result?.ratio ?? null;
   return <main className="sprint10">
     <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
     <header><p className="sprint10-eyebrow">EVENT / HURDLES</p><h1>ハードルの解析</h1>
       <p>踏切から着地まで：重心が最高点になる位置、接地と空中の時間、各局面の姿勢の角度。</p></header>
-    <p className="sprint10-note">試験機能。三脚で固定したカメラで真横から、ハードル1台と、その手前1〜2歩から着地の後1〜2歩までが映るように撮影してください。1秒120コマ以上（240推奨）・通常速度の時間軸の動画を使います。</p>
+    <p className="sprint10-note">試験機能。三脚で固定したカメラで真横から、ハードル1台と、その手前1〜2歩から着地の後1〜2歩までが映るように撮影してください。カメラはバーくらいの高さで水平に（下に向けない）、走路に直角に向け、ハードルを画面の中央にします。1秒120コマ以上（240推奨）・通常速度の時間軸の動画を使います。</p>
     <section className="sprint10-card"><h2>1　動画を選ぶ</h2>
       <label className="sprint10-upload"><input className="sprint10-file-input" type="file" aria-label="ハードルの動画を選ぶ" accept="video/mp4,video/quicktime,.mov,.mp4,.m4v" disabled={busy}
         onChange={e => changeFile(e.target.files?.[0] ?? null)} />
@@ -193,10 +196,10 @@ export default function HurdleLab() {
     {result && <section ref={resultCard} className="sprint10-card sprint10-result" aria-label="解析結果"><h2>解析結果</h2>
       {result.reason ? <p role="alert" className="sprint10-note">{result.reason}</p> : <>
         <div className="sprint10-metrics sprint10-summary">
-          <div><span>重心最高点の位置</span><strong>{peakText[0]}<small>{peakText[1]}</small></strong></div>
-          <div><span>重心最高点の高さ</span><strong>{result.overBar.atPeak === null ? '—' : Math.round(result.overBar.atPeak * 100)}<small>{result.overBar.atPeak === null ? '' : 'cm バーの上'}</small></strong></div>
-          <div><span>踏切距離</span><strong>{result.distances.takeoff === null ? '—' : Math.round(result.distances.takeoff * 100)}<small>{result.distances.takeoff === null ? '' : 'cm 手前'}</small></strong></div>
-          <div><span>空中時間（踏切→着地）</span><strong>{t?.clearance == null ? '—' : t.clearance.toFixed(3)}<small>秒</small></strong></div></div>
+          <div><span>重心最高点の位置</span><strong>{peakText[0]}<small>{peakText[1]}</small></strong>{peakNote && <em>{peakNote}</em>}</div>
+          <div><span>空中時間（踏切→着地）</span><strong>{t?.clearance == null ? '—' : t.clearance.toFixed(3)}<small>秒</small></strong></div>
+          <div><span>踏切の接地時間</span><strong>{t?.takeoffContact == null ? '—' : t.takeoffContact.toFixed(3)}<small>秒</small></strong></div>
+          <div><span>踏切：着地（距離の割合）</span><strong>{ratio === null ? '—' : `${Math.round(ratio * 100)}:${100 - Math.round(ratio * 100)}`}</strong></div></div>
         {measured && !measured.refiner && <p className="sprint10-note">高精度の骨格モデル（RTMPose）を読み込めなかったため、接地・離地の判定、角度・重心と骨格の表示はMediaPipeの骨格を使っています。</p>}
         <div ref={tabs} className="sprint10-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
           <button key={id} id={`hurdle-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`hurdle-panel-${id}`} onClick={() => choose(id)}>
@@ -216,10 +219,10 @@ export default function HurdleLab() {
               guides={{ landing: `参考：トップ選手の着地の膝 男子 ${G.landingKnee.men}°・女子 ${G.landingKnee.women}° 前後` }} /> : <p>角度を測れる局面がありませんでした。</p>}
           </div>
           <div id="hurdle-panel-times" role="tabpanel" aria-labelledby="hurdle-tab-times" hidden={tab !== 'times'}>
-            <DistanceTable result={result} />
-            <h3>接地と空中の時間</h3>
             <TimeTable result={result} />
-            <p className="sprint10-hint">—：映っていないため出せない値。「その後の空中」は離地から次の接地までです。</p>
+            <p className="sprint10-hint">—：映っていないため出せない値。「その後の空中」は離地から次の接地までです。踏切：着地の距離の割合は{ratio === null ? '—' : ` ${Math.round(ratio * 100)}:${100 - Math.round(ratio * 100)}`}（縮尺によらない値で、オプトジャンプとの比較でも一致しました）。</p>
+            <h3>参考記録</h3>
+            <ReferenceTable result={result} />
           </div>
           <div id="hurdle-panel-replay" role="tabpanel" aria-labelledby="hurdle-tab-replay" hidden={tab !== 'replay'} className="sprint10-replay">
             <CrouchReplay url={url} video={replay} frames={measured!.frames} phases={result.moments} events={events} />
@@ -229,6 +232,7 @@ export default function HurdleLab() {
         <details className="sprint10-more"><summary>数値の見方</summary>
           <p>接地・離地は、つま先が床の高さまで下りた時・床から離れた時を骨格の動きから判定しています。真横から1秒240コマで撮った5人の踏切・着地（10回）では、映像で見た瞬間との差は接地で最大0.015秒、離地で最大0.010秒、接地時間で最大0.008秒、空中時間で最大0.010秒でした（ChromeとSafari系のブラウザで同じ）。</p>
           <p>重心は、骨格の各部位の位置と体重に占める割合（de Leva 1996）から求めています。空中の重心は放物線を描くため、踏切の離地から着地までの重心の高さに放物線を当てはめて最高点を決めます。最高点の位置は、計算に使うコマの範囲を変えても5人で±3cm以内でした。抜き脚が体の横に開く場面などで骨格が崩れたコマは除いています。</p>
+          <p>オプトジャンプとの比較（4人、3台目）：空中時間・接地時間は0.01秒前後で一致し、踏切：着地の割合は3人で一致しました。踏切距離は7〜11cm長く出ました（カメラが少し下を向いていてハードルが2〜4%低く写り、横の距離が4〜5%長くなったため）。そのため、踏切距離・着地距離とバーの上の高さは参考記録としています。重心最高点の位置は距離が短く、このずれは1〜3cmです。</p>
           <p>距離と高さの縮尺は、選んだハードルの高さと、バーの上端・足元の線の間の画素数から求めます。踏切距離は踏切のつま先から、着地距離は着地のつま先までの、ハードルの線からの水平距離です。「バーの上」は、バーの上端から重心までの高さです（体の一番低い所とバーの隙間ではありません）。5人の動画では、上端の線を3画素ずらすと、踏切距離が約4cm、バーの上の高さが約2cm変わりました。重心の放物線の曲がり方（重力加速度 9.81m/s²）からも縮尺を求め、ハードルからの縮尺と12%を超えて違うときは、高さの選択や線の位置を確かめるよう表示します（5人では −0.3〜+8%）。</p>
           <p>角度は鉛直を0°とし、進行方向へ倒れる向きを正とします（体幹は腰から肩、脛は足首から膝、リード脚の大腿は腰から膝を真下から測った角度）。膝は伸び切った状態が180°です。抜き脚は体の横に開いて回るため、真横の動画では角度を出しません。</p>
           <p>参考値の出典：重心最高点の位置はMcDonald・Dapena（1991：男子0.03m・女子0.30m手前）、森田ら（1994：フォスター選手0.22m手前）、谷川ら（2009：劉翔0.05m・ペイン0.02m・内藤0.11m手前）、谷川ら（2010：ペリー0.40m・フェリシエン0.12m・石野0.16m手前）。空中時間はHanleyら（2021、世界選手権決勝の選手：男子0.33±0.02秒・女子0.28±0.02秒）。着地の膝と体幹はBissasら（2022、同じ選手：膝 男子166±10°・女子156±9°、体幹の前傾 男子29±6°・女子31±6°）。踏切・着地距離とバーの上の重心の高さはHanleyら（2021：踏切 男子2.24m・女子2.09m、着地 男子1.56m・女子1.40m、重心最高点 男子1.33m・女子1.13m）とMcDonald・Dapena（1991：重心最高点 男子1.347m・女子1.193m）から（バーの上の高さは、重心最高点からハードルの高さを引いた値）。トップ選手の値は一般のハードル（男子106.7cm・女子83.8cm）でのもので、ハードルの高さ・走る速さが違えば変わります。</p>

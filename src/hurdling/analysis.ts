@@ -91,8 +91,14 @@ export interface HurdleResult {
   apex: Apex | null;
   /** Pixels per metre: from the hurdle (its top, foot and height) or else from gravity; and how far gravity's was from the hurdle's. */
   ruler: { scale: number | null; source: 'hurdle' | 'gravity' | null; gravityScale: number | null; gap: number | null };
-  /** Takeoff toe to the hurdle and the hurdle to the landing toe (m). */
+  /** Takeoff toe to the hurdle and the hurdle to the landing toe (m): reference only. Against the OptoJump
+   * (4 athletes), the takeoff came 7-11 cm long: the camera pitched down showed the hurdle 2-4% short, and
+   * the scale also depends on where across the lane the athlete runs (user, 2026-10-05: distances are
+   * reference records, not main measures). */
   distances: { takeoff: number | null; landing: number | null };
+  /** The takeoff's share of takeoff + landing distance (0-1), from pixels: no scale needed. Matched the OptoJump's
+   * in 3 of 4 athletes (66, 70, 62 %; the fourth's report may be of another run). */
+  ratio: number | null;
   /** The centre of mass above the bar (m): at its peak, and as it passes the hurdle's line. Needs the hurdle's top. */
   overBar: { atPeak: number | null; atHurdle: number | null };
   /** The moments with their angles, in time order (pictures, replay, advice). */
@@ -139,7 +145,7 @@ export function analyzeHurdle(frames: readonly CrouchFrame[], options: HurdleOpt
   const base: HurdleResult = { version: HURDLE_VERSION, reason: null, direction: 0, hurdleX,
     hurdle: { barY: options.barY ?? null, groundY: options.groundY ?? null, height: options.hurdleHeight ?? null }, contacts: [], approach: null, takeoff: null, landing: null, after: null,
     times: { approachContact: null, approachFlight: null, takeoffContact: null, clearance: null, landingContact: null, afterFlight: null, afterContact: null },
-    crossing: null, apex: null, ruler: { scale: null, source: null, gravityScale: null, gap: null }, distances: { takeoff: null, landing: null },
+    crossing: null, apex: null, ruler: { scale: null, source: null, gravityScale: null, gap: null }, distances: { takeoff: null, landing: null }, ratio: null,
     overBar: { atPeak: null, atHurdle: null }, moments: [], notes: [] };
   const fail = (reason: string) => ({ ...base, reason });
   // Contacts and the leg length on RTMPose's points where there are any (see above).
@@ -193,6 +199,7 @@ export function analyzeHurdle(frames: readonly CrouchFrame[], options: HurdleOpt
     base.notes.push(`ハードルから求めた縮尺と、重心の放物線（重力）から求めた縮尺が${Math.round(Math.abs(base.ruler.gap) * 100)}%違います。ハードルの高さの選択と、上端・足元の線の位置を確かめてください。`);
   if (groundY != null && T && L && Math.abs((T.groundY + L.groundY) / 2 - groundY * H) > GROUND_GAP * leg)
     base.notes.push('足元の線が、接地したつま先の高さと離れています。ハードルの足元（地面）に合わせてください。');
+  if (T && L) { const before = (hurdleX * W - T.x) * direction, after = (L.x - hurdleX * W) * direction; if (before > 0 && after > 0) base.ratio = before / (before + after); }
   if (scale) {
     const metres = (px: number) => px / scale;
     if (base.apex) base.apex.beforeM = metres((hurdleX - base.apex.x) * direction * W);
