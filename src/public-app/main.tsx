@@ -2,11 +2,12 @@ import { Component, lazy, Suspense, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './public.css';
 
-// Public site: CMJ, RJ and sprint (start 10 m and a maximal-velocity section) only. Track-and-field analyses and research
-// screens stay in the development app.
+// Public site: CMJ, RJ and sprint (start 10 m, a maximal-velocity section and the crouch start), and under
+// 種目解析 the hurdle (2026-10-05). The other track-and-field analyses and research screens stay in the development app.
 const CMJ = lazy(() => import('../cmj/CMJLab'));
 const Sprint = lazy(() => import('../sprint10/Sprint10Lab'));
 const RJ = lazy(() => import('../rebound/ToeCycleLab'));
+const Hurdle = lazy(() => import('../hurdling/HurdleLab'));
 const home = import.meta.env.BASE_URL;
 class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -20,12 +21,18 @@ function Home() {
     <nav className="public-cards" aria-label="解析種目">
       {[['cmj', '01', 'CMJ', '垂直跳び', 'カメラ・録画から、跳躍高を推定。'], ['rj', '02', 'RJ', 'リバウンドジャンプ', '靴底の接地・離地を自動で測って平均RSIを推定。身長・コマの手動指定は不要。'], ['sprint10', '03', 'Sprint', 'スタート10m・最高速度区間', '2本のラインを設定するだけ。50〜60mなどの最高速度区間も。通過時間・歩数・ピッチ・各歩の距離。']].map(([id, n, title, subtitle, text]) => <a key={id} href={`${home}?lab=${id}`}><span>{n} / {subtitle}</span><h2>{title}<b aria-hidden="true">↗</b></h2><p>{text}</p><strong>解析をはじめる →</strong></a>)}
     </nav>
+    <section className="public-events" aria-labelledby="public-events-title"><h2 id="public-events-title">種目解析</h2>
+      <p>種目の技術を、局面ごとの姿勢と時間から見ます。</p>
+      <nav className="public-cards" aria-label="種目解析">
+        {[['hurdle', '04', 'Hurdle', 'ハードル', '踏切から着地まで。重心が最高点になる位置（ハードルの何cm手前か）、接地と空中の時間、姿勢の角度。']].map(([id, n, title, subtitle, text]) =>
+          <a key={id} href={`${home}?lab=${id}`}><span>{n} / {subtitle}</span><h2>{title}<b aria-hidden="true">↗</b></h2><p>{text}</p><strong>解析をはじめる →</strong></a>)}
+      </nav></section>
     <section className="public-info"><h2>使う前に</h2><ul><li>明るい場所でスマホを固定。全身と足元を映してください。</li><li>録画は通常の時間軸を保った120/240fps推奨。スロー書き出し倍率は自動補正しません。</li><li>最新のブラウザを推奨。動画形式・端末によって解析できない場合があります。iPhone・Android全機種での動作は未検証です。</li><li>数値は動画からの推定です。研究・試験機能であり、測定器同等の精度や医療・競技公式判定用途を保証しません。</li></ul></section>
     <section className="public-info"><h2>動画とプライバシー</h2><p>選んだ動画はブラウザ内で処理し、このアプリからサーバーへ送信しません。会員登録・広告・アクセス解析はありません。初回のモデル取得には通信が必要です。結果は保存ボタンから端末に保存してください。ページを閉じると未保存の結果は失われます。</p><p>サイト配信時のIPアドレス等はホスティング事業者が処理する場合があります。<a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noreferrer">GitHubのプライバシーポリシー</a></p></section>
-    <footer>SACHIZU LAB · CMJ / RJ / Sprint · 公開テスト版 · <a href={`${home}THIRD_PARTY_NOTICES.md`}>利用ライブラリ・ライセンス</a></footer>
+    <footer>SACHIZU LAB · CMJ / RJ / Sprint / Hurdle · 公開テスト版 · <a href={`${home}THIRD_PARTY_NOTICES.md`}>利用ライブラリ・ライセンス</a></footer>
   </main>;
 }
 const lab = new URLSearchParams(location.search).get('lab');
 createRoot(document.getElementById('root')!).render(<Boundary><Suspense fallback={<p role="status" className="public-loading">解析画面を読み込み中…</p>}>
-  {lab === 'cmj' ? <CMJ /> : lab === 'rj' || lab === 'rj-toe-cycle' ? <RJ /> : lab === 'sprint10' ? <Sprint /> : <Home />}
+  {lab === 'cmj' ? <CMJ /> : lab === 'rj' || lab === 'rj-toe-cycle' ? <RJ /> : lab === 'sprint10' ? <Sprint /> : lab === 'hurdle' ? <Hurdle /> : <Home />}
 </Suspense></Boundary>);

@@ -35,8 +35,10 @@ async function seekTo(v: HTMLVideoElement, t: number) {
 
 /** A picture of each phase: the athlete cut out of its frame, the skeleton and
  * the measured angles with their values. Made from a hidden copy of the video. */
-export function PhaseFigures({ url, frames, phases, onShow, guides = {} }: { url: string; frames: readonly CrouchFrame[]; phases: Phase[];
-  onShow: (p: Phase) => void; guides?: Record<string, string> }) {
+/** Draws more on a phase's picture: `to` turns a normalized point into canvas pixels, `unit` sizes lines and text. */
+export type FigureOverlay = (p: Phase, ctx: CanvasRenderingContext2D, to: (q: { x: number; y: number }) => { x: number; y: number }, unit: number) => void;
+export function PhaseFigures({ url, frames, phases, onShow, guides = {}, overlay }: { url: string; frames: readonly CrouchFrame[]; phases: Phase[];
+  onShow: (p: Phase) => void; guides?: Record<string, string>; overlay?: FigureOverlay }) {
   const [images, setImages] = useState<Record<string, string>>({}), [failed, setFailed] = useState(false);
   const interval = useMemo(() => frameInterval(frames), [frames]);
   useEffect(() => {
@@ -63,14 +65,16 @@ export function PhaseFigures({ url, frames, phases, onShow, guides = {} }: { url
           const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('no canvas');
           const W = v.videoWidth, H = v.videoHeight, view = figureView(pose, W, H, FIGURE_W / FIGURE_H), k = FIGURE_W / view.w;
           ctx.drawImage(v, view.x, view.y, view.w, view.h, 0, 0, FIGURE_W, FIGURE_H);
-          drawCrouchFigure(ctx, pose, q => ({ x: (q.x * W - view.x) * k, y: (q.y * H - view.y) * k }), p.marks, FIGURE_W / 48, true);
+          const to = (q: { x: number; y: number }) => ({ x: (q.x * W - view.x) * k, y: (q.y * H - view.y) * k });
+          drawCrouchFigure(ctx, pose, to, p.marks, FIGURE_W / 48, true);
+          overlay?.(p, ctx, to, FIGURE_W / 48);
           const image = canvas.toDataURL('image/jpeg', .85);
           if (!closed) setImages(m => ({ ...m, [p.key]: image }));
         }
       } catch { if (!closed) setFailed(true); }
     })();
     return () => { closed = true; v.pause(); v.removeAttribute('src'); v.load(); v.remove(); };
-  }, [url, frames, phases, interval]);
+  }, [url, frames, phases, interval, overlay]);
   // One picture at a time: swiped sideways, or chosen above (six stacked
   // pictures made the phone screen long, the user 2026-10-05: 「縦長で使いにくい」).
   const track = useRef<HTMLOListElement>(null), [at, setAt] = useState(0);
@@ -91,7 +95,7 @@ export function PhaseFigures({ url, frames, phases, onShow, guides = {} }: { url
   </div>;
 }
 /** The phase's name on its button, short enough for a row of them on a phone. */
-const shortLabel = (p: Phase) => p.key === 'set' ? '構え' : p.key === 'clearance' ? '離れる' : p.label.replace('の接地', '');
+const shortLabel = (p: Phase) => p.short ?? (p.key === 'set' ? '構え' : p.key === 'clearance' ? '離れる' : p.label.replace('の接地', ''));
 
 /** A judged moment to jump to: its name and, on its button, a shorter one. */
 export interface ReplayEvent { label: string; short: string; pts: number }

@@ -33,13 +33,15 @@ describe('continuous toe-cycle result presentation', () => {
       '最後3回平均', '従来の骨盤モデル：1.59', 'つま先の型だけで計算した平均：<span data-testid="toe-cycle-template">1.12</span>']) expect(html).toContain(s);
     expect(html).not.toContain('type="number"');
   });
-  it('is the public RJ entry (also at the old toe-cycle URL) on a CMJ/RJ/10m-only site', () => {
+  it('is the public RJ entry (also at the old toe-cycle URL) on the public site', () => {
     const main = readFileSync('src/public-app/main.tsx', 'utf8');
     expect(main).toContain("const RJ = lazy(() => import('../rebound/ToeCycleLab'))");
     expect(main).toContain("lab === 'rj' || lab === 'rj-toe-cycle' ? <RJ />");
     expect(main).toContain("lab === 'cmj' ? <CMJ />"); expect(main).toContain("lab === 'sprint10' ? <Sprint />");
-    // No old automatic RJ, research screens or track-and-field modules on the public site.
-    expect(main).not.toMatch(/AutomaticReboundLab|CMJStage1|CMJResearch|hurdle|high-jump|long-jump|throwing|crouch/i);
+    // The hurdle (src/hurdling, 2026-10-05) is public; no old automatic RJ, research screens
+    // or the earlier track-and-field modules (src/hurdle-*, crouch-start-*, ...) are.
+    expect(main).toContain("const Hurdle = lazy(() => import('../hurdling/HurdleLab'))"); expect(main).toContain("lab === 'hurdle' ? <Hurdle />");
+    expect(main).not.toMatch(/AutomaticReboundLab|CMJStage1|CMJResearch|hurdle-|HurdleFlow|high-jump|long-jump|throwing|crouch-start/i);
     const component = readFileSync('src/rebound/ToeCycleLab.tsx', 'utf8');
     // Both-legs RJ analyses the observed poses and soles as they are; single-leg ones the stance leg of the same observation.
     expect(component).toContain('const analysed = single ? stanceLegFrames(observation.poses) : observation.poses;');

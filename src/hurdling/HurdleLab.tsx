@@ -1,0 +1,201 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Upload } from 'lucide-react';
+import { useFirstFrame } from '../sprint10/first-frame';
+import PlayerBar from '../sprint10/PlayerBar';
+import type { Phase } from '../sprint10/crouch-figure';
+import type { CrouchFrame } from '../sprint10/crouch';
+import { CrouchReplay, frameInterval, insideFrame, PhaseFigures, type FigureOverlay, type ReplayEvent } from '../sprint10/CrouchViews';
+import { analyzeHurdle, HURDLE_VERSION, type HurdleResult } from './analysis';
+import { HURDLE_GUIDE, hurdleAdvice } from './advice';
+import { measureHurdle } from './recording';
+import { ComPathChart, TimeTable } from './HurdleCharts';
+import '../sprint10/sprint10.css';
+
+/** One ◀/▶ tap moves the line by 0.2% of the frame width. */
+const NUDGE = .002;
+type Tab = 'advice' | 'pose' | 'times' | 'replay';
+const TABS: [Tab, string][] = [['advice', 'ポイント'], ['pose', '姿勢'], ['times', '時間'], ['replay', 'スロー']];
+const LEGEND = [['#ffb02e', '体幹（腰→肩）'], ['#3ad7ff', '脛'], ['#7dff6b', 'リード脚の大腿'], ['#ff6fd8', 'リード脚の膝'], ['#b58cff', '踏切脚の膝']] as const;
+const G = HURDLE_GUIDE;
+
+/** Hurdle clearance, one hurdle filmed from the side: the contacts around it,
+ * the time over it, the angles at each moment and where the centre of mass
+ * peaks against the hurdle (the user, 2026-10-05: 「ハードルのどのくらい手前で
+ * 重心が最高点になったかが重要」). Same method and screen as the crouch start. */
+export default function HurdleLab() {
+  const video = useRef<HTMLVideoElement>(null), replay = useRef<HTMLVideoElement>(null);
+  const owner = useRef<AbortController | null>(null), resultCard = useRef<HTMLElement>(null);
+  const [file, setFile] = useState<File | null>(null), [url, setUrl] = useState('');
+  const [loaded, setLoaded] = useState(false), [busy, setBusy] = useState(false), [progress, setProgress] = useState(0);
+  const still = useFirstFrame(url), ready = loaded || !!still;
+  const [line, setLine] = useState(.5), [message, setMessage] = useState('');
+  const [measured, setMeasured] = useState<{ frames: CrouchFrame[]; width: number; height: number; refiner: 'webgpu' | 'wasm' | null; hurdleX: number } | null>(null);
+  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
+  useEffect(() => () => { owner.current?.abort(); owner.current = null; }, []);
+  const result: HurdleResult | null = useMemo(() => measured ? analyzeHurdle(measured.frames, { width: measured.width, height: measured.height, hurdleX: measured.hurdleX }) : null, [measured]);
+  const advice = useMemo(() => result && !result.reason ? hurdleAdvice(result) : [], [result]);
+  const checks = advice.filter(a => a.level === 'check').length;
+  const events: ReplayEvent[] = useMemo(() => {
+    if (!result || result.reason) return [];
+    const names = ['踏切の1歩前', '踏切', '着地', '着地の次'], roles = [result.approach, result.takeoff, result.landing, result.after];
+    const out: ReplayEvent[] = roles.flatMap((i, k) => { const c = i === null ? null : result.contacts[i]; if (!c) return [];
+      return [...(c.touchdown !== null ? [{ label: `${names[k]}の接地`, short: `${names[k]} 接地`, pts: c.touchdown }] : []),
+        ...(c.toeOff !== null ? [{ label: `${names[k]}の離地`, short: `${names[k]} 離地`, pts: c.toeOff }] : [])]; });
+    if (result.apex) out.push({ label: '重心最高点', short: '重心最高点', pts: result.apex.pts });
+    if (result.crossing) out.push({ label: 'ハードル上', short: 'ハードル上', pts: result.crossing.pts });
+    return out.sort((a, b) => a.pts - b.pts);
+  }, [result]);
+  const [tab, setTab] = useState<Tab>('advice'), tabs = useRef<HTMLDivElement>(null), panels = useRef<HTMLDivElement>(null);
+  const seekTo = useRef<number | null>(null);
+  useEffect(() => { setTab('advice'); if (result) resultCard.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }); }, [measured]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const v = replay.current;
+    if (tab !== 'replay' || !v || seekTo.current === null) return;
+    const t = insideFrame(seekTo.current, measured ? frameInterval(measured.frames) : 1 / 240); seekTo.current = null;
+    const go = () => { v.pause(); v.currentTime = t; };
+    if (v.readyState >= 1) go(); else v.addEventListener('loadedmetadata', go, { once: true });
+  }, [tab, measured]);
+  // The peak's picture: the centre of mass through the flight, its peak and the hurdle.
+  const overlay: FigureOverlay = useCallback((p, ctx, to, unit) => {
+    const a = result?.apex; if (p.key !== 'apex' || !a || !result) return;
+    ctx.save();
+    const top = to({ x: result.hurdleX, y: 0 }), bottom = to({ x: result.hurdleX, y: 1 });
+    ctx.strokeStyle = '#ff5b4a'; ctx.lineWidth = unit * .35; ctx.setLineDash([unit, unit * .7]);
+    ctx.beginPath(); ctx.moveTo(top.x, top.y); ctx.lineTo(bottom.x, bottom.y); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(255,255,255,.9)';
+    for (const q of a.path) { const c = to(q); ctx.beginPath(); ctx.arc(c.x, c.y, unit * .22, 0, Math.PI * 2); ctx.fill(); }
+    const peak = to(a); ctx.fillStyle = '#ffb02e'; ctx.strokeStyle = '#08120f'; ctx.lineWidth = unit * .2;
+    ctx.beginPath(); ctx.arc(peak.x, peak.y, unit * .7, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    if (a.beforeM !== null) {
+      const text = a.beforeM >= 0 ? `最高点：ハードルの${Math.round(a.beforeM * 100)}cm手前` : `最高点：ハードルの${Math.round(-a.beforeM * 100)}cm先`;
+      ctx.font = `700 ${unit * 1.7}px system-ui, sans-serif`; ctx.textBaseline = 'top';
+      const w = ctx.measureText(text).width + unit;
+      ctx.fillStyle = 'rgba(8,18,16,.75)'; ctx.fillRect(unit * .5, unit * .5, w, unit * 2.6);
+      ctx.fillStyle = '#ffb02e'; ctx.fillText(text, unit, unit * .9);
+    }
+    ctx.restore();
+  }, [result]);
+
+  function changeFile(next: File | null) {
+    owner.current?.abort(); owner.current = null; setBusy(false);
+    setFile(next); setUrl(next ? URL.createObjectURL(next) : ''); setLoaded(false); setMeasured(null); setMessage('');
+  }
+  function move(x: number) { if (!busy) setLine(Math.max(.01, Math.min(.99, x))); }
+  function drag(event: React.PointerEvent<HTMLButtonElement>) {
+    if (busy || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const rect = event.currentTarget.parentElement!.getBoundingClientRect();
+    move((event.clientX - rect.left) / rect.width);
+  }
+  async function analyze() {
+    if (!file || busy) return;
+    const control = new AbortController(); owner.current = control;
+    setBusy(true); setMeasured(null); setProgress(0); setMessage('');
+    try {
+      const data = await measureHurdle(file, control.signal, (fraction, text) => { setProgress(fraction); setMessage(text); });
+      if (control.signal.aborted) return;
+      setMeasured({ ...data, hurdleX: line }); setMessage('解析が終わりました。');
+    } catch (e) {
+      if (!control.signal.aborted) setMessage(e instanceof Error ? e.message : String(e));
+    } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
+  }
+  function choose(next: Tab) {
+    setTab(next);
+    const top = panels.current?.getBoundingClientRect().top, bar = tabs.current?.offsetHeight ?? 0;
+    if (top !== undefined && top < bar) window.scrollBy({ top: top - bar });
+  }
+  function show(p: Phase) { seekTo.current = p.pts; choose('replay'); }
+  function save() {
+    if (!result) return;
+    const blob = new Blob([JSON.stringify({ version: HURDLE_VERSION, file: file?.name, hurdleX: measured?.hurdleX, result }, null, 2)], { type: 'application/json' });
+    const href = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = href; a.download = 'hurdle-result.json'; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
+  }
+  const apex = result?.apex ?? null, t = result?.times;
+  const peakText = apex?.beforeM != null ? [`${Math.round(Math.abs(apex.beforeM) * 100)}`, apex.beforeM >= 0 ? 'cm手前' : 'cm先']
+    : apex?.beforeSeconds != null ? [`${Math.abs(apex.beforeSeconds).toFixed(3)}`, apex.beforeSeconds >= 0 ? '秒前' : '秒後'] : ['—', ''];
+  return <main className="sprint10">
+    <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
+    <header><p className="sprint10-eyebrow">EVENT / HURDLES</p><h1>ハードルの解析</h1>
+      <p>踏切から着地まで：重心が最高点になる位置、接地と空中の時間、各局面の姿勢の角度。</p></header>
+    <p className="sprint10-note">試験機能。三脚で固定したカメラで真横から、ハードル1台と、その手前1〜2歩から着地の後1〜2歩までが映るように撮影してください。1秒120コマ以上（240推奨）・通常速度の時間軸の動画を使います。</p>
+    <section className="sprint10-card"><h2>1　動画を選ぶ</h2>
+      <label className="sprint10-upload"><input className="sprint10-file-input" type="file" aria-label="ハードルの動画を選ぶ" accept="video/mp4,video/quicktime,.mov,.mp4,.m4v" disabled={busy}
+        onChange={e => changeFile(e.target.files?.[0] ?? null)} />
+        <span className="sprint10-upload-button" aria-hidden="true"><Upload size={19} />{file ? '別の動画を選ぶ' : '動画を選ぶ'}</span></label>
+      {file && <p className="sprint10-file">{file.name} · {(file.size / 1024 / 1024).toFixed(1)} MB</p>}
+    </section>
+    <section className="sprint10-card"><h2>2　ハードルに線を合わせる</h2>
+      <p>線を、選手が越えるハードルのバーの位置に合わせます。重心の最高点の位置は、この線からの距離で表します。</p>
+      <div className="sprint10-player">
+        <video ref={video} src={url || undefined} playsInline preload="auto" poster={still?.image}
+          style={still ? { aspectRatio: `${still.width} / ${still.height}` } : undefined}
+          onLoadedMetadata={() => setLoaded(true)} onLoadedData={() => setLoaded(true)}
+          onError={() => { setLoaded(false); setMessage('この動画を再生できません。対応形式を確認してください。'); }} />
+        {ready && <div className="sprint10-gates"><button type="button" role="slider"
+          aria-label="ハードルの線" aria-valuemin={1} aria-valuemax={99} aria-valuenow={Math.round(line * 100)}
+          className={`sprint10-gate hurdle${line < .1 ? ' at-left' : line > .9 ? ' at-right' : ''}`}
+          style={{ left: `${line * 100}%` }} disabled={busy}
+          onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); drag(e); }} onPointerMove={drag}
+          onPointerUp={e => { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); }}
+          onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); move(line + (e.key === 'ArrowLeft' ? -NUDGE : NUDGE)); } }}>
+          <span>HURDLE</span></button></div>}
+      </div>
+      {url && <PlayerBar video={video} url={url} disabled={busy} />}
+      <div className="sprint10-gate-controls"><div className="sprint10-gate-row hurdle">
+        <span>ハードル</span>
+        <button type="button" aria-label="線を左へ" disabled={!ready || busy} onClick={() => move(line - NUDGE)}>◀</button>
+        <input type="range" aria-label="ハードルの線の位置" min="1" max="99" step=".1" value={line * 100} disabled={!ready || busy}
+          onChange={e => move(Number(e.target.value) / 100)} />
+        <button type="button" aria-label="線を右へ" disabled={!ready || busy} onClick={() => move(line + NUDGE)}>▶</button>
+      </div></div>
+    </section>
+    <section className="sprint10-card"><h2>3　解析する</h2>
+      <button className="sprint10-primary" disabled={!ready || busy} onClick={() => void analyze()}>解析する</button>
+      {busy && <button onClick={() => { owner.current?.abort(); owner.current = null; setBusy(false); setMessage('解析を中止しました。'); }}>中止</button>}
+      <p role="status">{message || '動画を選び、ハードルに線を合わせると解析できます。'}</p>
+      {busy && <progress max="1" value={progress} aria-label="解析の進み具合" />}
+    </section>
+    {result && <section ref={resultCard} className="sprint10-card sprint10-result" aria-label="解析結果"><h2>解析結果</h2>
+      {result.reason ? <p role="alert" className="sprint10-note">{result.reason}</p> : <>
+        <div className="sprint10-metrics sprint10-summary">
+          <div><span>重心最高点の位置</span><strong>{peakText[0]}<small>{peakText[1]}</small></strong></div>
+          <div><span>空中時間（踏切→着地）</span><strong>{t?.clearance == null ? '—' : t.clearance.toFixed(3)}<small>秒</small></strong></div></div>
+        {measured && !measured.refiner && <p className="sprint10-note">高精度の骨格モデル（RTMPose）を読み込めなかったため、接地・離地の判定、角度・重心と骨格の表示はMediaPipeの骨格を使っています。</p>}
+        <div ref={tabs} className="sprint10-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
+          <button key={id} id={`hurdle-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`hurdle-panel-${id}`} onClick={() => choose(id)}>
+            {label}{id === 'advice' && checks > 0 && <span className="sprint10-badge" aria-label={`確かめたい点 ${checks}件`}>{checks}</span>}</button>)}</div>
+        <div ref={panels} className="sprint10-panels">
+          <div id="hurdle-panel-advice" role="tabpanel" aria-labelledby="hurdle-tab-advice" hidden={tab !== 'advice'}>
+            {measured && <ComPathChart result={result} width={measured.width} height={measured.height} />}
+            {advice.length > 0 && <ul className="sprint10-advice" aria-label="見方のポイント">{advice.map(a => <li key={a.topic + a.text} className={a.level}>
+              <span aria-hidden="true">{a.level === 'good' ? '✓' : a.level === 'check' ? '!' : 'i'}</span><div><strong>{a.topic}</strong>{a.text}</div></li>)}</ul>}
+            <p className="sprint10-hint">参考値は研究で報告されたトップ選手の値で、選手ごとの目標ではありません（出典は「数値の見方」）。</p>
+            {result.notes.map(n => <p className="sprint10-note" key={n}>{n}</p>)}
+          </div>
+          <div id="hurdle-panel-pose" role="tabpanel" aria-labelledby="hurdle-tab-pose" hidden={tab !== 'pose'}>
+            <ul className="sprint10-mark-legend" aria-label="線の色">{LEGEND.map(([color, label]) => <li key={label}><i style={{ background: color }} />{label}</li>)}</ul>
+            <p className="sprint10-hint">点線は鉛直、弧が測った角度。「重心最高点」の画像の白い点は各コマの重心、赤い点線はハードルの線です。画像を左右にスワイプして局面を切り替えます。</p>
+            {result.moments.length ? <PhaseFigures url={url} frames={measured!.frames} phases={result.moments} onShow={show} overlay={overlay}
+              guides={{ landing: `参考：トップ選手の着地の膝 男子 ${G.landingKnee.men}°・女子 ${G.landingKnee.women}° 前後` }} /> : <p>角度を測れる局面がありませんでした。</p>}
+          </div>
+          <div id="hurdle-panel-times" role="tabpanel" aria-labelledby="hurdle-tab-times" hidden={tab !== 'times'}>
+            <TimeTable result={result} />
+            <p className="sprint10-hint">—：映っていないため出せない値。「その後の空中」は離地から次の接地までです。</p>
+          </div>
+          <div id="hurdle-panel-replay" role="tabpanel" aria-labelledby="hurdle-tab-replay" hidden={tab !== 'replay'} className="sprint10-replay">
+            <CrouchReplay url={url} video={replay} frames={measured!.frames} phases={result.moments} events={events} />
+            <p className="sprint10-hint">判定した瞬間の前後では、測った線と角度を表示します。1/8は実際の8分の1の速さです。</p>
+          </div>
+        </div>
+        <details className="sprint10-more"><summary>数値の見方</summary>
+          <p>接地・離地は、つま先が床の高さまで下りた時・床から離れた時を骨格の動きから判定しています。真横から1秒240コマで撮った5人の踏切・着地（10回）では、映像で見た瞬間との差は接地で最大0.015秒、離地で最大0.010秒、接地時間で最大0.008秒、空中時間で最大0.010秒でした（ChromeとSafari系のブラウザで同じ）。</p>
+          <p>重心は、骨格の各部位の位置と体重に占める割合（de Leva 1996）から求めています。空中の重心は放物線を描くため、踏切の離地から着地までの重心の高さに放物線を当てはめて最高点を決めます。距離の縮尺は、その放物線の曲がり方（重力加速度 9.81m/s²）から求めます（目印やハードルの高さの入力は不要）。最高点の位置は、計算に使うコマの範囲を変えても5人で±3cm以内でした。抜き脚が体の横に開く場面などで骨格が崩れたコマは除いています。</p>
+          <p>角度は鉛直を0°とし、進行方向へ倒れる向きを正とします（体幹は腰から肩、脛は足首から膝、リード脚の大腿は腰から膝を真下から測った角度）。膝は伸び切った状態が180°です。抜き脚は体の横に開いて回るため、真横の動画では角度を出しません。</p>
+          <p>参考値の出典：重心最高点の位置はMcDonald・Dapena（1991：男子0.03m・女子0.30m手前）、森田ら（1994：フォスター選手0.22m手前）、谷川ら（2009：劉翔0.05m・ペイン0.02m・内藤0.11m手前）、谷川ら（2010：ペリー0.40m・フェリシエン0.12m・石野0.16m手前）。空中時間はHanleyら（2021、世界選手権決勝の選手：男子0.33±0.02秒・女子0.28±0.02秒）。着地の膝と体幹はBissasら（2022、同じ選手：膝 男子166±10°・女子156±9°、体幹の前傾 男子29±6°・女子31±6°）。トップ選手の値は一般のハードル（男子106.7cm・女子84.0cm）でのもので、ハードルの高さ・走る速さが違えば変わります。</p>
+          <p>骨格：選手を見つけて追うのはMediaPipe、接地・離地の判定、角度・重心と画像・スロー再生の骨格はRTMPose（{measured?.refiner === 'webgpu' ? 'WebGPU' : measured?.refiner === 'wasm' ? 'WebAssembly' : '今回は未使用'}）です。ハードルの動画では、RTMPoseのつま先の方が接地・離地の時刻がブラウザによらず安定していました（MediaPipeはSafari系で接地時間の差が最大0.031秒）。</p></details>
+      </>}
+      <button onClick={save}>結果を保存（JSON）</button>
+    </section>}
+    <footer>{HURDLE_VERSION} · 動画はこの端末内で処理します。解析時間は端末の性能により変わります。</footer>
+  </main>;
+}

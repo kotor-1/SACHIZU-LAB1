@@ -2,11 +2,12 @@ import { POSE_EDGES } from '../cmj/pose-drawing';
 import type { CrouchPoint, CrouchResult } from './crouch';
 
 /** One angle drawn on the picture: the trunk (hip to shoulder) or a shank
- * (ankle to knee) against the vertical, or a knee (hip, knee, ankle). */
+ * (ankle to knee) against the vertical, a thigh (hip to knee) against the
+ * downward vertical, or a knee (hip, knee, ankle). */
 export type Mark = { kind: 'trunk'; label: string; value: number }
-  | { kind: 'shank' | 'knee'; side: 0 | 1; label: string; value: number };
+  | { kind: 'shank' | 'knee' | 'thigh'; side: 0 | 1; label: string; value: number };
 /** A moment whose angles are reported, with the frame shown for it. */
-export interface Phase { key: string; label: string; frame: number; pts: number; marks: Mark[] }
+export interface Phase { key: string; label: string; frame: number; pts: number; marks: Mark[]; /** Name on its button, when shorter than the label. */ short?: string }
 
 const known = (m: Mark | null): m is Mark => m !== null;
 /** The set, the front block clearance and each touchdown, with their angles (none left out when null). */
@@ -33,8 +34,9 @@ export function crouchPhases(result: CrouchResult): Phase[] {
 }
 
 export const markText = (m: Mark) => `${m.label} ${Math.round(m.value)}°`;
-/** Trunk orange, shank cyan, front knee pink, rear knee violet. */
-export const markColor = (m: Mark) => m.kind === 'trunk' ? '#ffb02e' : m.kind === 'shank' ? '#3ad7ff' : m.label === '後膝' ? '#b58cff' : '#ff6fd8';
+/** Trunk orange, shank cyan, thigh green, front (lead) knee pink, rear (takeoff) knee violet. */
+export const markColor = (m: Mark) => m.kind === 'trunk' ? '#ffb02e' : m.kind === 'shank' ? '#3ad7ff' : m.kind === 'thigh' ? '#7dff6b'
+  : m.label === '後膝' || m.label.startsWith('踏切') ? '#b58cff' : '#ff6fd8';
 const seen = (p?: CrouchPoint) => !!p && Number.isFinite(p.x) && Number.isFinite(p.y) && (p.visibility ?? 1) >= .3;
 
 /** The part of the picture around the athlete (pixels), widened to `aspect`
@@ -72,10 +74,11 @@ export function drawCrouchFigure(ctx: CanvasRenderingContext2D, pose: CrouchPoin
     const color = markColor(m);
     // Vertex, the measured segment(s) and the reference (the vertical, or the thigh).
     const [vertex, end, other] = m.kind === 'trunk' ? [mid(23, 24), mid(11, 12), null]
-      : m.kind === 'shank' ? [at(27 + m.side), at(25 + m.side), null] : [at(25 + m.side), at(27 + m.side), at(23 + m.side)];
+      : m.kind === 'shank' ? [at(27 + m.side), at(25 + m.side), null] : m.kind === 'thigh' ? [at(23 + m.side), at(25 + m.side), null]
+      : [at(25 + m.side), at(27 + m.side), at(23 + m.side)];
     if (!vertex || !end || (m.kind === 'knee' && !other)) continue;
     const length = Math.hypot(end.x - vertex.x, end.y - vertex.y);
-    const reference = other ?? { x: vertex.x, y: vertex.y - length };
+    const reference = other ?? { x: vertex.x, y: vertex.y + (m.kind === 'thigh' ? length : -length) };
     ctx.strokeStyle = color; ctx.lineWidth = unit * .7;
     ctx.beginPath(); ctx.moveTo(vertex.x, vertex.y); ctx.lineTo(end.x, end.y);
     if (other) { ctx.moveTo(vertex.x, vertex.y); ctx.lineTo(other.x, other.y); }

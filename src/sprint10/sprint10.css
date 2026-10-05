@@ -78,3 +78,8 @@
 @media(max-width:480px){.sprint10 h1{font-size:24px}.sprint10 header{margin:8px 0 14px}.sprint10 header p{font-size:14px;color:#3f5f55;margin:6px 0 0}
 .sprint10-modes{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:6px}.sprint10 .sprint10-modes button{min-height:52px;padding:6px 4px;text-align:center;place-content:center;font-size:13px;line-height:1.3}.sprint10 .sprint10-modes button span{display:none}.sprint10-modes strong{word-break:keep-all}
 .sprint10-mode-hint{display:block;margin:0 0 12px;font-size:13px;color:#557468}.sprint10-card{margin:12px 0}}
+/* Hurdle: the hurdle's line, reference-only advice, the times table. */
+.sprint10-gate.hurdle:before{background:#ff8a7a}.sprint10-gate.hurdle span{background:#ff8a7a;color:#3a0d07}.sprint10-gate-row.hurdle>span{border-left-color:#ff8a7a}
+.sprint10-advice li.info{background:#eef3f6}.sprint10-advice li.info>span{background:#5b7b8f}
+.hurdle-times td small{display:block;font-size:11px;color:#557468;white-space:normal}.hurdle-times tr.is-key th,.hurdle-times tr.is-key td{background:#fff7e8}
+.sprint10-panels .sprint10-chart+.sprint10-advice{margin-top:12px}
