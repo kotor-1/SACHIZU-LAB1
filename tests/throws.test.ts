@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeThrow, type ThrowOptions } from '../src/throws/analysis';
+import { analyzeThrow, releaseMeasures, type ThrowOptions } from '../src/throws/analysis';
 import { throwAdvice } from '../src/throws/advice';
 import type { CrouchFrame, CrouchPoint } from '../src/sprint10/crouch';
 
@@ -112,6 +112,29 @@ describe('throws (side view)', () => {
     expect(r.rearKnee.atStart!).toBeCloseTo(kneeNear(truth, r.deliveryStart!.pts, 1), 0);
     expect(r.moments.map(m => m.key)).toEqual(['rear', 'front', 'release']);
     expect(throwAdvice(r).map(a => a.topic)).toEqual(expect.arrayContaining(['グライド', '移行局面', '突き出し', 'パワーポジション']));
+  });
+  it('glide: the stance at the power position, the glide, the trunk raised and the rear knee at the release', () => {
+    const r = run(build(GLIDE).frames, { event: 'shot', style: 'glide' });
+    expect(r.stancePx).toBeCloseTo(1110 - 800, -1);
+    expect(r.glidePx).toBeCloseTo(800 - 600, -1);
+    expect(r.trunk.atRelease! - r.trunk.atStart!).toBeGreaterThan(40);
+    expect(r.rearKnee.atRelease).not.toBeNull();
+    expect(r.bodyPx!).toBeGreaterThan(700); expect(r.bodyPx!).toBeLessThan(1300);
+  });
+  it('the release with a flight: speed from the height, angle, height share, attitude and attack', () => {
+    const r = run(build(JAV).frames, { event: 'jav' });
+    const flight = { x0: 0, y0: 0, t0: .5, vx: 1500, vy: -900, speedPx: 2000, angle: 31, frames: 8, score: 6 };
+    const rel = releaseMeasures(r, flight, 38, 1.6);
+    expect(rel.speed!).toBeCloseTo(2000 / (r.bodyPx! / 1.6), 6);
+    expect(rel.angle).toBe(31);
+    expect(rel.attack).toBe(7);
+    expect(rel.heightShare!).toBeCloseTo((r.groundY! - r.releaseHand!.y) / r.bodyPx!, 6);
+    expect(rel.height!).toBeCloseTo(rel.heightShare! * 1.6, 6);
+    // Without the height: no speed or metres, the rest as before.
+    const bare = releaseMeasures(r, flight, 38, null);
+    expect([bare.speed, bare.height, bare.angle, bare.attack]).toEqual([null, null, 31, 7]);
+    // The centre of mass's forward speed at both moments (here the rear leg swings through fast, so it rises).
+    expect(r.com.atStart).not.toBeNull(); expect(r.com.atRelease).not.toBeNull();
   });
   it('standing throw: the delivery from the hips furthest back', () => {
     const { frames } = build(STANDING), r = run(frames, { event: 'shot', style: 'standing' });

@@ -37,8 +37,8 @@ const BODY_POINTS = [11, 12, 23, 24, 25, 26, 27, 28];
 const EDGE_MARGIN = .01;
 const pelvis = (p: Pt[]) => ({ x: (p[23].x + p[24].x) / 2, y: (p[23].y + p[24].y) / 2 });
 
-/** Reads the frames in order, decoding and drawing upright only those wanted. */
-async function readFrames(file: File, signal: AbortSignal, wanted: (index: number) => boolean,
+/** Reads the frames in order, decoding and drawing upright only those wanted (also the throws' implement). */
+export async function readFrames(file: File, signal: AbortSignal, wanted: (index: number) => boolean,
   visit: (frame: { frameIndex: number; pts: number }, source: HTMLCanvasElement, w: number, h: number) => Promise<void>) {
   const check = () => { if (signal.aborted) throw new DOMException('中止', 'AbortError'); };
   const d = await untilAborted(demuxMP4(file), signal); check();

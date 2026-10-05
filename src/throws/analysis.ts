@@ -20,8 +20,11 @@ import { anglePose, type CrouchFrame, type CrouchPoint } from '../sprint10/crouc
 import { legLength, median, plantedToes, plantsOf, quantile, toesOf, visible, CONTACT_MIN, GROUND_BAND, LIFT_BAND, PLANT_JOIN, PLANT_RADIUS, type Contact, type Plant, type Toe } from '../sprint10/contacts';
 import { trunkAngle } from '../sprint10/angles';
 import type { Mark, Phase } from '../sprint10/crouch-figure';
+import { centreOfMass } from '../hurdling/analysis';
+import type { FlightPath } from './implement';
 
-export const THROW_VERSION = 'throws-v1-experimental';
+/** v2 (2026-10-06): the release from the implement's flight, the stance, the glide, the deceleration, the user's height. */
+export const THROW_VERSION = 'throws-v2-experimental';
 export type ThrowEvent = 'jav' | 'shot';
 export type ShotStyle = 'glide' | 'standing';
 export type Hand = 'right' | 'left';
@@ -62,6 +65,18 @@ const SEGMENT_MIN = .25;
 const REST_SECONDS = .018, REST_LEGS = .03;
 /** Standing throw: the hips furthest back in this long before the release start the delivery. */
 const POWER_SEARCH = 1.2;
+/** The centre of mass's forward speed: a straight line through it over ±COM_SECONDS. At ±0.025 s one junior's
+ * loss from the block contact to the release was 31% in Chrome and 49% in WebKit (their release frames 4 apart);
+ * at ±0.06 s, 50% and 38%, the three others within 4 points (recorded). */
+const COM_SECONDS = .06;
+/** The athlete's height in the picture is the trunk (shoulders' midpoint to hips' midpoint, its longest 10% over
+ * the frames) over its share of the standing height, 0.288 (Drillis & Contini 1966, in Winter's Biomechanics:
+ * shoulder 0.818, hip 0.530). Against the release speeds the records give (javelic throw: 前田・丹松 2008's
+ * distance = 3.612 v - 37.98 for the Turbojav; shot: 7.50 m as a projectile), 4 athletes, 6 throws, Chrome and
+ * WebKit, the trunk put the implement's speed within 11% (mean 7%); the hip to ankle (0.491) 26% (mean 16%,
+ * always fast: the pose model's hip and ankle points make the leg short), thigh plus shank 22%, the median of
+ * four estimates 19% (recorded, dev-validation/throw/scale-variants.mjs). */
+const TRUNK_SHARE = .288;
 
 export interface ThrowOptions {
   /** Picture size, so distances are measured in pixels alike in both axes. */
@@ -98,13 +113,25 @@ export interface ThrowResult {
   times: ThrowTimes;
   /** The front (block) knee: at the delivery start, its least angle up to the release (with when) and at the release. */
   frontKnee: { atStart: number | null; least: number | null; leastAt: Moment | null; atRelease: number | null };
-  /** The rear knee at the rear foot's touchdown and at the delivery start. */
-  rearKnee: { atRear: number | null; atStart: number | null };
+  /** The rear knee at the rear foot's touchdown, at the delivery start and at the release. */
+  rearKnee: { atRear: number | null; atStart: number | null; atRelease: number | null };
   /** Trunk from vertical, forward (toward the throw) positive, at the rear touchdown, the delivery start and the release. */
   trunk: { atRear: number | null; atStart: number | null; atRelease: number | null };
+  /** The athlete's standing height in the picture (source pixels; see TRUNK_SHARE), and the leg (hip to ankle). */
+  bodyPx: number | null; legPx: number;
+  /** Ground level (source y) under the front foot, and the throwing wrist at the release (source pixels). */
+  groundY: number | null; releaseHand: { x: number; y: number } | null;
+  /** Front foot to rear foot along the throw at the delivery start (the power position), and the glide's way
+   * from where the rear foot started to its touchdown (source pixels). */
+  stancePx: number | null; glidePx: number | null;
+  /** The centre of mass's forward speed (source px/s) at the delivery start and at the release. */
+  com: { atStart: number | null; atRelease: number | null };
   moments: Phase[];
   notes: string[];
 }
+/** What is known of the release with the implement's flight: speed (m/s, needs the height), angle, height (m and
+ * share of the standing height), and a javelin's attitude and angle of attack (attitude minus release angle). */
+export interface ReleaseMeasures { speed: number | null; angle: number | null; height: number | null; heightShare: number | null; attitude: number | null; attack: number | null }
 
 type Point = { x: number; y: number };
 const seconds = (a: Moment | null | undefined, b: Moment | null | undefined) => a && b ? b.pts - a.pts : null;
@@ -174,14 +201,16 @@ export function analyzeThrow(frames: readonly CrouchFrame[], options: ThrowOptio
   const style = event === 'shot' ? options.style ?? 'glide' : null;
   const base: ThrowResult = { version: THROW_VERSION, reason: null, event, style, hand, direction: 0, contacts: [], rear: null, front: null, start: null,
     release: null, releaseFound: null, releaseSetByUser: false, power: null, deliveryStart: null, times: { glide: null, rearToFront: null, delivery: null },
-    frontKnee: { atStart: null, least: null, leastAt: null, atRelease: null }, rearKnee: { atRear: null, atStart: null },
-    trunk: { atRear: null, atStart: null, atRelease: null }, moments: [], notes: [] };
+    frontKnee: { atStart: null, least: null, leastAt: null, atRelease: null }, rearKnee: { atRear: null, atStart: null, atRelease: null },
+    trunk: { atRear: null, atStart: null, atRelease: null }, bodyPx: null, legPx: 0, groundY: null, releaseHand: null, stancePx: null, glidePx: null,
+    com: { atStart: null, atRelease: null }, moments: [], notes: [] };
   const fail = (reason: string) => ({ ...base, reason });
   // Contacts and angles on RTMPose's points where there are any (as the hurdle).
   const seen = frames.filter(f => f.pose).map(f => f.refined ? { ...f, pose: f.refined } : f);
   if (seen.length < 20) return fail('選手を十分に捉えられませんでした。真横から、全身が映るように撮影してください。');
   const leg = legLength(seen, W, H);
   if (!(leg > 0)) return fail('脚を十分に捉えられませんでした。');
+  base.legPx = leg;
   const at = (m: Moment | null) => m ? seen.findIndex(f => f.frame === m.frame) : -1;
   const moment = (i: number): Moment => ({ frame: seen[i].frame, pts: seen[i].pts });
 
@@ -204,6 +233,7 @@ export function analyzeThrow(frames: readonly CrouchFrame[], options: ThrowOptio
   const r = chosen >= 0 ? chosen : top;
   base.release = moment(r); base.releaseSetByUser = chosen >= 0 && chosen !== top;
   const release = base.release;
+  base.releaseHand = wrist[r];
 
   // Contacts: places where a toe stays, merged by place, in time order.
   const toes = toesOf(seen, W, H);
@@ -271,8 +301,33 @@ export function analyzeThrow(frames: readonly CrouchFrame[], options: ThrowOptio
     for (let i = s0; i <= r; i++) { const v = around(moment(i), frontKnee); if (v !== null && (least === null || v < least)) { least = v; leastAt = i; } }
     base.frontKnee.least = least; base.frontKnee.leastAt = leastAt >= 0 ? moment(leastAt) : null;
   }
-  base.rearKnee = { atRear: around(rearDown, rearKnee), atStart: around(start, rearKnee) };
+  base.rearKnee = { atRear: around(rearDown, rearKnee), atStart: around(start, rearKnee), atRelease: around(release, rearKnee) };
   base.trunk = { atRear: around(rearDown, trunk), atStart: around(start, trunk), atRelease: around(release, trunk) };
+
+  // The ground under the front foot, and the athlete's height in the picture (see SHARE).
+  base.groundY = frontC ? frontC.groundY : quantile(toes.map(q => q.y), .95);
+  const trunks = seen.flatMap(f => [11, 12, 23, 24].every(k => visible(f.pose![k], .3))
+    ? [Math.hypot(((f.pose![11].x + f.pose![12].x) - (f.pose![23].x + f.pose![24].x)) / 2 * W, ((f.pose![11].y + f.pose![12].y) - (f.pose![23].y + f.pose![24].y)) / 2 * H)] : []);
+  const trunkPx = trunks.length ? quantile(trunks, .9) : NaN;
+  base.bodyPx = trunkPx > 0 ? trunkPx / TRUNK_SHARE : null;
+
+  // The stance at the delivery start: the feet on the ground then, foremost to rearmost.
+  if (start) {
+    const down = plants.map((_, i) => i).filter(i => begins(i) <= start.pts + .01 && plants[i].to >= start.pts - .01);
+    if (down.length >= 2) { const xs = down.map(i => base.contacts[i].x * direction); base.stancePx = Math.max(...xs) - Math.min(...xs); }
+  }
+  if (style === 'glide' && rear !== null && base.start !== null) base.glidePx = (base.contacts[rear].x - base.contacts[base.start].x) * direction;
+
+  // The centre of mass's forward speed (de Leva, as the hurdle).
+  const com = seen.flatMap(f => { const c = centreOfMass(f.pose!); return c ? [{ t: f.pts, x: c.x * W }] : []; });
+  const comSpeed = (m: Moment | null) => {
+    if (!m) return null;
+    const near = com.filter(q => Math.abs(q.t - m.pts) <= COM_SECONDS);
+    if (near.length < 5) return null;
+    const mt = near.reduce((a, q) => a + q.t, 0) / near.length;
+    return direction * near.reduce((a, q) => a + (q.t - mt) * q.x, 0) / near.reduce((a, q) => a + (q.t - mt) ** 2, 0);
+  };
+  base.com = { atStart: comSpeed(start), atRelease: comSpeed(release) };
   base.moments = momentsOf(base, frames, W, H, rearDown, frontDown);
   return base;
 }
@@ -301,6 +356,21 @@ function momentsOf(r: ThrowResult, frames: readonly CrouchFrame[], W: number, H:
     add('least', 'ブロック膝が最も曲がった時', '最も曲がる', least, s => [knee(frontLabel, r.frontKnee.least, s.front)]);
   add('release', 'リリース', 'リリース', r.release, s => [trunk(r.trunk.atRelease), knee(frontLabel, r.frontKnee.atRelease, s.front)]);
   return out.sort((a, b) => a.pts - b.pts);
+}
+
+/** The release with the implement's flight (implement.ts) and the athlete's height (m; without it, no speed or metres).
+ * The height of the release is the shot's centre, or the javelin's grip (the throwing wrist). */
+export function releaseMeasures(r: ThrowResult, flight: FlightPath | null, attitude: number | null, heightM: number | null): ReleaseMeasures {
+  const scale = heightM && r.bodyPx ? r.bodyPx / heightM : null;
+  const y = r.event === 'shot' ? flight?.y0 ?? r.releaseHand?.y ?? null : r.releaseHand?.y ?? null;
+  const share = y !== null && r.groundY !== null && r.bodyPx ? (r.groundY - y) / r.bodyPx : null;
+  return {
+    speed: flight && scale ? flight.speedPx / scale : null,
+    angle: flight?.angle ?? null,
+    height: share !== null && heightM ? share * heightM : null, heightShare: share,
+    attitude: r.event === 'jav' ? attitude : null,
+    attack: r.event === 'jav' && attitude !== null && flight ? attitude - flight.angle : null,
+  };
 }
 
 /** The moments' names: the rear and front feet by the throwing hand (a right-hander's rear foot is the right). */

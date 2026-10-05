@@ -5,16 +5,22 @@ import PlayerBar from '../sprint10/PlayerBar';
 import type { Phase } from '../sprint10/crouch-figure';
 import type { CrouchFrame } from '../sprint10/crouch';
 import { measureCrouch } from '../sprint10/recording';
-import { CrouchReplay, frameInterval, insideFrame, PhaseFigures, type ReplayEvent } from '../sprint10/CrouchViews';
+import { CrouchReplay, frameInterval, insideFrame, PhaseFigures, type FigureOverlay, type ReplayEvent } from '../sprint10/CrouchViews';
 import { nearestPoseFrame } from '../cmj/pose-drawing';
-import { analyzeThrow, throwNames, THROW_VERSION, type Hand, type ShotStyle, type ThrowEvent, type ThrowResult } from './analysis';
-import { THROW_GUIDE, throwAdvice } from './advice';
+import { analyzeThrow, releaseMeasures, throwNames, THROW_VERSION, type Hand, type ShotStyle, type ThrowEvent, type ThrowResult } from './analysis';
+import { kmh, SPREAD, THROW_GUIDE, throwAdvice } from './advice';
+import { flightAt, javelinAttitude, searchFlight, type FlightPath } from './implement';
+import { measureImplement, type ImplementFrames } from './recording';
 import '../sprint10/sprint10.css';
 
 /** One ◀/▶ tap moves the line by 0.2% of the frame width. */
 const NUDGE = .002;
-type Tab = 'advice' | 'pose' | 'times' | 'replay';
-const TABS: [Tab, string][] = [['advice', 'ポイント'], ['pose', '姿勢'], ['times', '時間'], ['replay', 'スロー']];
+type Tab = 'advice' | 'pose' | 'numbers' | 'release' | 'replay';
+const TABS: [Tab, string][] = [['advice', 'ポイント'], ['pose', '姿勢'], ['numbers', '数値'], ['release', 'リリース'], ['replay', 'スロー']];
+/** Without the athlete's height the implement is searched for at this one (the angles do not depend on it). */
+const DEFAULT_HEIGHT = 1.65;
+/** The height asked for (cm). */
+const HEIGHT_RANGE = [100, 230] as const;
 const LEGEND = { jav: [['#ffb02e', '体幹（腰→肩）'], ['#ff6fd8', 'ブロック脚の膝']], shot: [['#ffb02e', '体幹（腰→肩）'], ['#ff6fd8', '前脚の膝'], ['#b58cff', '後ろ脚の膝']] } as const;
 const G = THROW_GUIDE;
 const fixed = (v: number | null | undefined, digits = 3) => v == null ? '—' : v.toFixed(digits);
@@ -37,12 +43,32 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
   const [measured, setMeasured] = useState<{ frames: CrouchFrame[]; width: number; height: number; refiner: 'webgpu' | 'wasm' | null } | null>(null);
   // The release frame chosen by the user in the replay; null: the one found.
   const [releaseFrame, setReleaseFrame] = useState<number | null>(null);
+  // The athlete's height (cm, optional): the scale for the release speed and the metres.
+  const [heightText, setHeightText] = useState('');
+  const heightNumber = Number(heightText), heightM = heightText && heightNumber >= HEIGHT_RANGE[0] && heightNumber <= HEIGHT_RANGE[1] ? heightNumber / 100 : null;
+  // The pictures around the release (read after the pose), and the implement's flight found in them.
+  const [implement, setImplement] = useState<ImplementFrames | null>(null);
+  const [flight, setFlight] = useState<{ path: FlightPath | null; attitude: number | null; scale: number } | null>(null);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   useEffect(() => () => { owner.current?.abort(); owner.current = null; }, []);
   useEffect(() => { setReleaseFrame(null); }, [measured, hand]);
   const result: ThrowResult | null = useMemo(() => measured && hand ? analyzeThrow(measured.frames, { width: measured.width, height: measured.height,
     event, hand, style: style ?? undefined, releaseFrame }) : null, [measured, event, hand, style, releaseFrame]);
-  const advice = useMemo(() => result && !result.reason ? throwAdvice(result) : [], [result]);
+  // The flight is searched for after drawing (about a second of work).
+  useEffect(() => {
+    setFlight(null);
+    if (!result || result.reason || !implement || !result.release || !result.releaseHand || !result.bodyPx) return;
+    let off = false;
+    const timer = setTimeout(() => {
+      const scale = result.bodyPx! / (heightM ?? DEFAULT_HEIGHT);
+      const path = searchFlight(implement.masks, result.releaseHand!, result.release!.pts, result.direction, scale, event);
+      const attitude = path && event === 'jav' ? javelinAttitude(implement.masks, path, scale, result.direction) : null;
+      if (!off) setFlight({ path, attitude, scale });
+    }, 30);
+    return () => { off = true; clearTimeout(timer); };
+  }, [result, implement, heightM, event]);
+  const release = useMemo(() => result && !result.reason && flight ? releaseMeasures(result, flight.path, flight.attitude, heightM) : null, [result, flight, heightM]);
+  const advice = useMemo(() => result && !result.reason ? throwAdvice(result, release, heightM) : [], [result, release, heightM]);
   const checks = advice.filter(a => a.level === 'check').length;
   const names = throwNames({ event, hand: hand ?? 'right' });
   const events: ReplayEvent[] = useMemo(() => {
@@ -71,7 +97,7 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
 
   function changeFile(next: File | null) {
     owner.current?.abort(); owner.current = null; setBusy(false);
-    setFile(next); setUrl(next ? URL.createObjectURL(next) : ''); setLoaded(false); setMeasured(null); setMessage('');
+    setFile(next); setUrl(next ? URL.createObjectURL(next) : ''); setLoaded(false); setMeasured(null); setImplement(null); setMessage('');
   }
   function move(x: number) { if (!busy) setLine(Math.max(.01, Math.min(.99, x))); }
   function drag(e: React.PointerEvent<HTMLButtonElement>) {
@@ -82,11 +108,21 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
   async function analyze() {
     if (!file || busy) return;
     const control = new AbortController(); owner.current = control;
-    setBusy(true); setMeasured(null); setProgress(0); setMessage('');
+    setBusy(true); setMeasured(null); setImplement(null); setProgress(0); setMessage('');
     try {
-      const data = await measureCrouch(file, line, control.signal, (fraction, text) => { setProgress(fraction); setMessage(text); });
+      const data = await measureCrouch(file, line, control.signal, (fraction, text) => { setProgress(.85 * fraction); setMessage(text); });
       if (control.signal.aborted) return;
-      setMeasured(data); setMessage('解析が終わりました。');
+      // The pictures around the release, for the implement (read again once the release is known).
+      let frames: ImplementFrames | null = null;
+      const found = hand ? analyzeThrow(data.frames, { width: data.width, height: data.height, event, hand, style: style ?? undefined }) : null;
+      if (found && !found.reason && found.release && found.releaseHand && found.bodyPx) {
+        try {
+          frames = await measureImplement(file, data.frames, data.width, data.height, found.release, found.releaseHand, found.direction,
+            found.bodyPx / (heightM ?? DEFAULT_HEIGHT), control.signal, (fraction, text) => { setProgress(.85 + .15 * fraction); setMessage(text); });
+        } catch (e) { if (control.signal.aborted) return; frames = null; }
+      }
+      if (control.signal.aborted) return;
+      setMeasured(data); setImplement(frames); setMessage('解析が終わりました。');
     } catch (e) {
       if (!control.signal.aborted) setMessage(e instanceof Error ? e.message : String(e));
     } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
@@ -105,7 +141,8 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
   }
   function save() {
     if (!result) return;
-    const blob = new Blob([JSON.stringify({ version: THROW_VERSION, file: file?.name, line, hand, style, releaseFrame, result }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ version: THROW_VERSION, file: file?.name, line, hand, style, heightCm: heightM ? heightM * 100 : null, releaseFrame, result,
+      release, flight: flight?.path ?? null }, null, 2)], { type: 'application/json' });
     const href = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = href; a.download = `${event === 'jav' ? 'javelin' : 'shot-put'}-result.json`; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
   }
@@ -129,6 +166,14 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
     ['開始の上体', result.trunk.atStart === null ? '—' : String(Math.round(Math.abs(result.trunk.atStart))), '°', result.trunk.atStart === null ? undefined : result.trunk.atStart < 0 ? '後ろへ' : '前へ'],
     ['リリースの前膝', round(k?.atRelease), '°', `参考 ${G.shotRelease.frontKnee}°前後`],
   ];
+  // The release picture: the implement's places over the frames searched, and the way it leaves.
+  const overlay: FigureOverlay = useMemo(() => (p, ctx, to, unit) => {
+    const path = flight?.path; if (p.key !== 'release' || !path || !measured || !flight) return;
+    const pts = (implement?.masks ?? []).filter(m => m.pts - path.t0 >= 0).slice(0, 10).map(m => flightAt(path, m.pts, flight.scale));
+    ctx.save(); ctx.fillStyle = '#7dff6b'; ctx.strokeStyle = '#08120f'; ctx.lineWidth = unit * .15;
+    for (const q of pts) { const c = to({ x: q.x / measured.width, y: q.y / measured.height }); ctx.beginPath(); ctx.arc(c.x, c.y, unit * .45, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+    ctx.restore();
+  }, [flight, implement, measured]);
   const guides: Record<string, string> = jav
     ? { front: `参考：トップ選手のブロック膝 ${G.blockKnee.contact[0]}〜${G.blockKnee.contact[1]}°、上体は後ろへ${G.javTrunkBack.men}〜${G.javTrunkBack.women}°前後`,
       least: `参考：トップ選手 ${G.blockKnee.least[0]}〜${G.blockKnee.least[1]}°`, release: `参考：トップ選手のブロック膝 ${G.blockKnee.release[0]}〜${G.blockKnee.release[1]}°` }
@@ -175,6 +220,9 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
       {!jav && <div className="throw-choices" role="group" aria-label="投法"><span>投法</span>
         {([['glide', 'グライド'], ['standing', '立ち投げ（助走なし）']] as const).map(([id, label]) =>
           <button key={id} type="button" aria-pressed={style === id} disabled={busy} onClick={() => setStyle(id)}>{label}</button>)}</div>}
+      <label className="throw-height"><span>身長（任意）</span><input type="number" inputMode="decimal" min={HEIGHT_RANGE[0]} max={HEIGHT_RANGE[1]} step="1" placeholder="例 160"
+        value={heightText} onChange={e => setHeightText(e.target.value)} aria-label="選手の身長（cm）" /><small>cm</small></label>
+      <p className="sprint10-hint">身長を入れると、リリースの速度（時速、目安）と、高さ・足幅などをm単位（目安）でも出します。角度と身長に対する割合は、入れなくても出ます。</p>
     </section>
     <section className="sprint10-card"><h2>3　解析する</h2>
       <button className="sprint10-primary" disabled={!ready || busy || !settingsReady} onClick={() => void analyze()}>解析する</button>
@@ -188,7 +236,7 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
           <div key={label}><span>{label}</span><strong>{value}<small>{value === '—' ? '' : unit}</small></strong>{note && <em>{note}</em>}</div>)}</div>
         {!measured.refiner && <p className="sprint10-note">高精度の骨格モデル（RTMPose）を読み込めなかったため、角度と骨格の表示はMediaPipeの骨格を使っています。</p>}
         {result.releaseSetByUser && <p className="sprint10-hint">リリースは、スロー再生で選んだコマ（{result.release!.pts.toFixed(3)}秒）を使っています。</p>}
-        <div ref={tabs} className="sprint10-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
+        <div ref={tabs} className="sprint10-tabs throw-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
           <button key={id} id={`throw-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`throw-panel-${id}`} onClick={() => choose(id)}>
             {label}{id === 'advice' && checks > 0 && <span className="sprint10-badge" aria-label={`確かめたい点 ${checks}件`}>{checks}</span>}</button>)}</div>
         <div ref={panels} className="sprint10-panels">
@@ -203,9 +251,18 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
             <p className="sprint10-hint">点線は鉛直、弧が測った角度。上体は鉛直からの傾き（前傾・後傾）です。画像を左右にスワイプして局面を切り替えます。</p>
             {result.moments.length ? <PhaseFigures url={url} frames={measured.frames} phases={result.moments} onShow={show} guides={guides} /> : <p>角度を測れる局面がありませんでした。</p>}
           </div>
-          <div id="throw-panel-times" role="tabpanel" aria-labelledby="throw-tab-times" hidden={tab !== 'times'}>
+          <div id="throw-panel-numbers" role="tabpanel" aria-labelledby="throw-tab-numbers" hidden={tab !== 'numbers'}>
+            <h3>局面の時間</h3>
             <TimeTable result={result} />
-            <p className="sprint10-hint">—：映っていないため出せない値。参考はトップ選手の値です（{jav ? '世界選手権の決勝、やり投げ' : '世界選手権の女子決勝・日本のトップ8女子、グライド'}）。</p>
+            <h3>姿勢</h3>
+            <PostureTable result={result} heightM={heightM} />
+            <p className="sprint10-hint">—：映っていないため出せない値。参考はトップ選手の値です（{jav ? '世界選手権の決勝・日本選手権、やり投げ' : '世界選手権の女子決勝・日本のトップ選手、グライド'}）。上体は鉛直からの傾き、膝は伸び切って180°です。</p>
+          </div>
+          <div id="throw-panel-release" role="tabpanel" aria-labelledby="throw-tab-release" hidden={tab !== 'release'}>
+            <ReleasePanel result={result} release={release} searching={!!implement && !flight} found={implement !== null} heightM={heightM} />
+            {release?.angle != null && result.moments.some(m => m.key === 'release') &&
+              <PhaseFigures url={url} frames={measured.frames} phases={result.moments.filter(m => m.key === 'release')} onShow={show} overlay={overlay}
+                guides={{ release: '緑の点：投げた直後の用具の位置（動画から求めた飛び方）' }} />}
           </div>
           <div id="throw-panel-replay" role="tabpanel" aria-labelledby="throw-tab-replay" hidden={tab !== 'replay'} className="sprint10-replay">
             <CrouchReplay url={url} video={replay} frames={measured.frames} phases={result.moments} events={events} />
@@ -221,6 +278,9 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
           <p>接地は、つま先が地面の高さで止まった瞬間を骨格の動きから判定しています。リリースは、選んだ側の手首が最も高くなった瞬間です。真横から1秒120〜240コマで撮った7本（ジャベリックスロー・やり投げ4本、砲丸投グライド3本）をChromeとSafari系のブラウザで解析し、映像で見た瞬間と比べると、前足の接地は0〜3コマ遅く、砲丸投の後ろ足は離地が0〜1コマ早く・接地が0〜3コマ早く、リリースは2コマ早い〜3コマ遅いでした（120コマ/秒で1コマ＝0.008秒）。そのため時間は±0.03秒ほど、膝の角度は、膝が速く動く瞬間（リリースなど）ではコマが1〜2ずれると数度変わります。やり投げの後ろ足（最後の1歩）は、着いた後も足が滑り、止まる瞬間が0.1秒ほど遅れたため出していません。</p>
           {jav ? <p>参考値の出典：ブロック脚の膝はCamposら（2004、1999年世界選手権男子決勝7人：接地158〜178°・最も曲がった時137〜163°・リリース137〜173°）とBennett・Walker・Bissas（2018、2017年世界選手権決勝：リリース 男子162±22°・女子169±17°）。ブロック脚の接地からリリースまでの時間はBennettら（2018：男子0.129±0.013秒・女子0.141±0.012秒）、Camposら（2004：0.11〜0.14秒）、瀧川ら（2020、日本選手権女子決勝：0.132±0.023秒）。接地での上体の後傾はBennettら（2018：男子14±3°・女子16±4°）、田内ら（2012：約15°）。いずれもやり投げの値で、ジャベリックスローの研究値は見つかりませんでした。</p>
             : <p>参考値の出典：グライドの局面時間はDinsdale・Thomas・Bissas（2018、2017年世界選手権女子決勝のグライドの7人：グライド0.136±0.014秒・右足→左足0.112±0.039秒・左足→リリース0.252±0.028秒）と田内ら（2006、日本のトップ8女子：0.148・0.165・0.233秒）。リリースの上体はDinsdaleら（2018：前へ6±6°）、リリースの膝はMastalerz・Sadowski（2022、トップ男子3人：前膝173±3°・後ろ膝142±11°）。パワーポジションの膝と上体の角度は、比べられる研究の値が見つかりませんでした（Young・Li 2005は、右足接地の右膝が曲がっている選手ほど記録が良い傾向を7人の女子で報告しています）。立ち投げの時間の研究値も見つかりませんでした。</p>}
+          <p>リリース：投げた直後の数コマで背景と違う所（風で揺れる葉など、もともと動く所は大きく違う時だけ）から、手の近くを出て重力で落ちながらまっすぐ飛ぶ道筋を探し、リリースの瞬間の速さと角度を出しています。やりは後ろの端、砲丸は中心です。7本（ジャベ4本・砲丸3本）をChromeとSafari系で解析した差は、速度で最大6%、角度で最大6°でした。速度の縮尺は、骨格の胴（肩の中点〜腰の中点）の長さと入力した身長の比です（胴は身長の0.288）。記録から求めた速度の目安（ジャベリックスロー：前田・丹松 2008 の飛距離と初速度の関係式、砲丸：記録7m50からの逆算）と比べると、4人・6試技で差は最大11%・平均7%でした。脚（股関節〜足首）を使うと骨格の点の位置の都合で脚が短く出て、速度が15〜25%大きくなったため使っていません。目安自体にも幅があり（関係式のばらつき、どの試技の記録かが不明）、スピードガンなどとの比較はしていません。投げる腕の側から撮った動画（7本とも）で確かめています。用具が手から離れた後、0.05秒以上映っていないと出せません。</p>
+          {jav ? <p>リリースの参考値：Bennett・Walker・Bissas（2018、2017年世界選手権決勝：速度 男子 時速100km（27.9±0.7 m/秒）・女子 時速87km（24.3±1.0 m/秒）、角度 34.4±2.7°・34.9±3.3°、高さ 2.00±0.12・1.86±0.10 m、やりの向き 39.6±4.2°・40.7±5.7°、迎え角 5.2±3.7°・5.9±6.4°）、瀧川ら（2020、日本選手権女子：時速81km（22.6±0.7 m/秒）、ブロック脚の接地からリリースまでに重心の前に進む速さが44±8%低下）、前田・丹松（2008、ジャベリックスローの中学生：角度の多くが30〜45°、迎え角−5〜50°）。ブロックでの減速は、重心（de Leva 1996）の前に進む速さを接地とリリースの前後0.06秒で求めた値で、ブラウザによって最大12ポイント違いました。</p>
+            : <p>リリース・姿勢の参考値：Dinsdale・Thomas・Bissas（2018、2017年世界選手権女子決勝のグライド7人：速度 時速46km（12.67±0.32 m/秒）、角度36.4±1.3°、高さ2.07±0.04 m＝身長の116±3%、足幅1.08±0.15 m＝身長の61±9%、グライドの距離0.80±0.12 m）、加藤ら（2019、日本のトップ3女子：時速43km（11.90±0.12 m/秒）、33.7±1.5°）、Schaa（2010、2009年世界選手権男子のグライド：足幅1.25±0.07 m、グライド0.90±0.03 m）。足幅は前足と後ろ足のつま先の前後の距離、グライドの距離は後ろ足の構えの位置から接地の位置まで、身長の割合は画面上の身長（上）に対する割合です。</p>}
           <p>骨格：選手を見つけて追うのはMediaPipe、接地・リリースの判定、角度と画像・スロー再生の骨格はRTMPose（{measured.refiner === 'webgpu' ? 'WebGPU' : measured.refiner === 'wasm' ? 'WebAssembly' : '今回は未使用'}）です。</p></details>
       </>}
       <button onClick={save}>結果を保存（JSON）</button>
@@ -232,15 +292,70 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
 /** The phases' times with the top throwers' values beside them. */
 function TimeTable({ result }: { result: ThrowResult }) {
   const t = result.times, n = throwNames(result);
-  const rows: [string, number | null, string][] = result.event === 'jav'
-    ? [[result.front !== null && result.contacts[result.front].touchdown !== null ? 'ブロック脚の接地 → リリース' : '投げ始め（腰が最も後ろ） → リリース', t.delivery, `男子 ${G.javDelivery.men}・女子 ${G.javDelivery.women}`]]
+  const rows: [string, string, string][] = result.event === 'jav'
+    ? [[result.front !== null && result.contacts[result.front].touchdown !== null ? 'ブロック脚の接地 → リリース' : '投げ始め（腰が最も後ろ） → リリース', seconds(t.delivery), `男子 ${G.javDelivery.men}秒・女子 ${G.javDelivery.women}秒（世界選手権の決勝）`]]
     : result.style === 'glide'
-    ? [[`グライド（${n.rearFoot}が離れる → ${n.rearFoot}の接地）`, t.glide, `${G.shotTimes.glide}・${G.shotTimesJapan.glide}`],
-      [`移行（${n.rearFoot}の接地 → ${n.frontFoot}の接地）`, t.rearToFront, `${G.shotTimes.transition}・${G.shotTimesJapan.transition}`],
-      [`突き出し（${n.frontFoot}の接地 → リリース）`, t.delivery, `${G.shotTimes.delivery}・${G.shotTimesJapan.delivery}`]]
-    : [['突き出し（腰が最も後ろ → リリース）', t.delivery, '—']];
-  return <div className="sprint10-table-wrap"><table className="sprint10-table throw-times" aria-label="局面の時間">
-    <thead><tr><th scope="col">局面</th><th scope="col">時間<small>秒</small></th><th scope="col">参考<small>秒</small></th></tr></thead>
-    <tbody>{rows.map(([label, value, ref]) => <tr key={label}><th scope="row">{label}</th><td>{fixed(value)}</td><td>{ref}</td></tr>)}</tbody>
-  </table></div>;
+    ? [[`グライド（${n.rearFoot}が離れる → ${n.rearFoot}の接地）`, seconds(t.glide), `${G.shotTimes.glide}秒（世界選手権の女子決勝）・${G.shotTimesJapan.glide}秒（日本のトップ8女子）`],
+      [`移行（${n.rearFoot}の接地 → ${n.frontFoot}の接地）`, seconds(t.rearToFront), `${G.shotTimes.transition}秒・${G.shotTimesJapan.transition}秒`],
+      [`突き出し（${n.frontFoot}の接地 → リリース）`, seconds(t.delivery), `${G.shotTimes.delivery}秒・${G.shotTimesJapan.delivery}秒`]]
+    : [['突き出し（腰が最も後ろ → リリース）', seconds(t.delivery), '']];
+  return <NumberList label="局面の時間" rows={rows} />;
+}
+
+const pct = (v: number | null) => v === null ? '—' : `${Math.round(v * 100)}%`;
+const deg = (v: number | null | undefined) => v == null ? '—' : `${Math.round(v)}°`;
+const lean = (v: number | null | undefined) => v == null ? '—' : v < 0 ? `後ろへ ${Math.round(-v)}°` : `前へ ${Math.round(v)}°`;
+
+/** The posture numbers of each event, with the top throwers' values beside them. */
+function PostureTable({ result: r, heightM }: { result: ThrowResult; heightM: number | null }) {
+  const k = r.frontKnee, glide = r.style === 'glide', n = throwNames(r);
+  const share = (px: number | null) => px === null || !r.bodyPx ? null : px / r.bodyPx;
+  const metres = (px: number | null) => { const s = share(px); return s === null || !heightM ? '' : `（約${(s * heightM).toFixed(2)} m）`; };
+  const loss = r.com.atStart && r.com.atRelease !== null ? 1 - r.com.atRelease / r.com.atStart : null;
+  const rows: [string, string, string][] = r.event === 'jav' ? [
+    ['ブロック脚の接地：上体', lean(r.trunk.atStart), `後ろへ 男子${G.javTrunkBack.men}°・女子${G.javTrunkBack.women}°`],
+    ['ブロック膝：接地', deg(k.atStart), `${G.blockKnee.contact[0]}〜${G.blockKnee.contact[1]}°`],
+    ['ブロック膝：最も曲がった時', deg(k.least), `${G.blockKnee.least[0]}〜${G.blockKnee.least[1]}°`],
+    ['ブロック膝：リリース', deg(k.atRelease), `${G.blockKnee.release[0]}〜${G.blockKnee.release[1]}°`],
+    ['リリース：上体', lean(r.trunk.atRelease), '—'],
+    ['ブロックでの減速（重心の前に進む速さ、接地→リリース）', pct(loss), `${Math.round(G.javDeceleration * 100)}%（日本選手権女子）`],
+  ] : [
+    ...(glide ? [[`グライドの距離（${n.rearFoot}が進んだ距離）`, `${pct(share(r.glidePx))}×身長${metres(r.glidePx)}`, `${G.shotGlide.women} m（女子）・${G.shotGlide.men} m（男子）`] as [string, string, string]] : []),
+    [`足幅（${glide ? `${n.frontFoot}の接地` : '突き出しの開始'}、前後の足の間）`, `${pct(share(r.stancePx))}×身長${metres(r.stancePx)}`, `${Math.round(G.shotStance.share * 100)}%・${G.shotStance.women} m（女子）`],
+    [`上体：${glide ? `${n.frontFoot}の接地` : '開始'} → リリース`, `${lean(r.trunk.atStart)} → ${lean(r.trunk.atRelease)}`, `リリースで前へ ${G.shotRelease.trunk}°`],
+    ['上体を起こした角度', r.trunk.atStart !== null && r.trunk.atRelease !== null ? `${Math.round(r.trunk.atRelease - r.trunk.atStart)}°` : '—', '—'],
+    [`後ろ膝：${glide ? `${n.frontFoot}の接地` : '開始'} → リリース`, `${deg(r.rearKnee.atStart)} → ${deg(r.rearKnee.atRelease)}`, `リリースで ${G.shotRelease.rearKnee}°`],
+    [`前膝：${glide ? '接地' : '開始'} / 最も曲がった時 / リリース`, `${deg(k.atStart)} / ${deg(k.least)} / ${deg(k.atRelease)}`, `リリースで ${G.shotRelease.frontKnee}°`],
+  ];
+  return <NumberList label="姿勢の数値" rows={rows.map(([a, b, c]) => [a, b, c === '—' ? '' : c])} />;
+}
+
+const seconds = (v: number | null) => v === null ? '—' : `${v.toFixed(3)}秒`;
+/** Items one under another, each its name and value on a line and the top throwers' value under them (a table
+ * of three columns was wider than a phone's screen). */
+function NumberList({ label, rows }: { label: string; rows: [string, string, string][] }) {
+  return <dl className="throw-list" aria-label={label}>{rows.map(([name, value, ref]) =>
+    <div key={name}><dt>{name}</dt><dd>{value}</dd>{ref && <small>参考 {ref}</small>}</div>)}</dl>;
+}
+
+/** The release: speed, angle, height and, for a javelin, its attitude and angle of attack. */
+function ReleasePanel({ result: r, release: rel, searching, found, heightM }: { result: ThrowResult; release: ReturnType<typeof releaseMeasures> | null; searching: boolean; found: boolean; heightM: number | null }) {
+  const jav = r.event === 'jav', J = G.javRelease, S = G.shotReleaseFull;
+  if (!found) return <p className="sprint10-note">リリースの前後の映像を読めなかったため、用具の飛び方を調べていません。</p>;
+  if (searching) return <p role="status">用具の飛び方を調べています…</p>;
+  if (!rel || rel.angle === null) return <p className="sprint10-note">投げた直後の用具を見つけられませんでした。用具が手から離れた後も0.05秒（120コマ/秒で6コマ）以上映るよう、選手の上と前に余白をとって撮影してください。</p>;
+  const tiles: [string, string, string, string][] = [
+    ['リリース速度（目安）', rel.speed === null ? '—' : `約${kmh(rel.speed)}`, 'km/h', rel.speed === null ? '身長を入れると出ます'
+      : `目安の幅 ${kmh(rel.speed * (1 - SPREAD))}〜${kmh(rel.speed * (1 + SPREAD))} km/h・参考 ${jav ? `男子${kmh(J.speed.men)}・女子${kmh(J.speed.women)} km/h（やり投げ）` : `女子${kmh(S.speed)} km/h`}`],
+    ['リリース角度', deg(rel.angle).replace('°', ''), '°', jav ? `参考 男子${J.angle.men}・女子${J.angle.women}` : `参考 女子${S.angle}`],
+    ['リリースの高さ', rel.height === null ? (rel.heightShare === null ? '—' : `${Math.round(rel.heightShare * 100)}`) : `約${rel.height.toFixed(2)}`, rel.height === null ? '%（身長比）' : 'm',
+      rel.heightShare === null ? '' : rel.height === null ? (jav ? '' : `参考 ${Math.round(S.heightShare * 100)}%`) : `身長の${Math.round(rel.heightShare * 100)}%${jav ? `・参考 男子${J.height.men}・女子${J.height.women} m` : `・参考 ${Math.round(S.heightShare * 100)}%`}`],
+    ...(jav ? [['やりの向き（姿勢角）', deg(rel.attitude).replace('°', ''), '°', `迎え角 ${rel.attack === null ? '—' : `${rel.attack >= 0 ? '+' : ''}${Math.round(rel.attack)}°`}・参考 ${J.attack.men}〜${J.attack.women}°`] as [string, string, string, string]] : []),
+  ];
+  return <>
+    <div className="sprint10-metrics sprint10-summary">{tiles.map(([label, value, unit, note]) =>
+      <div key={label}><span>{label}</span><strong>{value}<small>{value === '—' ? '' : unit}</small></strong>{note && <em>{note}</em>}</div>)}</div>
+    <p className="sprint10-note"><strong>リリース速度とm単位の値は、動画から推定した目安です。</strong>記録から求めた値と比べた差は平均7%・最大13%だったため、時速は±10%の幅を付けて出しています。同じ選手を同じ撮り方で撮った試技どうしなら、幅を超える違いは変化と見てよい目安です。角度は物差しによらず、速度より確かです。</p>
+    <p className="sprint10-hint">投げた直後の用具を動画から探し、重力で落ちながらまっすぐ飛ぶ道筋に当てはめて、リリースの瞬間の速さと角度を出しています（{jav ? 'やりは後ろの端' : '砲丸は中心'}）。速度と高さ（m）は、身長と胴の長さからの縮尺です{heightM ? '' : '（身長が未入力のため速度は出していません）'}。{jav ? '迎え角は、やりの向きから飛び出す角度を引いた値です（プラスはやりの先が上向き）。' : ''}</p>
+  </>;
 }
