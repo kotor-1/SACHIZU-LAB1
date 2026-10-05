@@ -97,3 +97,8 @@
 .hurdle-distances td{font-size:16px;font-weight:700}
 .sprint10 .sprint10-summary em{font-style:normal;font-size:11px;line-height:1.3;color:#557468}
 .hurdle-reference{opacity:.92}.hurdle-reference thead th:first-child{color:#557468}
+.throw-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin:12px 0 0}.throw-choices>span{grid-column:1/-1;font-weight:700}
+.sprint10 .throw-choices button{min-height:44px;padding:4px;font-weight:700}
+.sprint10 .throw-choices button[aria-pressed=true]{background:#135a48;color:#fff;border-color:#135a48}
+.throw-release-fix{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 0}.sprint10 .throw-release-fix button{flex:1 1 auto;min-height:44px;font-weight:700}
+.throw-times td{font-variant-numeric:tabular-nums}.throw-times td:nth-child(2){font-size:16px;font-weight:700}.throw-times td:nth-child(3){font-size:13px;color:#557468}
