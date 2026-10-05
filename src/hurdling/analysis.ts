@@ -111,10 +111,11 @@ const between = (a: Point, b: Point, f: number): Point => ({ x: a.x + f * (b.x -
 const SEGMENT_POINTS = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
 /** Centre of mass (normalized) from de Leva's (1996) mean segment masses, as the
  * CMJ (src/cmj/center-of-mass.ts); the head at the ears, or the nose when the
- * pose has no ears (RTMPose here). Null when a point is missing. */
-export function centreOfMass(p: CrouchPoint[]): Point | null {
-  if (!SEGMENT_POINTS.every(i => visible(p[i], .3))) return null;
-  const head = visible(p[7], .3) && visible(p[8], .3) ? between(p[7], p[8], .5) : visible(p[0], .3) ? p[0] : null;
+ * pose has no ears (RTMPose here). Null when a point is missing (below
+ * `minVisibility`; the high jump takes RTMPose's points whatever their score). */
+export function centreOfMass(p: CrouchPoint[], minVisibility = .3): Point | null {
+  if (!SEGMENT_POINTS.every(i => visible(p[i], minVisibility))) return null;
+  const head = visible(p[7], minVisibility) && visible(p[8], minVisibility) ? between(p[7], p[8], .5) : visible(p[0], minVisibility) ? p[0] : null;
   if (!head) return null;
   const shoulders = between(p[11], p[12], .5), hips = between(p[23], p[24], .5);
   const parts: [number, Point][] = [[.0681, head], [.43015, between(shoulders, hips, .5051)]];
