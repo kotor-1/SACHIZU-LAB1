@@ -6,19 +6,22 @@ import { useFirstFrame } from './first-frame';
 import PlayerBar from './PlayerBar';
 import { crouchPhases, type Phase } from './crouch-figure';
 import { crouchAdvice, GUIDE } from './crouch-advice';
-import CrouchCharts from './CrouchCharts';
+import CrouchCharts, { StepTable } from './CrouchCharts';
 import { CrouchReplay, frameInterval, insideFrame, PhaseFigures, type ReplayEvent } from './CrouchViews';
 
 /** One ◀/▶ tap moves the line by 0.2% of the frame width. */
 const NUDGE = .002;
 const seconds = (v: number | null | undefined, digits = 3) => v == null ? '—' : v.toFixed(digits);
-const value = (v: number | null | undefined, digits = 2) => v == null ? '—' : v.toFixed(digits);
+type Tab = 'advice' | 'pose' | 'steps' | 'replay';
+const TABS: [Tab, string][] = [['advice', 'ポイント'], ['pose', '姿勢'], ['steps', '歩ごと'], ['replay', 'スロー']];
+/** The colours of the measured lines on the pictures (markColor in crouch-figure). */
+const LEGEND = [['#ffb02e', '体幹（腰→肩）'], ['#3ad7ff', '脛（足首→膝）'], ['#ff6fd8', '前膝'], ['#b58cff', '後膝']] as const;
 
 /** Crouch start from the blocks to the fifth step at most, filmed from the side.
  * Motion only: times and angles, nothing that needs a distance (the user,
  * 2026-10-03: 「距離が必要なものは無しにして動作解析に徹底する」). */
 export default function CrouchLab() {
-  const video = useRef<HTMLVideoElement>(null), replay = useRef<HTMLVideoElement>(null), replayCard = useRef<HTMLDivElement>(null);
+  const video = useRef<HTMLVideoElement>(null), replay = useRef<HTMLVideoElement>(null);
   const owner = useRef<AbortController | null>(null), resultCard = useRef<HTMLElement>(null);
   const [file, setFile] = useState<File | null>(null), [url, setUrl] = useState('');
   const [loaded, setLoaded] = useState(false), [busy, setBusy] = useState(false), [progress, setProgress] = useState(0);
@@ -32,12 +35,27 @@ export default function CrouchLab() {
   const result: CrouchResult | null = useMemo(() => measured ? analyzeCrouchStart(measured.frames, { width: measured.width, height: measured.height }) : null, [measured]);
   const phases: Phase[] = useMemo(() => result && !result.reason ? crouchPhases(result) : [], [result]);
   const advice = useMemo(() => result && !result.reason ? crouchAdvice(result) : [], [result]);
+  const checks = advice.filter(a => a.level === 'check').length;
   const events: ReplayEvent[] = useMemo(() => !result || result.reason ? [] : [
-    ...(result.set ? [{ label: '構え', pts: result.set.pts }] : []),
-    ...(result.blockClearance ? [{ label: 'ブロックを離れる', pts: result.blockClearance.pts }] : []),
-    ...result.contacts.flatMap(c => [...(c.touchdown !== null ? [{ label: `${c.index}歩目の接地`, pts: c.touchdown }] : []),
-      ...(c.toeOff !== null ? [{ label: `${c.index}歩目の離地`, pts: c.toeOff }] : [])])], [result]);
-  useEffect(() => { if (result) resultCard.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }); }, [measured]);   // eslint-disable-line react-hooks/exhaustive-deps
+    ...(result.set ? [{ label: '構え', short: '構え', pts: result.set.pts }] : []),
+    ...(result.blockClearance ? [{ label: 'ブロックを離れる', short: '離れる', pts: result.blockClearance.pts }] : []),
+    ...result.contacts.flatMap(c => [...(c.touchdown !== null ? [{ label: `${c.index}歩目の接地`, short: `${c.index}歩目 接地`, pts: c.touchdown }] : []),
+      ...(c.toeOff !== null ? [{ label: `${c.index}歩目の離地`, short: `${c.index}歩目 離地`, pts: c.toeOff }] : [])])], [result]);
+  // The result is shown one part at a time under tabs that stay at the top of
+  // the screen (all parts one under another were too long on a phone, the
+  // user 2026-10-05: 「縦長で使いにくい」).
+  const [tab, setTab] = useState<Tab>('advice'), tabs = useRef<HTMLDivElement>(null), panels = useRef<HTMLDivElement>(null);
+  const seekTo = useRef<number | null>(null);
+  useEffect(() => { setTab('advice'); if (result) resultCard.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }); }, [measured]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // A phase asked for from its picture is shown once the replay is on screen
+  // (a video kept hidden may not know its length yet).
+  useEffect(() => {
+    const v = replay.current;
+    if (tab !== 'replay' || !v || seekTo.current === null) return;
+    const t = insideFrame(seekTo.current, measured ? frameInterval(measured.frames) : 1 / 240); seekTo.current = null;
+    const go = () => { v.pause(); v.currentTime = t; };
+    if (v.readyState >= 1) go(); else v.addEventListener('loadedmetadata', go, { once: true });
+  }, [tab, measured]);
 
   function changeFile(next: File | null) {
     owner.current?.abort(); owner.current = null; setBusy(false);
@@ -61,11 +79,15 @@ export default function CrouchLab() {
       if (!control.signal.aborted) setMessage(e instanceof Error ? e.message : String(e));
     } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
   }
-  /** A phase in the slow replay: paused on its frame, scrolled into view. */
-  function show(p: Phase) {
-    const v = replay.current; if (!v) return;
-    v.pause(); v.currentTime = insideFrame(p.pts, measured ? frameInterval(measured.frames) : 1 / 240); replayCard.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  /** Another tab; when the page is scrolled past the top of the tabs' content,
+   * back to that top, so the new part starts just under the tabs. */
+  function choose(next: Tab) {
+    setTab(next);
+    const top = panels.current?.getBoundingClientRect().top, bar = tabs.current?.offsetHeight ?? 0;
+    if (top !== undefined && top < bar) window.scrollBy({ top: top - bar });
   }
+  /** A phase in the slow replay: its tab, paused on its frame. */
+  function show(p: Phase) { seekTo.current = p.pts; choose('replay'); }
   function save() {
     if (!result) return;
     const blob = new Blob([JSON.stringify({ version: CROUCH_VERSION, file: file?.name, startX: start, result }, null, 2)],
@@ -114,32 +136,39 @@ export default function CrouchLab() {
     </section>
     {result && <section ref={resultCard} className="sprint10-card sprint10-result" aria-label="解析結果"><h2>解析結果</h2>
       {result.reason ? <p role="alert" className="sprint10-note">{result.reason}</p> : <>
-        <div className="sprint10-metrics">{[['解析した歩数', `${result.contacts.length}`, '歩'],
-          ['ブロックを離れてから1歩目の接地まで', seconds(result.firstFlight), '秒']].map(([label, v, unit]) =>
-          <div key={label}><span>{label}</span><strong>{v}</strong><small>{unit}</small></div>)}</div>
-        {advice.length > 0 && <><h3>見方のポイント</h3>
-          <ul className="sprint10-advice" aria-label="見方のポイント">{advice.map(a => <li key={a.topic + a.text} className={a.level}>
-            <span aria-hidden="true">{a.level === 'good' ? '✓' : '!'}</span><div><strong>{a.topic}</strong>{a.text}</div></li>)}</ul>
-          <p className="sprint10-hint">目安は短距離選手の研究で報告された一般的な値で、選手ごとの目標ではありません（出典は「数値の見方」）。</p></>}
-        <h3>局面ごとの姿勢</h3>
-        <p className="sprint10-hint">オレンジ：体幹（腰から肩）、水色：脛（足首から膝）、ピンク：前膝、紫：後膝。点線は鉛直で、弧が測った角度です。</p>
-        {phases.length ? <PhaseFigures url={url} frames={measured!.frames} phases={phases} onShow={show}
-          guides={{ set: `目安：前膝 ${GUIDE.frontKnee[0]}〜${GUIDE.frontKnee[1]}°・後膝 ${GUIDE.rearKnee[0]}〜${GUIDE.rearKnee[1]}°` }} /> : <p>角度を測れる局面がありませんでした。</p>}
-        <h3>歩ごとの変化</h3>
-        <p className="sprint10-hint">加速では、接地時間は歩ごとに短く、滞空時間は長くなり、接地時の脛と体幹は歩ごとに起きていきます。点線はトップ選手1人の例です。</p>
-        <CrouchCharts result={result} />
-        <h3>1歩ごとの時間</h3>
-        <ol className="sprint10-strides" aria-label="1歩ごとの値">{result.steps.map(s => <li key={s.step}>
-          <div><strong>{s.step}歩目</strong></div>
-          <p>接地 {s.contactSeconds === null ? '—（離地が映っていません）' : `${seconds(s.contactSeconds)}秒`}{s.stepSeconds !== null && ` · 滞空 ${seconds(s.flightSeconds)}秒`}</p>
-          {s.stepSeconds === null ? <p>滞空・ピッチ：次の接地が映っていません</p>
-            : <p>ピッチ {value(s.pitch)}歩/秒</p>}
-        </li>)}</ol>
-        {result.notes.map(n => <p className="sprint10-note" key={n}>{n}</p>)}
+        <div className="sprint10-metrics sprint10-summary">{[['解析した歩数', `${result.contacts.length}`, '歩'],
+          ['ブロック→1歩目の接地', seconds(result.firstFlight), '秒']].map(([label, v, unit]) =>
+          <div key={label}><span>{label}</span><strong>{v}<small>{unit}</small></strong></div>)}</div>
         {measured && !measured.refiner && <p className="sprint10-note">高精度の骨格モデル（RTMPose）を読み込めなかったため、角度と骨格の表示はMediaPipeの骨格を使っています。</p>}
-        <div ref={replayCard} className="sprint10-replay"><h3>スロー再生（骨格つき）</h3>
-          <p className="sprint10-hint">1/8は実際の8分の1の速さ（1秒240コマの動画で毎秒30コマ）。判定した瞬間の前後では、測った線と角度を表示します。</p>
-          <CrouchReplay url={url} video={replay} frames={measured!.frames} phases={phases} events={events} /></div>
+        <div ref={tabs} className="sprint10-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
+          <button key={id} id={`crouch-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`crouch-panel-${id}`} onClick={() => choose(id)}>
+            {label}{id === 'advice' && checks > 0 && <span className="sprint10-badge" aria-label={`確かめたい点 ${checks}件`}>{checks}</span>}</button>)}</div>
+        <div ref={panels} className="sprint10-panels">
+          <div id="crouch-panel-advice" role="tabpanel" aria-labelledby="crouch-tab-advice" hidden={tab !== 'advice'}>
+            {advice.length > 0 ? <><ul className="sprint10-advice" aria-label="見方のポイント">{advice.map(a => <li key={a.topic + a.text} className={a.level}>
+              <span aria-hidden="true">{a.level === 'good' ? '✓' : '!'}</span><div><strong>{a.topic}</strong>{a.text}</div></li>)}</ul>
+              <p className="sprint10-hint">目安は短距離選手の研究で報告された一般的な値で、選手ごとの目標ではありません（出典は「数値の見方」）。</p></>
+              : <p>目安と比べられる値がありませんでした。</p>}
+          </div>
+          <div id="crouch-panel-pose" role="tabpanel" aria-labelledby="crouch-tab-pose" hidden={tab !== 'pose'}>
+            <ul className="sprint10-mark-legend" aria-label="線の色">{LEGEND.map(([color, label]) => <li key={label}><i style={{ background: color }} />{label}</li>)}</ul>
+            <p className="sprint10-hint">点線は鉛直、弧が測った角度。画像を左右にスワイプして局面を切り替えます。</p>
+            {phases.length ? <PhaseFigures url={url} frames={measured!.frames} phases={phases} onShow={show}
+              guides={{ set: `目安：前膝 ${GUIDE.frontKnee[0]}〜${GUIDE.frontKnee[1]}°・後膝 ${GUIDE.rearKnee[0]}〜${GUIDE.rearKnee[1]}°` }} /> : <p>角度を測れる局面がありませんでした。</p>}
+          </div>
+          <div id="crouch-panel-steps" role="tabpanel" aria-labelledby="crouch-tab-steps" hidden={tab !== 'steps'}>
+            <StepTable result={result} />
+            <p className="sprint10-hint">—：映っていないため出せない値（滞空とピッチは次の接地まで、接地時間は離地まで必要）。</p>
+            {result.notes.map(n => <p className="sprint10-note" key={n}>{n}</p>)}
+            <h3>歩ごとの変化</h3>
+            <p className="sprint10-hint">加速では歩ごとに、接地時間は短く、滞空時間は長くなり、接地時の脛と体幹は起きていきます。点線はトップ選手1人の例です。</p>
+            <CrouchCharts result={result} />
+          </div>
+          <div id="crouch-panel-replay" role="tabpanel" aria-labelledby="crouch-tab-replay" hidden={tab !== 'replay'} className="sprint10-replay">
+            <CrouchReplay url={url} video={replay} frames={measured!.frames} phases={phases} events={events} />
+            <p className="sprint10-hint">判定した瞬間の前後では、測った線と角度を表示します。1/8は実際の8分の1の速さです（1秒240コマの動画で毎秒30コマ）。</p>
+          </div>
+        </div>
         <details className="sprint10-more"><summary>数値の見方</summary>
           <p>接地は、つま先が床の高さまで下りた時、離地はつま先が床から離れた時を、骨格の動きから判定しています。真横から1秒240コマで撮影した3人の検証動画では、映像で見た瞬間との差は最大でおよそ1/60秒でした。</p>
           <p>ピッチは接地から次の接地までの時間の逆数です。角度は鉛直を0°とし、進行方向へ倒れる向きを正とします（脛は足首から膝、体幹は腰から肩）。膝は伸び切った状態が180°です。</p>

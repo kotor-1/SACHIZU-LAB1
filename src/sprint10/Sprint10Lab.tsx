@@ -22,6 +22,8 @@ const MODES: { id: SprintStart | 'crouch'; label: string; hint: string }[] = [
   { id: 'flying', label: '最高速度区間', hint: '例：50〜60m。選手は走った状態で画面に入ってくる。' },
   { id: 'crouch', label: 'クラウチングスタート', hint: 'ブロックから5歩目まで。各歩の接地・滞空・ピッチと姿勢。' },
 ];
+/** A mode's name, allowed to break only after クラウチング when a phone's narrow button wraps it. */
+const wrapped = (label: string) => label.split(/(?<=クラウチング)/).flatMap((part, i) => i ? [<wbr key={i} />, part] : [part]);
 const DEFAULT_GATES: Record<SprintStart, [number, number]> = { standing: [.12, .88], flying: [.2, .8] };
 /** One ◀/▶ tap moves a line by 0.2% of the frame width. */
 const NUDGE = .002;
@@ -152,7 +154,9 @@ export default function Sprint10Lab() {
       <p>{crouch ? 'ブロックから最大5歩目まで、各歩の接地・滞空・ピッチと姿勢の角度を解析します。' : '2本のラインを設定するだけで、通過時間・歩数・ピッチ・歩幅を解析します。'}</p></header>
     <div className="sprint10-modes" role="group" aria-label="解析の種類">{MODES.map(m => { const selected = m.id === 'crouch' ? crouch : !crouch && mode === m.id;
       return <button key={m.id} type="button" aria-pressed={selected} disabled={busy}
-        className={selected ? 'is-selected' : ''} onClick={() => changeMode(m.id)}><strong>{m.label}</strong><span>{m.hint}</span></button>; })}</div>
+        className={selected ? 'is-selected' : ''} onClick={() => changeMode(m.id)}><strong>{wrapped(m.label)}</strong><span>{m.hint}</span></button>; })}</div>
+    {/* On a phone the modes are one row of names; the chosen one's hint is shown under them. */}
+    <p className="sprint10-mode-hint">{MODES.find(m => m.id === (crouch ? 'crouch' : mode))?.hint}</p>
     {crouch ? <CrouchLab /> : <>
     {mode === 'flying' && <div className="sprint10-section"><label>区間の入口<input type="number" inputMode="numeric" min={0} max={400} step={5} value={sectionStartM} disabled={busy}
         onChange={e => setSectionStartM(Math.max(0, Math.min(400, Math.round(Number(e.target.value) || 0))))} /><span>m地点</span></label>

@@ -190,6 +190,17 @@ describe('crouch start advice', () => {
     for (const text of ['接地時間・滞空時間', 'ピッチ', '接地時の角度', 'トップ選手の例（接地）', '1歩目 0.180']) expect(html).toContain(text);
     expect(renderToStaticMarkup(createElement(CrouchCharts, { result: made({ contacts: [.18], flights: [null], shanks: [40], trunks: [50] }) }))).toContain('2歩以上');
   });
+  it('shows one graph at a time, and every step in one table', async () => {
+    const { default: CrouchCharts, StepTable } = await import('../src/sprint10/CrouchCharts');
+    const { renderToStaticMarkup } = await import('react-dom/server');
+    const { createElement } = await import('react');
+    const html = renderToStaticMarkup(createElement(CrouchCharts, { result: made() }));
+    expect(html.match(/<figure/g)).toHaveLength(1);
+    expect(html).toMatch(/aria-pressed="true"[^>]*>接地・滞空</);
+    const table = renderToStaticMarkup(createElement(StepTable, { result: made({ contacts: [.18, null], flights: [.05, null], shanks: [40.4, 30], trunks: [50, null] }) }));
+    expect(table.match(/<tr>/g)).toHaveLength(3);
+    for (const text of ['1歩目', '0.180', '0.050', '40°', '2歩目', '—']) expect(table).toContain(text);
+  });
 });
 
 describe('crouch start screen', () => {
