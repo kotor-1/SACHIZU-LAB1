@@ -15,6 +15,11 @@ import { markValue, type HurdleResult } from './analysis';
  *   (their 61° and 59° from horizontal). */
 export const HURDLE_GUIDE = {
   peakBefore: { men: [.02, .22], women: [.12, .40] },
+  /** Hanley et al. 2021: takeoff 2.24 ± 0.13 / 2.09 ± 0.10 m, landing 1.56 ± 0.13 / 1.40 ± 0.09 m (men / women). */
+  takeoff: { men: 2.24, women: 2.09 }, landing: { men: 1.56, women: 1.40 },
+  /** The centre of mass's peak above the bar (m): Hanley et al. 2021 (1.33 m over 1.067, 1.13 m over 0.838) and
+   * McDonald & Dapena 1991 (1.347 m, 1.193 m). */
+  overBar: { men: [.26, .28], women: [.29, .36] },
   clearance: { men: .33, women: .28 },
   landingKnee: { men: 166, women: 156 },
   landingTrunk: { men: 29, women: 31 },
@@ -45,6 +50,13 @@ export function hurdleAdvice(r: HurdleResult): HurdleAdvice[] {
       text: a.beforeSeconds < 0 ? `重心がハードルの上を通ってから ${Math.abs(a.beforeSeconds).toFixed(3)}秒後に最高点です。トップ選手ではハードルの手前で最高点になります。`
         : `重心がハードルの上を通る ${a.beforeSeconds.toFixed(3)}秒前に最高点です（トップ選手でもハードルの手前）。` });
 
+  const d = r.distances;
+  if (d.takeoff !== null && d.landing !== null) {
+    const ratio = Math.round(d.takeoff / (d.takeoff + d.landing) * 100);
+    out.push({ topic: '踏切と着地', level: 'info', text: `踏切はハードルの ${cm(d.takeoff)} 手前、着地は ${cm(d.landing)} 先（踏切：着地 = ${ratio}:${100 - ratio}）。参考：トップ選手で踏切 男子 ${G.takeoff.men.toFixed(2)}m・女子 ${G.takeoff.women.toFixed(2)}m、着地 男子 ${G.landing.men.toFixed(2)}m・女子 ${G.landing.women.toFixed(2)}m（約60:40）。` });
+  }
+  if (r.overBar.atPeak !== null)
+    out.push({ topic: 'ハードルの上の高さ', level: 'info', text: `重心最高点はバーの ${cm(r.overBar.atPeak)} 上${r.overBar.atHurdle !== null ? `、ハードルの上を通る時は ${cm(r.overBar.atHurdle)} 上` : ''}。参考：トップ選手で最高点は男子 ${G.overBar.men[0].toFixed(2)}〜${G.overBar.men[1].toFixed(2)}m・女子 ${G.overBar.women[0].toFixed(2)}〜${G.overBar.women[1].toFixed(2)}m 上（身長とハードルの高さの関係で変わります）。` });
   if (r.times.clearance !== null)
     out.push({ topic: '空中時間', level: 'info', text: `踏切の離地から着地まで ${r.times.clearance.toFixed(3)}秒。参考：世界大会の決勝の選手で男子 ${G.clearance.men}秒・女子 ${G.clearance.women}秒（ハードルが高く、走る速さも違います）。` });
   const knee = markValue(r, 'landing', 'リード膝');

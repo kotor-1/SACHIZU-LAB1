@@ -60,10 +60,38 @@ describe('hurdle clearance (side view)', () => {
   it('places the centre of mass peak before the hurdle, with the scale from gravity', () => {
     const a = run().apex!;
     expect(a.pts).toBeCloseTo(PEAK_T, 2);
-    expect(a.scale!).toBeCloseTo(SCALE, -1);
+    expect(a.gravityScale!).toBeCloseTo(SCALE, -1);
     expect(PEAK_BEFORE).toBeGreaterThan(.27); expect(PEAK_BEFORE).toBeLessThan(.30);
     expect(Math.abs(a.beforeM! - PEAK_BEFORE)).toBeLessThan(.005);
     expect(a.beforeSeconds!).toBeCloseTo(PEAK_BEFORE * SCALE / SPEED, 3);
+  });
+  it('measures against the hurdle when its top, foot and height are set', () => {
+    // A 76.2 cm hurdle: its top 152.4 px over the ground.
+    const r = analyzeHurdle(frames(), { width: W, height: H, hurdleX: 960 / W, barY: (GROUND - .762 * SCALE) / H, groundY: GROUND / H, hurdleHeight: .762 });
+    expect(r.ruler.source).toBe('hurdle'); expect(r.ruler.scale).toBeCloseTo(SCALE, 6);
+    expect(Math.abs(r.ruler.gap!)).toBeLessThan(.01);
+    const takeoffToe = hipX((CONTACTS[1][0] + CONTACTS[1][1]) / 2) + 25, landingToe = hipX((CONTACTS[2][0] + CONTACTS[2][1]) / 2) + 25;
+    expect(r.distances.takeoff).toBeCloseTo((960 - takeoffToe) / SCALE, 6);
+    expect(r.distances.landing).toBeCloseTo((landingToe - 960) / SCALE, 6);
+    expect(Math.abs(r.apex!.beforeM! - PEAK_BEFORE)).toBeLessThan(.005);
+    // The centre of mass over the bar: at its peak, and lower as it passes the hurdle's line.
+    const peakAboveBar = ((GROUND - .762 * SCALE) - centreOfMass(PEAK_FRAME.pose!)!.y * H) / SCALE;
+    expect(r.overBar.atPeak!).toBeCloseTo(peakAboveBar, 2);
+    expect(r.overBar.atHurdle!).toBeLessThan(r.overBar.atPeak!);
+    expect(r.overBar.atPeak! - r.overBar.atHurdle!).toBeCloseTo(9.81 / 2 * (PEAK_BEFORE * SCALE / SPEED) ** 2, 2);
+    expect(r.notes).toEqual([]);
+    const advice = hurdleAdvice(r).map(a => a.text).join();
+    expect(advice).toContain(`踏切はハードルの ${Math.round(r.distances.takeoff! * 100)}cm 手前`);
+    expect(advice).toContain(`重心最高点はバーの ${Math.round(peakAboveBar * 100)}cm 上`);
+  });
+  it('reports a hurdle height or lines that do not fit, and goes by gravity without them', () => {
+    const wrong = analyzeHurdle(frames(), { width: W, height: H, hurdleX: 960 / W, barY: (GROUND - .762 * SCALE) / H, groundY: GROUND / H, hurdleHeight: 1.067 });
+    expect(wrong.notes.join()).toContain('縮尺が');
+    const off = analyzeHurdle(frames(), { width: W, height: H, hurdleX: 960 / W, barY: (GROUND - 100 - .762 * SCALE) / H, groundY: (GROUND - 100) / H, hurdleHeight: .762 });
+    expect(off.notes.join()).toContain('足元の線');
+    const none = run();
+    expect(none.ruler.source).toBe('gravity'); expect(none.overBar).toEqual({ atPeak: null, atHurdle: null });
+    expect(none.distances.takeoff!).toBeGreaterThan(1);
   });
   it('gives the moments with their angles, legs chosen by place', () => {
     const r = run();

@@ -31,12 +31,24 @@ const MIN_FLIGHT_FRAMES = 15;
 const COLLAPSED = .15;
 /** The gravity scale is kept when the leg (hip to ankle) comes out this long (m). */
 const LEG_M = [.5, 1.2] as const;
+/** The hurdle is the ruler when its top and foot are set and its height chosen.
+ * Against it, the gravity scale of 5 videos was off by -0.4 to +8.3% (the
+ * user gave the heights: 76.2 cm, みゆ 83.8 cm; the bar read off the first
+ * frame), so gravity is the ruler only without the hurdle, and a check: a gap
+ * beyond RULER_GAP is reported. */
+const RULER_GAP = .12;
+/** The ground line further than this many leg lengths from the contacts' ground: reported. */
+const GROUND_GAP = .08;
+/** Hurdle heights offered (m): youth to men's 110 m (the user, 2026-10-05). */
+export const HURDLE_HEIGHTS = [.6, .7, .762, .838, .914, .991, 1.067] as const;
 
 export interface HurdleOptions {
   /** Picture size, so distances are measured in pixels alike in both axes. */
   width: number; height: number;
   /** The hurdle's position across the picture (0-1), set on the video. */
   hurdleX: number;
+  /** The bar's top and the ground at its foot (0-1 down the picture), and the hurdle's height (m): the ruler. */
+  barY?: number; groundY?: number; hurdleHeight?: number;
 }
 /** The centre of mass in the flight: a parabola fitted to its height, its top
  * against the hurdle, in time and (with the scale from gravity) in metres. */
@@ -49,7 +61,7 @@ export interface Apex {
   /** The peak's horizontal distance before the hurdle (m); positive: before it. */
   beforeM: number | null;
   /** Pixels per metre from gravity (the parabola's curvature); null when implausible. */
-  scale: number | null;
+  gravityScale: number | null;
   /** Fit: root mean square residual (px) and the frames used. */
   rms: number; frames: number;
   /** The centre of mass in the flight (normalized) and the fitted parabola (y = a t² + b t + c, t in s from t0, y normalized). */
@@ -68,6 +80,8 @@ export interface HurdleTimes {
 }
 export interface HurdleResult {
   version: string; reason: string | null; direction: number; hurdleX: number;
+  /** The hurdle as set: its line, top and foot (0-1) and height (m); null where not set. */
+  hurdle: { barY: number | null; groundY: number | null; height: number | null };
   contacts: Contact[];
   /** Indices into `contacts`; null when not in the picture. */
   approach: number | null; takeoff: number | null; landing: number | null; after: number | null;
@@ -75,6 +89,12 @@ export interface HurdleResult {
   /** The frame where the pelvis is over the hurdle. */
   crossing: { frame: number; pts: number } | null;
   apex: Apex | null;
+  /** Pixels per metre: from the hurdle (its top, foot and height) or else from gravity; and how far gravity's was from the hurdle's. */
+  ruler: { scale: number | null; source: 'hurdle' | 'gravity' | null; gravityScale: number | null; gap: number | null };
+  /** Takeoff toe to the hurdle and the hurdle to the landing toe (m). */
+  distances: { takeoff: number | null; landing: number | null };
+  /** The centre of mass above the bar (m): at its peak, and as it passes the hurdle's line. Needs the hurdle's top. */
+  overBar: { atPeak: number | null; atHurdle: number | null };
   /** The moments with their angles, in time order (pictures, replay, advice). */
   moments: Phase[];
   notes: string[];
@@ -116,9 +136,11 @@ function line(ts: number[], xs: number[]) {
 
 export function analyzeHurdle(frames: readonly CrouchFrame[], options: HurdleOptions): HurdleResult {
   const { width: W, height: H, hurdleX } = options;
-  const base: HurdleResult = { version: HURDLE_VERSION, reason: null, direction: 0, hurdleX, contacts: [], approach: null, takeoff: null, landing: null, after: null,
+  const base: HurdleResult = { version: HURDLE_VERSION, reason: null, direction: 0, hurdleX,
+    hurdle: { barY: options.barY ?? null, groundY: options.groundY ?? null, height: options.hurdleHeight ?? null }, contacts: [], approach: null, takeoff: null, landing: null, after: null,
     times: { approachContact: null, approachFlight: null, takeoffContact: null, clearance: null, landingContact: null, afterFlight: null, afterContact: null },
-    crossing: null, apex: null, moments: [], notes: [] };
+    crossing: null, apex: null, ruler: { scale: null, source: null, gravityScale: null, gap: null }, distances: { takeoff: null, landing: null },
+    overBar: { atPeak: null, atHurdle: null }, moments: [], notes: [] };
   const fail = (reason: string) => ({ ...base, reason });
   // Contacts and the leg length on RTMPose's points where there are any (see above).
   const seen = frames.filter(f => f.pose).map(f => f.refined ? { ...f, pose: f.refined } : f);
@@ -159,7 +181,27 @@ export function analyzeHurdle(frames: readonly CrouchFrame[], options: HurdleOpt
   base.crossing = crossingFrame ? { frame: crossingFrame.frame, pts: crossingFrame.pts } : null;
   base.apex = T?.toeOff != null && L?.touchdown != null ? apexOf(seen, T.toeOff, L.touchdown, W, H, hurdleX, direction, leg) : null;
   if (T?.toeOff != null && L?.touchdown != null && !base.apex) base.notes.push('空中の重心の動きをとらえられず、重心最高点を出していません。');
-  else if (base.apex && base.apex.beforeM === null) base.notes.push('重心の放物線から縮尺を決められなかったため、重心最高点の位置は時間だけで表しています。');
+
+  // The ruler: the hurdle when its top, foot and height are given, else gravity.
+  const { barY, groundY, hurdleHeight } = options;
+  const hurdlePx = barY != null && groundY != null && hurdleHeight ? (groundY - barY) * H : null;
+  const hurdleScale = hurdlePx !== null && hurdlePx > 0 ? hurdlePx / hurdleHeight! : null, gravity = base.apex?.gravityScale ?? null;
+  const scale = hurdleScale ?? gravity;
+  base.ruler = { scale, source: hurdleScale ? 'hurdle' : gravity ? 'gravity' : null, gravityScale: gravity, gap: hurdleScale && gravity ? gravity / hurdleScale - 1 : null };
+  if (hurdlePx !== null && hurdlePx <= 0) base.notes.push('ハードルの上端の線が足元の線より下にあります。線を確かめてください。');
+  if (base.ruler.gap !== null && Math.abs(base.ruler.gap) > RULER_GAP)
+    base.notes.push(`ハードルから求めた縮尺と、重心の放物線（重力）から求めた縮尺が${Math.round(Math.abs(base.ruler.gap) * 100)}%違います。ハードルの高さの選択と、上端・足元の線の位置を確かめてください。`);
+  if (groundY != null && T && L && Math.abs((T.groundY + L.groundY) / 2 - groundY * H) > GROUND_GAP * leg)
+    base.notes.push('足元の線が、接地したつま先の高さと離れています。ハードルの足元（地面）に合わせてください。');
+  if (scale) {
+    const metres = (px: number) => px / scale;
+    if (base.apex) base.apex.beforeM = metres((hurdleX - base.apex.x) * direction * W);
+    base.distances = { takeoff: T ? metres((hurdleX * W - T.x) * direction) : null, landing: L ? metres((L.x - hurdleX * W) * direction) : null };
+  } else if (base.apex) base.notes.push('縮尺を決められなかったため、重心最高点の位置は時間だけで表しています。ハードルの高さを選び、上端と足元に線を合わせてください。');
+  if (hurdleScale && base.apex) {
+    const a = base.apex, bar = barY! * H, at = (t: number) => { const dt = t - a.curve.t0; return (a.curve.c + a.curve.b * dt + a.curve.a * dt * dt) * H; };
+    base.overBar = { atPeak: (bar - a.y * H) / hurdleScale, atHurdle: a.beforeSeconds === null ? null : (bar - at(a.pts + a.beforeSeconds)) / hurdleScale };
+  }
 
   base.moments = momentsOf(base, frames, W, H, direction, leg);
   return base;
@@ -182,8 +224,7 @@ function apexOf(seen: CrouchFrame[], from: number, to: number, W: number, H: num
   const beforeSeconds = vx > 0 ? (hurdleX - x.at(t)) * direction / vx : null;
   const near = path.reduce((a, p) => Math.abs(p.pts - t) < Math.abs(a.pts - t) ? p : a);
   return { pts: t, frame: near.frame, x: x.at(t), y: (q.c + q.b * (t - q.t0) + q.a * (t - q.t0) ** 2) / H,
-    beforeSeconds, beforeM: legM >= LEG_M[0] && legM <= LEG_M[1] ? (hurdleX - x.at(t)) * direction * W / scale : null,
-    scale: legM >= LEG_M[0] && legM <= LEG_M[1] ? scale : null, rms: q.rms, frames: path.length,
+    beforeSeconds, beforeM: null, gravityScale: legM >= LEG_M[0] && legM <= LEG_M[1] ? scale : null, rms: q.rms, frames: path.length,
     path: path.map(({ pts, x, y }) => ({ pts, x, y })), curve: { t0: q.t0, a: q.a / H, b: q.b / H, c: q.c / H, vx: x.slope, x0: x.at(q.t0) } };
 }
 

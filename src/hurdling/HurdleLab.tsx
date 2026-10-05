@@ -5,16 +5,20 @@ import PlayerBar from '../sprint10/PlayerBar';
 import type { Phase } from '../sprint10/crouch-figure';
 import type { CrouchFrame } from '../sprint10/crouch';
 import { CrouchReplay, frameInterval, insideFrame, PhaseFigures, type FigureOverlay, type ReplayEvent } from '../sprint10/CrouchViews';
-import { analyzeHurdle, HURDLE_VERSION, type HurdleResult } from './analysis';
+import { analyzeHurdle, HURDLE_HEIGHTS, HURDLE_VERSION, type HurdleResult } from './analysis';
 import { HURDLE_GUIDE, hurdleAdvice } from './advice';
 import { measureHurdle } from './recording';
-import { ComPathChart, TimeTable } from './HurdleCharts';
+import { ComPathChart, DistanceTable, TimeTable } from './HurdleCharts';
 import '../sprint10/sprint10.css';
 
-/** One ◀/▶ tap moves the line by 0.2% of the frame width. */
+/** One ◀/▶ (▲/▼) tap moves a line by 0.2% of the frame width (height). */
 const NUDGE = .002;
 type Tab = 'advice' | 'pose' | 'times' | 'replay';
-const TABS: [Tab, string][] = [['advice', 'ポイント'], ['pose', '姿勢'], ['times', '時間'], ['replay', 'スロー']];
+const TABS: [Tab, string][] = [['advice', 'ポイント'], ['pose', '姿勢'], ['times', '距離・時間'], ['replay', 'スロー']];
+/** The hurdle as set on the video: its line across, its top and foot down the picture (0-1), its height (m). */
+interface HurdleSetting { x: number; barY: number; groundY: number; height: number | null }
+const same = (a: HurdleSetting, b: HurdleSetting) => a.x === b.x && a.barY === b.barY && a.groundY === b.groundY && a.height === b.height;
+const clamp = (v: number) => Math.max(.01, Math.min(.99, v));
 const LEGEND = [['#ffb02e', '体幹（腰→肩）'], ['#3ad7ff', '脛'], ['#7dff6b', 'リード脚の大腿'], ['#ff6fd8', 'リード脚の膝'], ['#b58cff', '踏切脚の膝']] as const;
 const G = HURDLE_GUIDE;
 
@@ -28,11 +32,17 @@ export default function HurdleLab() {
   const [file, setFile] = useState<File | null>(null), [url, setUrl] = useState('');
   const [loaded, setLoaded] = useState(false), [busy, setBusy] = useState(false), [progress, setProgress] = useState(0);
   const still = useFirstFrame(url), ready = loaded || !!still;
-  const [line, setLine] = useState(.5), [message, setMessage] = useState('');
-  const [measured, setMeasured] = useState<{ frames: CrouchFrame[]; width: number; height: number; refiner: 'webgpu' | 'wasm' | null; hurdleX: number } | null>(null);
+  // The hurdle's line, its top and foot (horizontal lines dragged like the line:
+  // the user, 2026-10-05, 「タップだけではズレるので…ドラッグで移動して設定」) and its height.
+  const [setting, setSetting] = useState<HurdleSetting>({ x: .5, barY: .5, groundY: .72, height: null }), [message, setMessage] = useState('');
+  const line = setting.x;
+  const [measured, setMeasured] = useState<{ frames: CrouchFrame[]; width: number; height: number; refiner: 'webgpu' | 'wasm' | null } | null>(null);
+  // The setting the result was worked out with; a changed one is applied on request (no new video pass).
+  const [used, setUsed] = useState<HurdleSetting | null>(null);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   useEffect(() => () => { owner.current?.abort(); owner.current = null; }, []);
-  const result: HurdleResult | null = useMemo(() => measured ? analyzeHurdle(measured.frames, { width: measured.width, height: measured.height, hurdleX: measured.hurdleX }) : null, [measured]);
+  const result: HurdleResult | null = useMemo(() => measured && used ? analyzeHurdle(measured.frames, { width: measured.width, height: measured.height,
+    hurdleX: used.x, barY: used.barY, groundY: used.groundY, hurdleHeight: used.height ?? undefined }) : null, [measured, used]);
   const advice = useMemo(() => result && !result.reason ? hurdleAdvice(result) : [], [result]);
   const checks = advice.filter(a => a.level === 'check').length;
   const events: ReplayEvent[] = useMemo(() => {
@@ -78,14 +88,27 @@ export default function HurdleLab() {
 
   function changeFile(next: File | null) {
     owner.current?.abort(); owner.current = null; setBusy(false);
-    setFile(next); setUrl(next ? URL.createObjectURL(next) : ''); setLoaded(false); setMeasured(null); setMessage('');
+    setFile(next); setUrl(next ? URL.createObjectURL(next) : ''); setLoaded(false); setMeasured(null); setUsed(null); setMessage('');
   }
-  function move(x: number) { if (!busy) setLine(Math.max(.01, Math.min(.99, x))); }
-  function drag(event: React.PointerEvent<HTMLButtonElement>) {
-    if (busy || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
-    const rect = event.currentTarget.parentElement!.getBoundingClientRect();
-    move((event.clientX - rect.left) / rect.width);
+  const set = (key: 'x' | 'barY' | 'groundY', v: number) => { if (!busy) setSetting(s => ({ ...s, [key]: clamp(v) })); };
+  const move = (x: number) => set('x', x);
+  /** Dragging a line: across for the hurdle's, up and down for its top and foot. */
+  function drag(key: 'x' | 'barY' | 'groundY') {
+    return (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (busy || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+      const rect = event.currentTarget.parentElement!.getBoundingClientRect();
+      set(key, key === 'x' ? (event.clientX - rect.left) / rect.width : (event.clientY - rect.top) / rect.height);
+    };
   }
+  const handle = (key: 'x' | 'barY' | 'groundY') => ({
+    onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => { e.currentTarget.setPointerCapture(e.pointerId); drag(key)(e); },
+    onPointerMove: drag(key),
+    onPointerUp: (e: React.PointerEvent<HTMLButtonElement>) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); },
+    onKeyDown: (e: React.KeyboardEvent<HTMLButtonElement>) => {
+      const by: Record<string, number> = key === 'x' ? { ArrowLeft: -NUDGE, ArrowRight: NUDGE } : { ArrowUp: -NUDGE, ArrowDown: NUDGE };
+      const d = by[e.key]; if (d) { e.preventDefault(); set(key, setting[key] + d); }
+    },
+  });
   async function analyze() {
     if (!file || busy) return;
     const control = new AbortController(); owner.current = control;
@@ -93,7 +116,7 @@ export default function HurdleLab() {
     try {
       const data = await measureHurdle(file, control.signal, (fraction, text) => { setProgress(fraction); setMessage(text); });
       if (control.signal.aborted) return;
-      setMeasured({ ...data, hurdleX: line }); setMessage('解析が終わりました。');
+      setMeasured(data); setUsed(setting); setMessage('解析が終わりました。');
     } catch (e) {
       if (!control.signal.aborted) setMessage(e instanceof Error ? e.message : String(e));
     } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
@@ -106,7 +129,7 @@ export default function HurdleLab() {
   function show(p: Phase) { seekTo.current = p.pts; choose('replay'); }
   function save() {
     if (!result) return;
-    const blob = new Blob([JSON.stringify({ version: HURDLE_VERSION, file: file?.name, hurdleX: measured?.hurdleX, result }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ version: HURDLE_VERSION, file: file?.name, setting: used, result }, null, 2)], { type: 'application/json' });
     const href = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = href; a.download = 'hurdle-result.json'; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
   }
@@ -125,40 +148,54 @@ export default function HurdleLab() {
       {file && <p className="sprint10-file">{file.name} · {(file.size / 1024 / 1024).toFixed(1)} MB</p>}
     </section>
     <section className="sprint10-card"><h2>2　ハードルに線を合わせる</h2>
-      <p>線を、選手が越えるハードルのバーの位置に合わせます。重心の最高点の位置は、この線からの距離で表します。</p>
+      <p>縦の線をハードルの位置に、上の横線をバーの上端に、下の横線をハードルの足元（地面）に合わせ、ハードルの高さを選びます。斜めに見えるハードルは、選手が越える真ん中の所で合わせてください。ハードルの高さを物差しにして、距離と高さをcmで出します。</p>
       <div className="sprint10-player">
         <video ref={video} src={url || undefined} playsInline preload="auto" poster={still?.image}
           style={still ? { aspectRatio: `${still.width} / ${still.height}` } : undefined}
           onLoadedMetadata={() => setLoaded(true)} onLoadedData={() => setLoaded(true)}
           onError={() => { setLoaded(false); setMessage('この動画を再生できません。対応形式を確認してください。'); }} />
-        {ready && <div className="sprint10-gates"><button type="button" role="slider"
-          aria-label="ハードルの線" aria-valuemin={1} aria-valuemax={99} aria-valuenow={Math.round(line * 100)}
-          className={`sprint10-gate hurdle${line < .1 ? ' at-left' : line > .9 ? ' at-right' : ''}`}
-          style={{ left: `${line * 100}%` }} disabled={busy}
-          onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); drag(e); }} onPointerMove={drag}
-          onPointerUp={e => { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); }}
-          onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); move(line + (e.key === 'ArrowLeft' ? -NUDGE : NUDGE)); } }}>
-          <span>HURDLE</span></button></div>}
+        {ready && <div className="sprint10-gates">
+          {([['barY', 'バーの上端の線', 'BAR', 'bar'], ['groundY', '足元の線', 'GROUND', 'ground']] as const).map(([key, label, tag, cls]) =>
+            <button key={key} type="button" role="slider" aria-orientation="vertical" aria-label={label} aria-valuemin={1} aria-valuemax={99} aria-valuenow={Math.round(setting[key] * 100)}
+              className={`sprint10-hline ${cls}`} style={{ top: `${setting[key] * 100}%` }} disabled={busy} {...handle(key)}><span>{tag}</span></button>)}
+          <button type="button" role="slider" aria-label="ハードルの線" aria-valuemin={1} aria-valuemax={99} aria-valuenow={Math.round(line * 100)}
+            className={`sprint10-gate hurdle${line < .1 ? ' at-left' : line > .9 ? ' at-right' : ''}`}
+            style={{ left: `${line * 100}%` }} disabled={busy} {...handle('x')}><span>HURDLE</span></button></div>}
       </div>
       {url && <PlayerBar video={video} url={url} disabled={busy} />}
-      <div className="sprint10-gate-controls"><div className="sprint10-gate-row hurdle">
-        <span>ハードル</span>
-        <button type="button" aria-label="線を左へ" disabled={!ready || busy} onClick={() => move(line - NUDGE)}>◀</button>
-        <input type="range" aria-label="ハードルの線の位置" min="1" max="99" step=".1" value={line * 100} disabled={!ready || busy}
-          onChange={e => move(Number(e.target.value) / 100)} />
-        <button type="button" aria-label="線を右へ" disabled={!ready || busy} onClick={() => move(line + NUDGE)}>▶</button>
-      </div></div>
+      <div className="sprint10-gate-controls">
+        <div className="sprint10-gate-row hurdle">
+          <span>ハードル</span>
+          <button type="button" aria-label="線を左へ" disabled={!ready || busy} onClick={() => move(line - NUDGE)}>◀</button>
+          <input type="range" aria-label="ハードルの線の位置" min="1" max="99" step=".1" value={line * 100} disabled={!ready || busy}
+            onChange={e => move(Number(e.target.value) / 100)} />
+          <button type="button" aria-label="線を右へ" disabled={!ready || busy} onClick={() => move(line + NUDGE)}>▶</button>
+        </div>
+        {([['barY', 'バー上端', 'bar'], ['groundY', '足元', 'ground']] as const).map(([key, label, cls]) => <div key={key} className={`sprint10-gate-row ${cls}`}>
+          <span>{label}</span>
+          <button type="button" aria-label={`${label}の線を上へ`} disabled={!ready || busy} onClick={() => set(key, setting[key] - NUDGE)}>▲</button>
+          <input type="range" aria-label={`${label}の線の高さ`} min="1" max="99" step=".1" value={setting[key] * 100} disabled={!ready || busy}
+            onChange={e => set(key, Number(e.target.value) / 100)} />
+          <button type="button" aria-label={`${label}の線を下へ`} disabled={!ready || busy} onClick={() => set(key, setting[key] + NUDGE)}>▼</button>
+        </div>)}
+      </div>
+      <div className="hurdle-heights" role="group" aria-label="ハードルの高さ"><span>ハードルの高さ</span>
+        {HURDLE_HEIGHTS.map(h => <button key={h} type="button" aria-pressed={setting.height === h} disabled={busy}
+          onClick={() => setSetting(s => ({ ...s, height: h }))}>{(h * 100).toFixed(h * 100 % 1 ? 1 : 0)}<small>cm</small></button>)}</div>
     </section>
     <section className="sprint10-card"><h2>3　解析する</h2>
-      <button className="sprint10-primary" disabled={!ready || busy} onClick={() => void analyze()}>解析する</button>
+      <button className="sprint10-primary" disabled={!ready || busy || setting.height === null} onClick={() => void analyze()}>解析する</button>
+      {measured && used && !same(used, setting) && !busy && <button className="sprint10-recalc" onClick={() => setUsed(setting)}>今の線と高さで計算し直す</button>}
       {busy && <button onClick={() => { owner.current?.abort(); owner.current = null; setBusy(false); setMessage('解析を中止しました。'); }}>中止</button>}
-      <p role="status">{message || '動画を選び、ハードルに線を合わせると解析できます。'}</p>
+      <p role="status">{message || (setting.height === null ? '動画を選び、ハードルに線を合わせ、ハードルの高さを選ぶと解析できます。' : '動画を選び、ハードルに線を合わせると解析できます。')}</p>
       {busy && <progress max="1" value={progress} aria-label="解析の進み具合" />}
     </section>
     {result && <section ref={resultCard} className="sprint10-card sprint10-result" aria-label="解析結果"><h2>解析結果</h2>
       {result.reason ? <p role="alert" className="sprint10-note">{result.reason}</p> : <>
         <div className="sprint10-metrics sprint10-summary">
           <div><span>重心最高点の位置</span><strong>{peakText[0]}<small>{peakText[1]}</small></strong></div>
+          <div><span>重心最高点の高さ</span><strong>{result.overBar.atPeak === null ? '—' : Math.round(result.overBar.atPeak * 100)}<small>{result.overBar.atPeak === null ? '' : 'cm バーの上'}</small></strong></div>
+          <div><span>踏切距離</span><strong>{result.distances.takeoff === null ? '—' : Math.round(result.distances.takeoff * 100)}<small>{result.distances.takeoff === null ? '' : 'cm 手前'}</small></strong></div>
           <div><span>空中時間（踏切→着地）</span><strong>{t?.clearance == null ? '—' : t.clearance.toFixed(3)}<small>秒</small></strong></div></div>
         {measured && !measured.refiner && <p className="sprint10-note">高精度の骨格モデル（RTMPose）を読み込めなかったため、接地・離地の判定、角度・重心と骨格の表示はMediaPipeの骨格を使っています。</p>}
         <div ref={tabs} className="sprint10-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
@@ -179,6 +216,8 @@ export default function HurdleLab() {
               guides={{ landing: `参考：トップ選手の着地の膝 男子 ${G.landingKnee.men}°・女子 ${G.landingKnee.women}° 前後` }} /> : <p>角度を測れる局面がありませんでした。</p>}
           </div>
           <div id="hurdle-panel-times" role="tabpanel" aria-labelledby="hurdle-tab-times" hidden={tab !== 'times'}>
+            <DistanceTable result={result} />
+            <h3>接地と空中の時間</h3>
             <TimeTable result={result} />
             <p className="sprint10-hint">—：映っていないため出せない値。「その後の空中」は離地から次の接地までです。</p>
           </div>
@@ -189,9 +228,10 @@ export default function HurdleLab() {
         </div>
         <details className="sprint10-more"><summary>数値の見方</summary>
           <p>接地・離地は、つま先が床の高さまで下りた時・床から離れた時を骨格の動きから判定しています。真横から1秒240コマで撮った5人の踏切・着地（10回）では、映像で見た瞬間との差は接地で最大0.015秒、離地で最大0.010秒、接地時間で最大0.008秒、空中時間で最大0.010秒でした（ChromeとSafari系のブラウザで同じ）。</p>
-          <p>重心は、骨格の各部位の位置と体重に占める割合（de Leva 1996）から求めています。空中の重心は放物線を描くため、踏切の離地から着地までの重心の高さに放物線を当てはめて最高点を決めます。距離の縮尺は、その放物線の曲がり方（重力加速度 9.81m/s²）から求めます（目印やハードルの高さの入力は不要）。最高点の位置は、計算に使うコマの範囲を変えても5人で±3cm以内でした。抜き脚が体の横に開く場面などで骨格が崩れたコマは除いています。</p>
+          <p>重心は、骨格の各部位の位置と体重に占める割合（de Leva 1996）から求めています。空中の重心は放物線を描くため、踏切の離地から着地までの重心の高さに放物線を当てはめて最高点を決めます。最高点の位置は、計算に使うコマの範囲を変えても5人で±3cm以内でした。抜き脚が体の横に開く場面などで骨格が崩れたコマは除いています。</p>
+          <p>距離と高さの縮尺は、選んだハードルの高さと、バーの上端・足元の線の間の画素数から求めます。踏切距離は踏切のつま先から、着地距離は着地のつま先までの、ハードルの線からの水平距離です。「バーの上」は、バーの上端から重心までの高さです（体の一番低い所とバーの隙間ではありません）。5人の動画では、上端の線を3画素ずらすと、踏切距離が約4cm、バーの上の高さが約2cm変わりました。重心の放物線の曲がり方（重力加速度 9.81m/s²）からも縮尺を求め、ハードルからの縮尺と12%を超えて違うときは、高さの選択や線の位置を確かめるよう表示します（5人では −0.3〜+8%）。</p>
           <p>角度は鉛直を0°とし、進行方向へ倒れる向きを正とします（体幹は腰から肩、脛は足首から膝、リード脚の大腿は腰から膝を真下から測った角度）。膝は伸び切った状態が180°です。抜き脚は体の横に開いて回るため、真横の動画では角度を出しません。</p>
-          <p>参考値の出典：重心最高点の位置はMcDonald・Dapena（1991：男子0.03m・女子0.30m手前）、森田ら（1994：フォスター選手0.22m手前）、谷川ら（2009：劉翔0.05m・ペイン0.02m・内藤0.11m手前）、谷川ら（2010：ペリー0.40m・フェリシエン0.12m・石野0.16m手前）。空中時間はHanleyら（2021、世界選手権決勝の選手：男子0.33±0.02秒・女子0.28±0.02秒）。着地の膝と体幹はBissasら（2022、同じ選手：膝 男子166±10°・女子156±9°、体幹の前傾 男子29±6°・女子31±6°）。トップ選手の値は一般のハードル（男子106.7cm・女子84.0cm）でのもので、ハードルの高さ・走る速さが違えば変わります。</p>
+          <p>参考値の出典：重心最高点の位置はMcDonald・Dapena（1991：男子0.03m・女子0.30m手前）、森田ら（1994：フォスター選手0.22m手前）、谷川ら（2009：劉翔0.05m・ペイン0.02m・内藤0.11m手前）、谷川ら（2010：ペリー0.40m・フェリシエン0.12m・石野0.16m手前）。空中時間はHanleyら（2021、世界選手権決勝の選手：男子0.33±0.02秒・女子0.28±0.02秒）。着地の膝と体幹はBissasら（2022、同じ選手：膝 男子166±10°・女子156±9°、体幹の前傾 男子29±6°・女子31±6°）。踏切・着地距離とバーの上の重心の高さはHanleyら（2021：踏切 男子2.24m・女子2.09m、着地 男子1.56m・女子1.40m、重心最高点 男子1.33m・女子1.13m）とMcDonald・Dapena（1991：重心最高点 男子1.347m・女子1.193m）から（バーの上の高さは、重心最高点からハードルの高さを引いた値）。トップ選手の値は一般のハードル（男子106.7cm・女子83.8cm）でのもので、ハードルの高さ・走る速さが違えば変わります。</p>
           <p>骨格：選手を見つけて追うのはMediaPipe、接地・離地の判定、角度・重心と画像・スロー再生の骨格はRTMPose（{measured?.refiner === 'webgpu' ? 'WebGPU' : measured?.refiner === 'wasm' ? 'WebAssembly' : '今回は未使用'}）です。ハードルの動画では、RTMPoseのつま先の方が接地・離地の時刻がブラウザによらず安定していました（MediaPipeはSafari系で接地時間の差が最大0.031秒）。</p></details>
       </>}
       <button onClick={save}>結果を保存（JSON）</button>
