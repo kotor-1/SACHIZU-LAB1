@@ -5,6 +5,7 @@ import { trackRotation } from '../cmj/video-orientation';
 import { untilAborted } from '../cmj/session-lifecycle';
 import type { Point, SprintSample } from './analysis';
 import type { CrouchFrame } from './crouch';
+import { loadRefiner, type Refiner } from './rtm-refine';
 import type { SprintStart } from './tracker';
 import { SPRINT_POSES, SprintFrameProcessor } from './frame-processor';
 
@@ -25,6 +26,8 @@ interface FrameOptions {
   fromBlocks?: boolean;
   /** Each analysed frame's selected athlete (normalized landmarks; empty when not found) and picture size. */
   onSelected?: (frame: { frameIndex: number; pts: number }, selected: Point[], width: number, height: number) => void;
+  /** Awaited after onSelected, with the frame still on `source`. */
+  afterSelected?: (source: HTMLCanvasElement) => Promise<void>;
 }
 export async function measureSprint(file: File, startX: number, signal: AbortSignal,
   progress: (fraction: number, message: string) => void, finishX?: number, start: SprintStart = 'standing', distanceM = 10,
@@ -80,6 +83,7 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
       ctx.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2); ctx.setTransform(1, 0, 0, 1, 0, 0);
       const selected = await processor.process(w, h, frame);
       options.onSelected?.(frame, selected, w, h);
+      if (options.afterSelected) { await untilAborted(options.afterSelected(source), signal); check(); }
       if (processor.idle) nextAnalysed = frame.frameIndex + idleStride;
       const now = performance.now();
       if (now - lastUpdate > 100) { progress((frame.frameIndex + 1) / d.frames.length, '選手と脚の動きを解析しています。'); lastUpdate = now; }
@@ -90,14 +94,20 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
 }
 
 /** A crouch start: the athlete's pose in every frame (up to CROUCH_FPS), followed
- * from the start line as in the standing 10 m. */
+ * from the start line as in the standing 10 m, and the same pose from RTMPose
+ * for the angles and the pictures (see rtm-refine.ts); without RTMPose (the
+ * model not loaded) the angles come from MediaPipe and `refiner` is null. */
 export async function measureCrouch(file: File, startX: number, signal: AbortSignal,
-  progress: (fraction: number, message: string) => void): Promise<{ frames: CrouchFrame[]; width: number; height: number }> {
+  progress: (fraction: number, message: string) => void): Promise<{ frames: CrouchFrame[]; width: number; height: number; refiner: Refiner['backend'] | null }> {
   const frames: CrouchFrame[] = [];
-  let width = 0, height = 0;
+  let width = 0, height = 0, refiner: Refiner | null = null;
+  try { refiner = await untilAborted(loadRefiner(signal, text => progress(0, text)), signal); }
+  catch (e) { if (signal.aborted) throw e; refiner = null; }
   await measureSprint(file, startX, signal, progress, undefined, 'standing', 10, { maxFps: CROUCH_FPS, fromBlocks: true, onSelected: (frame, selected, w, h) => {
     width = w; height = h;
     frames.push({ frame: frame.frameIndex, pts: frame.pts, pose: selected.length === 33 ? selected.map(p => ({ x: p.x, y: p.y, visibility: p.visibility })) : null });
-  } });
-  return { frames, width, height };
+  }, afterSelected: refiner ? async source => {
+    const f = frames.at(-1); if (f?.pose) f.refined = await refiner!.refine(source, f.pose);
+  } : undefined });
+  return { frames, width, height, refiner: refiner?.backend ?? null };
 }

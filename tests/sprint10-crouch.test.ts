@@ -67,6 +67,16 @@ describe('crouch start (side view)', () => {
     // Motion only: no distance or speed in the result.
     expect(JSON.stringify(r)).not.toMatch(/length|speed|distance|meters|scale/i);
   });
+  it('takes the angles from a refined pose (RTMPose) and the contacts from the first pose', () => {
+    const plain = analyzeCrouchStart(startFrames(), { width: W, height: H });
+    // The refined shoulders 40 px lower: the trunk leans more; the toes are the same.
+    const frames = startFrames().map(f => ({ ...f, refined: f.pose && f.pose.map((p, k) => k === 11 || k === 12 ? { ...p, y: p.y + 40 / H } : p) }));
+    const refined = analyzeCrouchStart(frames, { width: W, height: H });
+    expect(refined.contacts.map(c => [c.touchdown, c.toeOff])).toEqual(plain.contacts.map(c => [c.touchdown, c.toeOff]));
+    expect(refined.blockClearance!.pts).toBe(plain.blockClearance!.pts);
+    expect(refined.steps[0].trunkAngle!).toBeGreaterThan(plain.steps[0].trunkAngle! + 3);
+    expect(refined.steps[0].shankAngle).toBeCloseTo(plain.steps[0].shankAngle!, 9);
+  });
   it('does not depend on the left/right labels of the pose model', () => {
     const plain = analyzeCrouchStart(startFrames(), { width: W, height: H });
     const swapped = analyzeCrouchStart(startFrames({ swapEvery: 7 }), { width: W, height: H });

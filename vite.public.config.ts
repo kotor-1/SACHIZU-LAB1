@@ -14,6 +14,10 @@ export default defineConfig({
       for (const name of ['pose_landmarker_lite.task', 'pose_landmarker_full.task', 'pose_landmarker_heavy.task', 'README.md']) {
         this.emitFile({ type: 'asset', fileName: `models/cmj/${name}`, source: readFileSync(resolve(import.meta.dirname, 'public/models/cmj', name)) });
       }
+      for (const name of ['rtmpose-m-halpe26-256x192.onnx', 'README.md']) {
+        this.emitFile({ type: 'asset', fileName: `models/rtmpose/${name}`, source: readFileSync(resolve(import.meta.dirname, 'public/models/rtmpose', name)) });
+      }
+      this.emitFile({ type: 'asset', fileName: 'licenses/onnxruntime-web.txt', source: readFileSync(resolve(import.meta.dirname, 'public-app/licenses/onnxruntime-web.txt')) });
       this.emitFile({ type: 'asset', fileName: '.nojekyll', source: '' });
       this.emitFile({ type: 'asset', fileName: 'THIRD_PARTY_NOTICES.md', source: readFileSync(resolve(import.meta.dirname, 'public-app/THIRD_PARTY_NOTICES.md')) });
       for (const [name, path] of Object.entries({ react: 'react/LICENSE', 'react-dom': 'react-dom/LICENSE', scheduler: 'scheduler/LICENSE', 'lucide-react': 'lucide-react/LICENSE', mp4box: 'mp4box/LICENSE', 'Apache-2.0': 'typescript/LICENSE.txt' })) {

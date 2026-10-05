@@ -6,6 +6,8 @@ This application includes the following third-party software and models. Their r
 - Lucide React — Lucide contributors — ISC; Feather-derived icons — Cole Bemis — MIT. Full texts: `licenses/lucide-react.txt`.
 - MP4Box.js — Telecom ParisTech / Cyril Concolato — BSD-3-Clause. Full text: `licenses/mp4box.txt`.
 - MediaPipe Tasks Vision and BlazePose GHUM Lite/Full/Heavy models — Google — Apache-2.0. Full text: `licenses/Apache-2.0.txt`.
+- ONNX Runtime Web — Microsoft Corporation — MIT. Full text: `licenses/onnxruntime-web.txt`.
+- RTMPose (MMPose) and the RTMPose-m Halpe26 (Body7) model — OpenMMLab — Apache-2.0. Full text: `licenses/Apache-2.0.txt`. The model was trained on datasets including some licensed for non-commercial research only; it is used here in a free, non-commercial application. See `models/rtmpose/README.md` for the source URL and SHA-256.
 
 MediaPipe models are unmodified official float16 bundles. See `models/cmj/README.md` for source URLs and SHA-256 checksums. The model license is documented in the [BlazePose GHUM model card](https://storage.googleapis.com/mediapipe-assets/Model%20Card%20BlazePose%20GHUM%203D.pdf). [MediaPipe source](https://github.com/google-ai-edge/mediapipe).
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { nearestPoseFrame } from '../cmj/pose-drawing';
-import type { CrouchFrame } from './crouch';
+import { anglePose, type CrouchFrame } from './crouch';
 import { drawCrouchFigure, figureView, markText, type Phase } from './crouch-figure';
 import PlayerBar from './PlayerBar';
 
@@ -54,7 +54,7 @@ export function PhaseFigures({ url, frames, phases, onShow, guides = {} }: { url
         const nudge = setTimeout(() => { if (v.readyState < 2) v.play().then(() => v.pause()).catch(() => undefined); }, 1500);
         await loaded; clearTimeout(nudge);
         for (const p of phases) {
-          const pose = frames.find(f => f.frame === p.frame)?.pose;
+          const shown = frames.find(f => f.frame === p.frame), pose = shown ? anglePose(shown) : null;
           if (closed) return;
           if (!pose) continue;
           await seekTo(v, insideFrame(p.pts, interval));
@@ -104,7 +104,7 @@ export function CrouchReplay({ url, video, frames, phases, events }: { url: stri
       const f = nearestPoseFrame(seen, pts);
       if (!f || Math.abs(f.pts - pts) > 1.5 * interval) { delete c.dataset.frame; say(''); return; }
       const phase = phases.find(p => Math.abs(p.pts - f.pts) <= (PHASE_REACH + .5) * interval) ?? null;
-      if (skeleton) drawCrouchFigure(ctx, f.pose!, q => ({ x: q.x * c.width, y: q.y * c.height }), phase?.marks ?? [], c.width / 110, false);
+      if (skeleton) drawCrouchFigure(ctx, anglePose(f)!, q => ({ x: q.x * c.width, y: q.y * c.height }), phase?.marks ?? [], c.width / 110, false);
       c.dataset.frame = String(f.frame);
       say(phase ? `${phase.label}　${phase.marks.map(markText).join(' · ')}` : '');
     };

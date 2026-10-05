@@ -5,12 +5,17 @@
  * ground. Contacts are found as such places (with the toes of both sides
  * pooled), so the left/right labels of the pose model, which swap when the
  * legs cross in a side view, are never needed. */
-export const CROUCH_VERSION = 'crouch-start-v1-experimental';
+/** v2 (2026-10-04): angles from RTMPose when given (`refined`). */
+export const CROUCH_VERSION = 'crouch-start-v2-experimental';
 export const MAX_STEPS = 5;
 
 export interface CrouchPoint { x: number; y: number; visibility?: number }
-/** One frame: the athlete's 33 landmarks (normalized), or null when not found. */
-export interface CrouchFrame { frame: number; pts: number; pose: CrouchPoint[] | null }
+/** One frame: the athlete's 33 landmarks (normalized), or null when not found;
+ * `refined`: the same athlete from RTMPose in MediaPipe's indices, used for the
+ * angles (contacts stay on `pose`'s toes). */
+export interface CrouchFrame { frame: number; pts: number; pose: CrouchPoint[] | null; refined?: CrouchPoint[] | null }
+/** The pose the angles and pictures use. */
+export const anglePose = (f: CrouchFrame) => f.refined ?? f.pose;
 export interface CrouchOptions {
   /** Picture size, so distances are measured in pixels alike in both axes. */
   width: number; height: number;
@@ -182,11 +187,11 @@ export function analyzeCrouchStart(frames: readonly CrouchFrame[], options: Crou
     const contactSeconds = c.touchdown !== null && c.toeOff !== null ? c.toeOff - c.touchdown : null;
     const flightSeconds = next?.touchdown != null && c.toeOff !== null ? next.touchdown - c.toeOff : null;
     const stepSeconds = next?.touchdown != null && c.touchdown !== null ? next.touchdown - c.touchdown : null;
-    const td = c.touchdownFrame !== null ? frames.find(f => f.frame === c.touchdownFrame) : null;
-    const side = td?.pose ? sideNearest(td.pose, c.x / W, W) : null;
+    const td = c.touchdownFrame !== null ? frames.find(f => f.frame === c.touchdownFrame) : null, at = td ? anglePose(td) : null;
+    const side = at ? sideNearest(at, c.x / W, W) : null;
     return { step: c.index, contactSeconds, flightSeconds, stepSeconds, pitch: stepSeconds ? 1 / stepSeconds : null,
-      shankAngle: td?.pose && side !== null ? shankAngle(td.pose, side, W, H, direction) : null,
-      trunkAngle: td?.pose ? trunkAngle(td.pose, W, H, direction, leg) : null, side };
+      shankAngle: at && side !== null ? shankAngle(at, side, W, H, direction) : null,
+      trunkAngle: at ? trunkAngle(at, W, H, direction, leg) : null, side };
   });
   if (!base.contacts.length) base.notes.push('ブロックを離れた後の接地が映っていません。');
   const partial = base.contacts.filter(c => c.toeOff === null).map(c => c.index);
@@ -260,9 +265,9 @@ function kneeAngle(pose: CrouchPoint[], side: 0 | 1, W: number, H: number, leg: 
  * shown is `at`, or else the frame whose angles are nearest the medians. */
 function posture(frames: CrouchFrame[], frontX: number, W: number, H: number, direction: number, leg: number, at?: CrouchFrame): Posture {
   const angles = (f: CrouchFrame) => {
-    const side = sideNearest(f.pose!, frontX, W);
-    return { side, trunk: trunkAngle(f.pose!, W, H, direction, leg), front: side === null ? null : kneeAngle(f.pose!, side, W, H, leg),
-      rear: side === null ? null : kneeAngle(f.pose!, (1 - side) as 0 | 1, W, H, leg) };
+    const pose = anglePose(f)!, side = sideNearest(pose, frontX, W);
+    return { side, trunk: trunkAngle(pose, W, H, direction, leg), front: side === null ? null : kneeAngle(pose, side, W, H, leg),
+      rear: side === null ? null : kneeAngle(pose, (1 - side) as 0 | 1, W, H, leg) };
   };
   const each = frames.map(angles);
   const values = (key: 'trunk' | 'front' | 'rear') => {

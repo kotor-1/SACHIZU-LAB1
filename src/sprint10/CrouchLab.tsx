@@ -26,7 +26,7 @@ export default function CrouchLab() {
   const still = useFirstFrame(url), ready = loaded || !!still;
   const [start, setStart] = useState(.3);
   const [message, setMessage] = useState('');
-  const [measured, setMeasured] = useState<{ frames: CrouchFrame[]; width: number; height: number } | null>(null);
+  const [measured, setMeasured] = useState<{ frames: CrouchFrame[]; width: number; height: number; refiner: 'webgpu' | 'wasm' | null } | null>(null);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   useEffect(() => () => { owner.current?.abort(); owner.current = null; }, []);
   const result: CrouchResult | null = useMemo(() => measured ? analyzeCrouchStart(measured.frames, { width: measured.width, height: measured.height }) : null, [measured]);
@@ -136,6 +136,7 @@ export default function CrouchLab() {
             : <p>ピッチ {value(s.pitch)}歩/秒</p>}
         </li>)}</ol>
         {result.notes.map(n => <p className="sprint10-note" key={n}>{n}</p>)}
+        {measured && !measured.refiner && <p className="sprint10-note">高精度の骨格モデル（RTMPose）を読み込めなかったため、角度と骨格の表示はMediaPipeの骨格を使っています。</p>}
         <div ref={replayCard} className="sprint10-replay"><h3>スロー再生（骨格つき）</h3>
           <p className="sprint10-hint">1/8は実際の8分の1の速さ（1秒240コマの動画で毎秒30コマ）。判定した瞬間の前後では、測った線と角度を表示します。</p>
           <CrouchReplay url={url} video={replay} frames={measured!.frames} phases={phases} events={events} /></div>
@@ -143,6 +144,7 @@ export default function CrouchLab() {
           <p>接地は、つま先が床の高さまで下りた時、離地はつま先が床から離れた時を、骨格の動きから判定しています。真横から1秒240コマで撮影した3人の検証動画では、映像で見た瞬間との差は最大でおよそ1/60秒でした。</p>
           <p>ピッチは接地から次の接地までの時間の逆数です。角度は鉛直を0°とし、進行方向へ倒れる向きを正とします（脛は足首から膝、体幹は腰から肩）。膝は伸び切った状態が180°です。</p>
           <p>骨格の推定が崩れたコマの角度は出しません。</p>
+          <p>骨格：選手を見つけて追い、接地・離地を判定するのはMediaPipe、角度と画像・スロー再生の骨格はRTMPose（{measured?.refiner === 'webgpu' ? 'WebGPU' : measured?.refiner === 'wasm' ? 'WebAssembly' : '今回は未使用'}）です。かがんだ構えではRTMPoseの方が膝・腰の位置が体に合い、接地・離地の時刻は映像との差がMediaPipeの方が小さかったためです（3人の検証動画）。</p>
           <p>目安の出典：構えの膝はCavedonら（2019、地方〜全国レベルの短距離選手42人：前膝90〜92°、後膝112〜117°）とBezodisら（2019、総説：前膝91〜99°、後膝117〜136°）。ブロックを離れてから1歩目の接地までは0.045±0.025秒（Bezodisら 2019）。1歩目の接地はトップ選手の例0.177秒（Čoh・Tomazin 2006、100m 10.15秒の選手）、ダイヤモンドリーグの選手の平均0.210秒（男子）・0.225秒（女子）（Bezodisら 2019）。グラフの点線はČoh・Tomazin（2006）の1〜4歩目。歩ごとに脛と体幹が起きていくことはDonaldsonら（2022）。</p>
           <p>この解析の時間はコマ単位（1/240秒）で判定しているため、0.01〜0.02秒の差は誤差の範囲です。ブロックを離れる瞬間は平均で約0.01秒早めに判定するため、1歩目の接地までの時間は少し長めに出ます。</p></details>
       </>}
