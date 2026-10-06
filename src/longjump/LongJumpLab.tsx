@@ -49,6 +49,8 @@ export default function LongJumpLab() {
   // The ruler: set after the analysis on a still of the takeoff; used once the user turns it on.
   const [ruler, setRuler] = useState<{ use: boolean; distanceText: string; points: RulerPoints | null }>({ use: false, distanceText: String(DISTANCE.start), points: null });
   const [rulerShift, setRulerShift] = useState(0);
+  // The takeoff's still (full size) is made only when asked for: an iPhone closed the page around the analysis's end.
+  const [rulerOpen, setRulerOpen] = useState(false);
   const distanceNumber = Number(ruler.distanceText), distance = distanceNumber >= DISTANCE.min && distanceNumber <= DISTANCE.max ? distanceNumber : null;
   const plain: LongJumpResult | null = useMemo(() => measured ? analyzeLongJump(measured.frames, { width: measured.width, height: measured.height, athleteHeight }) : null, [measured, athleteHeight]);
   const result: LongJumpResult | null = useMemo(() => measured && plain && ruler.use && ruler.points && distance
@@ -56,9 +58,9 @@ export default function LongJumpLab() {
   [measured, plain, athleteHeight, ruler.use, ruler.points, distance]);
   const takeoff = plain && !plain.reason && plain.takeoff !== null ? plain.contacts[plain.takeoff] : null;
   const rulerAt = measured && takeoff?.touchdown != null ? insideFrame(takeoff.touchdown + rulerShift, frameInterval(measured.frames)) : null;
-  const rulerStill = useStill(url, rulerAt);
+  const rulerStill = useStill(url, rulerOpen ? rulerAt : null);
   useEffect(() => {   // new analysis: first guesses for the points, the ruler off
-    setRulerShift(0);
+    setRulerShift(0); setRulerOpen(false);
     setRuler(r => ({ ...r, use: false, points: plain && measured && !plain.reason ? startPoints(plain, measured.width, measured.height, distance ?? DISTANCE.start) : null }));
   }, [measured]);   // eslint-disable-line react-hooks/exhaustive-deps
   const advice = useMemo(() => result && !result.reason ? longJumpAdvice(result) : [], [result]);
@@ -189,6 +191,7 @@ export default function LongJumpLab() {
     </section>}
     {result && measured && !result.reason && takeoff && <section className="sprint10-card" aria-label="物差し"><h2>3　踏切板と砂場の物差し（任意）</h2>
       <p>踏切板と砂場が映っていれば、踏切線（踏切板の白と緑の境目）から砂が始まる所までの距離を物差しにして、速さをより正確に出せます（目安の幅 ±{SPREADS.ruler * 100}%）。下の拡大画面で、4つの点を、踏切線と砂の始まりが<strong>助走路の奥の縁・手前の縁と交わる所</strong>に合わせてください。</p>
+      {!rulerOpen ? <button type="button" onClick={() => setRulerOpen(true)}>物差しを合わせる（踏切のコマを開く）</button> : <>
       <div className="longjump-ruler-options">
         <label>踏切線から砂まで<input type="number" inputMode="decimal" min={DISTANCE.min} max={DISTANCE.max} step=".01" value={ruler.distanceText}
           onChange={e => setRuler(r => ({ ...r, distanceText: e.target.value }))} aria-label="踏切線から砂までの距離（m）" />m</label>
@@ -205,6 +208,7 @@ export default function LongJumpLab() {
       {ruler.use && (sc?.source === 'ruler' && sc.ruler
         ? <p className="sprint10-note" role="status">物差しの縮尺 {sc.pxPerM.toFixed(0)} 画素/m（踏切足は踏切線の{sc.ruler.behind.toFixed(2)} m手前、助走路の奥から{Math.round(sc.ruler.across * 100)}%の位置）。{sc.trunk ? `身長からの縮尺との差 ${Math.round((sc.trunk / sc.pxPerM - 1) * 100)}%。` : ''}上の解析結果はこの物差しで計算しています。</p>
         : <p className="sprint10-note" role="status">4つの点から物差しを作れませんでした。奥の点が手前の点より上に、踏切線と砂の始まりが左右に離れているか確かめてください。</p>)}
+      </>}
     </section>}
     <footer>{LONG_JUMP_VERSION} · 動画はこの端末内で処理します。解析時間は端末の性能により変わります。</footer>
   </main>;
