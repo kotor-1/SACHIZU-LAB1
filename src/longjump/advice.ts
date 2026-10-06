@@ -1,5 +1,5 @@
 import type { HurdleAdvice } from '../hurdling/advice';
-import { mps, type LongJumpResult } from './analysis';
+import { mps, SPREADS, type LongJumpResult } from './analysis';
 
 /** Reference values, from studies (docs/LongJump_MainMeasures_Research_20261006.md; checked in the full text or tables
  * unless marked): not targets for one athlete.
@@ -20,14 +20,12 @@ export const LONG_JUMP_GUIDE = {
   rhythm: .79, legAngle: { men: 61, women: 59.6 }, takeoffContact: .133,
   leave: { horizontal: 7.06, vertical: 2.75, angle: 21.3 }, angleRange: [20.9, 25.4],
 } as const;
-/** Speeds and metres are rough values with ±SPREAD (as the throws). */
-export const SPREAD = .10;
 export const kmh = (v: number) => Math.round(v * 3.6);
 /** The last step's speed against the one before: a change within this is not told apart. */
 export const STEADY = .05;
 
 export function longJumpAdvice(r: LongJumpResult): HurdleAdvice[] {
-  const out: HurdleAdvice[] = [], G = LONG_JUMP_GUIDE;
+  const out: HurdleAdvice[] = [], G = LONG_JUMP_GUIDE, SPREAD = r.scale ? SPREADS[r.scale.source] : SPREADS.trunk;
   const v = mps(r, r.speed.lastTwoPx) ?? mps(r, r.speed.touchdownPx);
   if (v !== null)
     out.push({ topic: '助走速度', level: 'info', text: `最後の2歩で ${v.toFixed(1)} m/秒（時速約${kmh(v)}km、目安 ${(v * (1 - SPREAD)).toFixed(1)}〜${(v * (1 + SPREAD)).toFixed(1)} m/秒）。研究では助走速度が記録と最も強く結びつき、0.1 m/秒速いと記録は約13cm長い傾向です（参考：関西学生女子の踏切前の速さ ${G.speedWomen} m/秒）。` });

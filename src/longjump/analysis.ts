@@ -13,17 +13,25 @@
  * Contacts are the sprint's toes at rest (both sides pooled); a contact held
  * above the ground is a foot still in the air after the takeoff (one 0.45-0.55
  * leg lengths up in all four test videos). The takeoff is the contact before
- * the long flight. The scale for metres: gravity, from the parabola of the
- * centre of mass in the flight (no ruler; within 4-7% of the trunk's scale with
- * 0.6 s of flight seen), else the trunk (shoulders to hips, 0.288 of the
- * height entered), as the throws. */
+ * the long flight.
+ *
+ * The scale for metres, the first to be had: the 2 m ruler on the ground set by
+ * the user (`ruler.ts`); the trunk near the takeoff (shoulders to hips, 0.288 of
+ * the height entered); gravity, from the parabola of the centre of mass in the
+ * flight. Against the ruler in the 4 test videos (the user: 「踏切板から砂場まで
+ * ちょうど２m」): gravity's scale was 11% large in both videos it could be had
+ * (the centre of mass from the pose strays a few cm from a parabola), and the
+ * trunk's over the whole video 12-23% large (it read long in the flight); the
+ * trunk from 2 steps before the takeoff to the toe-off −8 to +2%. With the
+ * ruler, the athlete's trunk came to 0.40-0.44 m in the 4 videos (150 cm tall). */
 import { centreOfMass } from '../hurdling/analysis';
 import { anglePose, type CrouchFrame, type CrouchPoint } from '../sprint10/crouch';
-import { contactOf, contactPlants, legLength, median, plantedToes, plantsOf, quantile, TOE, visible, type Contact, type Toe } from '../sprint10/contacts';
+import { contactOf, contactPlants, legLength, median, plantedToes, plantsOf, TOE, visible, type Contact, type Toe } from '../sprint10/contacts';
 import { kneeAngle, trunkAngle } from '../sprint10/angles';
 import type { Mark, Phase } from '../sprint10/crouch-figure';
+import { rulerScale, type RulerPoints, type RulerScale } from './ruler';
 
-export const LONG_JUMP_VERSION = 'longjump-v1-experimental';
+export const LONG_JUMP_VERSION = 'longjump-v2-experimental';
 const G = 9.81;
 /** A contact this many leg lengths above the lowest is a foot held still in the air (0.45-0.55 in the test videos; on the ground 0-0.14). */
 const ABOVE_GROUND = .3;
@@ -44,14 +52,22 @@ const FIT_MARGIN = .02, GRAVITY_SPAN = .45;
 const LEAVE_SPAN = .2;
 /** The trunk's share of the standing height (Drillis & Contini 1966; as the throws). */
 const TRUNK_SHARE = .288;
+/** The sole's contact with the ground below the toe at rest, in leg lengths (0.044-0.057 in the 4 test videos, both
+ * browsers: 7-9 px under the toe point, read from the picture). The ruler's scale is taken at the sole's depth. */
+const SOLE = .05;
+/** The rough range of a speed, by the scale's source: the ruler (the athlete's trunk through it varied ±5% between
+ * the test videos), the trunk near the takeoff (−8 to +2% against the ruler), gravity (11% off, twice). */
+export const SPREADS = { ruler: .05, trunk: .10, gravity: .15 } as const;
 /** A speed at a moment: a straight line through the centre of mass over ±SPEED_SECONDS. */
 const SPEED_SECONDS = .0125, NEAREST = .04;
 
 export interface LongJumpOptions {
   /** Picture size, so distances are measured in pixels alike in both axes. */
   width: number; height: number;
-  /** The athlete's height (m), for the trunk's scale when gravity's cannot be had. */
+  /** The athlete's height (m), for the trunk's scale. */
   athleteHeight?: number | null;
+  /** The ruler on the ground: its four points and its length (m). */
+  ruler?: { points: RulerPoints; distance: number } | null;
 }
 /** One step before the takeoff: its contact, the flight after it, and the centre of mass's mean forward speed
  * from its touchdown to the next (px/s; m/s with the scale). */
@@ -61,7 +77,10 @@ export interface RunStep {
   contact: number | null; flight: number | null; stepTime: number | null;
   speedPx: number | null;
 }
-export interface LongJumpScale { pxPerM: number; source: 'gravity' | 'trunk'; flightSeen: number; gravity: number | null; trunk: number | null }
+export interface LongJumpScale {
+  pxPerM: number; source: keyof typeof SPREADS; flightSeen: number;
+  gravity: number | null; trunk: number | null; ruler: RulerScale | null;
+}
 export interface LongJumpResult {
   version: string; reason: string | null; direction: number;
   contacts: Contact[];
@@ -191,19 +210,26 @@ export function analyzeLongJump(frames: readonly CrouchFrame[], options: LongJum
   const pen = s1 ? at(C[take - 1].touchdownFrame) : null;
   if (pen) base.posture.trunkPenult = trunkAngle(pen, W, H, direction, leg);
 
-  // The scale: gravity from the flight's centre of mass, else the trunk and the height entered.
+  // The scale: the ruler, else the trunk near the takeoff and the height entered, else gravity from the flight.
   const end = Math.min(C[take + 1]?.touchdown ?? lastSeen, lastSeen) - FIT_MARGIN;
   const flight = com.filter(q => q.t > T0.toeOff! + FIT_MARGIN && q.t < end);
   const flightSeen = flight.length > 1 ? flight.at(-1)!.t - flight[0].t : 0;
-  const gravity = flightSeen >= GRAVITY_SPAN && flight.length >= 20 ? 2 * parabola(flight.map(q => q.t), flight.map(q => q.y)).a / G : null;
-  const trunks = seen.flatMap(f => [11, 12, 23, 24].every(k => visible(f.pose![k], .3))
+  const curved = flightSeen >= GRAVITY_SPAN && flight.length >= 20 ? 2 * parabola(flight.map(q => q.t), flight.map(q => q.y)).a / G : null;
+  const gravity = curved && curved > 0 ? curved : null;
+  const from = C[take - 2]?.touchdown ?? (T0.touchdown ?? T0.toeOff!) - .5;
+  const trunks = seen.filter(f => f.pts >= from && f.pts <= T0.toeOff!).flatMap(f => [11, 12, 23, 24].every(k => visible(f.pose![k], .3))
     ? [Math.hypot(((f.pose![11].x + f.pose![12].x) - (f.pose![23].x + f.pose![24].x)) / 2 * W, ((f.pose![11].y + f.pose![12].y) - (f.pose![23].y + f.pose![24].y)) / 2 * H)] : []);
-  const trunk = options.athleteHeight && trunks.length ? quantile(trunks, .9) / TRUNK_SHARE / options.athleteHeight : null;
-  if (gravity && gravity > 0) base.scale = { pxPerM: gravity, source: 'gravity', flightSeen, gravity, trunk };
-  else if (trunk) base.scale = { pxPerM: trunk, source: 'trunk', flightSeen, gravity: null, trunk };
-  else base.notes.push(`踏切の後の空中が${flightSeen.toFixed(2)}秒しか映っていないため、重力から縮尺を求められませんでした。身長を入れると、胴の長さからの縮尺で速さを出します。`);
-  if (gravity && trunk && Math.abs(gravity / trunk - 1) > .15)
-    base.notes.push(`重力から求めた縮尺と、身長・胴の長さからの縮尺が${Math.round(Math.abs(gravity / trunk - 1) * 100)}%違います。身長の入力を確かめてください。`);
+  const trunk = options.athleteHeight && trunks.length >= 10 ? median(trunks) / TRUNK_SHARE / options.athleteHeight : null;
+  const ruler = options.ruler ? rulerScale(options.ruler.points, options.ruler.distance, { x: T0.x, y: T0.groundY + SOLE * leg }, W, H) : null;
+  if (options.ruler && !ruler) base.notes.push('物差しの4点から縮尺を求められませんでした。踏切線と砂の始まりの点が、それぞれ奥と手前の縁に合っているか確かめてください。');
+  if (ruler) base.scale = { pxPerM: ruler.pxPerM, source: 'ruler', flightSeen, gravity, trunk, ruler };
+  else if (trunk) base.scale = { pxPerM: trunk, source: 'trunk', flightSeen, gravity, trunk, ruler: null };
+  else if (gravity) base.scale = { pxPerM: gravity, source: 'gravity', flightSeen, gravity, trunk: null, ruler: null };
+  else base.notes.push(`踏切の後の空中が${flightSeen.toFixed(2)}秒しか映っていないため、縮尺を求められませんでした。身長を入れるか、踏切板と砂場の物差しを合わせると速さを出します。`);
+  if (ruler && trunk && Math.abs(trunk / ruler.pxPerM - 1) > .12)
+    base.notes.push(`物差しからの縮尺と、身長・胴の長さからの縮尺が${Math.round(Math.abs(trunk / ruler.pxPerM - 1) * 100)}%違います。物差しの点と身長の入力を確かめてください。`);
+  if (ruler && (ruler.across < -.25 || ruler.across > 1.25))
+    base.notes.push('踏切足が物差しの奥と手前の縁の外にありました。物差しの点が助走路の縁に合っているか確かめてください。');
 
   // The toe-off's velocity: the flight's centre of mass, its height a parabola with the curvature of gravity at the
   // scale (with gravity's scale, the fitted one), its forward place a straight line. The curvature fitted freely to

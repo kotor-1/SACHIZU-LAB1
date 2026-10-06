@@ -76,6 +76,21 @@ describe('long jump, the end of the run-up', () => {
     expect(run(1.2).leave).toBeNull();
     expect(longJumpAdvice(r).map(a => a.topic)).toContain('踏切（離地）');
   });
+  it('the ruler comes first: its scale, then the speeds in m/s', () => {
+    // The synthetic picture is the world at 200 px/m: a 2 m ruler ahead of the takeoff (running left), 20 px across.
+    const board = 1800 - SPEED * .87 - 40 - 60, P = (x: number, y: number) => ({ x: x / W, y: y / H });
+    const points = { boardFar: P(board, GROUND - 10), boardNear: P(board, GROUND + 10), sandFar: P(board - 2 * SCALE, GROUND - 10), sandNear: P(board - 2 * SCALE, GROUND + 10) };
+    const r = analyzeLongJump(frames(1.54), { width: W, height: H, athleteHeight: 1.75, ruler: { points, distance: 2 } });
+    expect(r.scale!.source).toBe('ruler');
+    expect(r.scale!.pxPerM).toBeCloseTo(SCALE, 6);
+    expect(r.scale!.ruler!.behind).toBeCloseTo(.3, 1);
+    expect(Math.abs(mps(r, r.speed.lastTwoPx)! - 6)).toBeLessThan(.3);
+    expect(r.notes.join()).toMatch(/身長/);   // the height's scale is far off (the synthetic trunk is 200 px)
+    // points that make no ruler: the next scale, and a note
+    const bad = analyzeLongJump(frames(1.54), { width: W, height: H, ruler: { points: { ...points, sandFar: points.boardFar, sandNear: points.boardNear }, distance: 2 } });
+    expect(bad.scale!.source).toBe('gravity');
+    expect(bad.notes.join()).toMatch(/物差し/);
+  });
   it('a short flight: the scale from the height entered, or none', () => {
     const r = run(1.2, 1.75);
     expect(r.scale!.source).toBe('trunk');

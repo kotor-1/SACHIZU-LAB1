@@ -111,4 +111,3 @@
 .throw-list small{overflow-wrap:anywhere}
 .sprint10-tabs.throw-tabs{grid-template-columns:repeat(5,minmax(0,1fr))}.sprint10 .throw-tabs button{font-size:14px;padding:6px 0}
 @media(max-width:400px){.sprint10 .throw-tabs button{font-size:13px}}
-.longjump-still{display:block;width:100%;margin:10px 0 0;border-radius:10px}

@@ -5,15 +5,32 @@ import type { Phase } from '../sprint10/crouch-figure';
 import type { CrouchFrame } from '../sprint10/crouch';
 import { CrouchReplay, frameInterval, insideFrame, PhaseFigures, type ReplayEvent } from '../sprint10/CrouchViews';
 import { measureHurdle } from '../hurdling/recording';
-import { analyzeLongJump, LONG_JUMP_VERSION, mps, type LongJumpResult } from './analysis';
-import { kmh, LONG_JUMP_GUIDE, longJumpAdvice, SPREAD } from './advice';
+import { analyzeLongJump, LONG_JUMP_VERSION, mps, SPREADS, type LongJumpResult } from './analysis';
+import { kmh, LONG_JUMP_GUIDE, longJumpAdvice } from './advice';
+import type { RulerPoints } from './ruler';
+import RulerSetter from './RulerSetter';
+import { useStill } from './still';
 import '../sprint10/sprint10.css';
+import './longjump.css';
 
 type Tab = 'advice' | 'pose' | 'numbers' | 'replay';
 const TABS: [Tab, string][] = [['advice', 'ポイント'], ['pose', '姿勢'], ['numbers', '数値'], ['replay', 'スロー']];
 const LEGEND = [['#ffb02e', '体幹（腰→肩）'], ['#b58cff', '踏切脚の膝']] as const;
 const G = LONG_JUMP_GUIDE;
 const HEIGHT_RANGE = [100, 230] as const;
+/** The ruler's length (m): the user's runway, 2 m from the takeoff line to the sand; others differ (1-3 m). */
+const DISTANCE = { start: 2, min: .5, max: 5 } as const;
+/** The ruler's still may be moved this far from the takeoff touchdown (s), in steps of FRAME_STEP, when the athlete hides a point. */
+const FRAME_STEP = .1, FRAME_REACH = .6;
+/** First guesses for the four points, from the takeoff foot and the scale had without them; dragged into place by the user. */
+function startPoints(r: LongJumpResult, width: number, height: number, distance: number): RulerPoints | null {
+  const c = r.takeoff === null ? null : r.contacts[r.takeoff];
+  if (!c) return null;
+  const s = r.scale?.pxPerM ?? .11 * width, board = c.x + r.direction * .3 * s, sand = board + r.direction * distance * s;
+  const far = c.groundY - .012 * height, near = c.groundY + .02 * height;
+  const P = (x: number, y: number) => ({ x: Math.max(.01, Math.min(.99, x / width)), y: Math.max(.01, Math.min(.99, y / height)) });
+  return { boardFar: P(board, far), boardNear: P(board, near), sandFar: P(sand, far), sandNear: P(sand, near) };
+}
 
 /** Long jump, the end of the run-up filmed side-on: the run-up's speed into the board (the user, 2026-10-06:
  * 「助走の最後のところをメインに解析するので跳躍動作や着地は不要」; research ties the run-up's speed to the
@@ -29,7 +46,21 @@ export default function LongJumpLab() {
   const [measured, setMeasured] = useState<{ frames: CrouchFrame[]; width: number; height: number; refiner: 'webgpu' | 'wasm' | null } | null>(null);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   useEffect(() => () => { owner.current?.abort(); owner.current = null; }, []);
-  const result: LongJumpResult | null = useMemo(() => measured ? analyzeLongJump(measured.frames, { width: measured.width, height: measured.height, athleteHeight }) : null, [measured, athleteHeight]);
+  // The ruler: set after the analysis on a still of the takeoff; used once the user turns it on.
+  const [ruler, setRuler] = useState<{ use: boolean; distanceText: string; points: RulerPoints | null }>({ use: false, distanceText: String(DISTANCE.start), points: null });
+  const [rulerShift, setRulerShift] = useState(0);
+  const distanceNumber = Number(ruler.distanceText), distance = distanceNumber >= DISTANCE.min && distanceNumber <= DISTANCE.max ? distanceNumber : null;
+  const plain: LongJumpResult | null = useMemo(() => measured ? analyzeLongJump(measured.frames, { width: measured.width, height: measured.height, athleteHeight }) : null, [measured, athleteHeight]);
+  const result: LongJumpResult | null = useMemo(() => measured && plain && ruler.use && ruler.points && distance
+    ? analyzeLongJump(measured.frames, { width: measured.width, height: measured.height, athleteHeight, ruler: { points: ruler.points, distance } }) : plain,
+  [measured, plain, athleteHeight, ruler.use, ruler.points, distance]);
+  const takeoff = plain && !plain.reason && plain.takeoff !== null ? plain.contacts[plain.takeoff] : null;
+  const rulerAt = measured && takeoff?.touchdown != null ? insideFrame(takeoff.touchdown + rulerShift, frameInterval(measured.frames)) : null;
+  const rulerStill = useStill(url, rulerAt);
+  useEffect(() => {   // new analysis: first guesses for the points, the ruler off
+    setRulerShift(0);
+    setRuler(r => ({ ...r, use: false, points: plain && measured && !plain.reason ? startPoints(plain, measured.width, measured.height, distance ?? DISTANCE.start) : null }));
+  }, [measured]);   // eslint-disable-line react-hooks/exhaustive-deps
   const advice = useMemo(() => result && !result.reason ? longJumpAdvice(result) : [], [result]);
   const checks = advice.filter(a => a.level === 'check').length;
   const events: ReplayEvent[] = useMemo(() => {
@@ -74,21 +105,26 @@ export default function LongJumpLab() {
   function show(p: Phase) { seekTo.current = p.pts; choose('replay'); }
   function save() {
     if (!result) return;
-    const blob = new Blob([JSON.stringify({ version: LONG_JUMP_VERSION, file: file?.name, heightCm: athleteHeight ? athleteHeight * 100 : null, result }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ version: LONG_JUMP_VERSION, file: file?.name, heightCm: athleteHeight ? athleteHeight * 100 : null,
+      ruler: ruler.use && ruler.points ? { distance, points: ruler.points, frameAt: rulerAt } : null, result }, null, 2)], { type: 'application/json' });
     const href = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = href; a.download = 'long-jump-result.json'; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
   }
   const lastTwo = result ? mps(result, result.speed.lastTwoPx) : null, atTouchdown = result ? mps(result, result.speed.touchdownPx) : null;
   const upward = result ? mps(result, result.leave?.verticalPx ?? null) : null;
+  const spread = result?.scale ? SPREADS[result.scale.source] : SPREADS.trunk, missing = '身長か物差しで出ます';
   const vertical: [string, string, string, string] = ['離地の鉛直速度', upward === null ? '—' : upward.toFixed(2), 'm/秒',
-    upward === null ? (result?.scale ? '' : '身長を入れると出ます') : `目安 ${(upward * (1 - SPREAD)).toFixed(1)}〜${(upward * (1 + SPREAD)).toFixed(1)}`];
+    upward === null ? (result?.scale ? '' : missing) : `目安 ${(upward * (1 - spread)).toFixed(1)}〜${(upward * (1 + spread)).toFixed(1)}`];
   const angle: [string, string, string, string] = ['踏切角度（参考）', result?.leave ? Math.round(result.leave.angle).toString() : '—', '°',
-    result?.leave ? '人ごとに最適が違い、目標にしない値' : result?.scale ? '' : '身長を入れると出ます'];
+    result?.leave ? '人ごとに最適が違い、目標にしない値' : result?.scale ? '' : missing];
   const speedTile = (label: string, v: number | null): [string, string, string, string] => [label, v === null ? '—' : v.toFixed(1), 'm/秒',
-    v === null ? (result?.scale ? '' : '身長を入れると出ます') : `時速約${kmh(v)}km・目安 ${(v * (1 - SPREAD)).toFixed(1)}〜${(v * (1 + SPREAD)).toFixed(1)}`];
-  const scaleText = result?.scale ? result.scale.source === 'gravity'
-    ? `縮尺は、踏切の後の空中（${result.scale.flightSeen.toFixed(2)}秒）の重心の放物線＝重力から求めました${result.scale.trunk ? `（身長と胴の長さからの縮尺との差 ${Math.round((result.scale.gravity! / result.scale.trunk - 1) * 100)}%）` : ''}。`
-    : `踏切の後の空中が${result.scale.flightSeen.toFixed(2)}秒しか映っていないため、縮尺は身長と胴の長さから求めました。` : '';
+    v === null ? (result?.scale ? '' : missing) : `時速約${kmh(v)}km・目安 ${(v * (1 - spread)).toFixed(1)}〜${(v * (1 + spread)).toFixed(1)}`];
+  const sc = result?.scale ?? null;
+  const scaleText = !sc ? '' : sc.source === 'ruler'
+    ? `縮尺は、踏切板と砂場の物差し（${distance} m）から、踏切足の位置で求めました（目安の幅 ±${SPREADS.ruler * 100}%）。`
+    : sc.source === 'trunk'
+      ? `縮尺は、身長と踏切前2歩の胴（肩〜腰）の長さから求めました（目安の幅 ±${SPREADS.trunk * 100}%）。踏切板と砂場が映っていれば、下の「物差し」を合わせると誤差が小さくなります。`
+      : `縮尺は、踏切の後の空中の重心の放物線（重力）から求めました。この方法は試験動画で速さが約1割遅く出たため、目安の幅を±${SPREADS.gravity * 100}%にしています。身長を入れるか、下の「物差し」を合わせてください。`;
   return <main className="sprint10">
     <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
     <header><p className="sprint10-eyebrow">EVENT / LONG JUMP</p><h1>走り幅跳び：助走の最後</h1>
@@ -102,7 +138,7 @@ export default function LongJumpLab() {
       {still && <img className="longjump-still" src={still.image} alt="動画の最初のコマ" />}
       <label className="throw-height"><span>身長（任意）</span><input type="number" inputMode="decimal" min={HEIGHT_RANGE[0]} max={HEIGHT_RANGE[1]} step="1" placeholder="例 160"
         value={heightText} onChange={e => setHeightText(e.target.value)} aria-label="選手の身長（cm）" /><small>cm</small></label>
-      <p className="sprint10-hint">踏切の後の空中が短くしか映っていない動画では、身長から速さの縮尺を求めます。走る向きと選手は自動で見つけます。</p>
+      <p className="sprint10-hint">身長を入れると、選手の胴の長さから速さの縮尺を求めます。踏切板と砂場が映っていれば、解析の後に「物差し」を合わせるとさらに正確になります。走る向きと選手は自動で見つけます。</p>
     </section>
     <section className="sprint10-card"><h2>2　解析する</h2>
       <button className="sprint10-primary" disabled={!file || busy} onClick={() => void analyze()}>解析する</button>
@@ -114,7 +150,7 @@ export default function LongJumpLab() {
       {result.reason ? <p role="alert" className="sprint10-note">{result.reason}</p> : <>
         <div className="sprint10-metrics sprint10-summary">{[speedTile('助走速度（最後の2歩）', lastTwo), speedTile('踏切接地の瞬間', atTouchdown), vertical, angle].map(([label, value, unit, note]) =>
           <div key={label}><span>{label}</span><strong>{value}<small>{value === '—' ? '' : unit}</small></strong>{note && <em>{note}</em>}</div>)}</div>
-        <p className="sprint10-note"><strong>速さは動画から推定した目安です。</strong>{scaleText}4本の試験動画で、ChromeとSafari系の差は最後の2歩で2%以内、踏切接地の瞬間で3%以内、離地の鉛直速度で2%以内でした。研究では助走速度が記録と最も強く結びつき（0.1 m/秒速いと約13cm）、離地の鉛直速度も女子で記録と結びつきます。</p>
+        <p className="sprint10-note"><strong>速さは動画から推定した目安です。</strong>{scaleText}研究では助走速度が記録と最も強く結びつき（0.1 m/秒速いと約13cm）、離地の鉛直速度も女子で記録と結びつきます。</p>
         {!measured.refiner && <p className="sprint10-note">高精度の骨格モデル（RTMPose）を読み込めなかったため、MediaPipeの骨格を使っています。</p>}
         <div ref={tabs} className="sprint10-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
           <button key={id} id={`lj-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`lj-panel-${id}`} onClick={() => choose(id)}>
@@ -142,13 +178,33 @@ export default function LongJumpLab() {
           </div>
         </div>
         <details className="sprint10-more"><summary>数値の見方</summary>
-          <p>助走速度は、骨格から求めた重心（de Leva 1996）が、2歩前の接地から踏切の接地までに前へ進んだ距離をその時間で割った値です。「踏切接地の瞬間」は、その瞬間の前後0.0125秒の重心の動きから求めた値です。縮尺は、踏切の後の空中の重心が描く放物線の曲がり＝重力（9.81 m/秒²）から求め、空中が0.45秒より短くしか映っていないときは、身長と胴（肩の中点〜腰の中点、身長の0.288）の長さから求めます。真横から240コマ/秒で撮った4本では、空中が0.5秒映った2本で、重力からの縮尺と身長からの縮尺の差は2〜5%、ChromeとSafari系の差は、最後の2歩の速さで2%以内、踏切接地の瞬間の速さで3%以内でした。速さの正解（光電管など）との比較はしていないため、目安として±10%の幅を付けています。</p>
+          <p>助走速度は、骨格から求めた重心（de Leva 1996）が、2歩前の接地から踏切の接地までに前へ進んだ距離をその時間で割った値です。「踏切接地の瞬間」は、その瞬間の前後0.0125秒の重心の動きから求めた値です。</p>
+          <p>縮尺（1 mが何画素か）は、次の順に使います。①物差し：踏切線（踏切板の白と緑の境目）から砂が始まる所までの距離と、その2本の線が助走路の奥・手前の縁と交わる4点から、地面の平面の写り方を求め、踏切足の位置での縮尺を出します（助走路の手前寄りか奥寄りかで縮尺が最大で±8%変わるため）。②身長：踏切前2歩の胴（肩の中点〜腰の中点、身長の0.288）の長さ。③重力：踏切の後の空中（0.45秒以上）の重心の放物線の曲がり。真横から240コマ/秒で撮った4本で物差し（2 m）と比べると、身長からの縮尺は−9〜+4%、重力からの縮尺は2本とも11%大きく（速さが約1割遅く出る）、物差しで測った選手の胴の長さは4本で0.40〜0.44 m（身長150 cm）でした。光電管などとの比較はしていないため、目安の幅は物差し±5%・身長±10%・重力±15%です。ChromeとSafari系の差は、最後の2歩の速さで2%以内でした。</p>
           <p>接地は、つま先が地面の高さで止まった瞬間です（左右の脚は骨格の左右ではなく、つま先の位置で判定）。踏切は、長い空中（0.25秒以上）の前の接地です。リズムは、最後の1歩（1歩前の接地→踏切の接地）の時間を、その前の歩の時間で割った値です。踏切接地の脚の角度は、股関節から足首の線と水平がなす角度です。</p>
           <p>離地の速さと踏切角度は、踏切の離地から後の空中の重心から求めます。前への位置を直線に、高さを重力の放物線（曲がりは縮尺に合わせて固定）に当てはめ、離地の瞬間の向きと速さを出します。空中が0.2秒以上映っていることが条件です。曲がりを自由に当てはめると、空中が0.3秒しか映っていない動画で角度が2.4°ずれたため固定しています。ChromeとSafari系の差は、水平速度で約2%、鉛直速度で0.03 m/秒、角度で0.3°以内でした。</p>
           <p>出典：助走速度と記録の関係は太田ら（2010、コーチング学研究24(1)：関西学生、踏切前7〜2 mの速さと記録 r = 0.858（男子）・0.811（女子）、女子（記録4.28〜5.88 m）の速さ8.28±0.37 m/秒）、0.1 m/秒あたり約13 cmはHay（1993、高校生〜エリートの横断データ、Bridgett・Linthorne 2006 の記載）。最後の3歩のリズムはTucker・Bissas（2018、世界室内選手権女子決勝：接地0.105・0.113・0.122秒、空中0.112・0.136・0.075秒、比はこれらの平均から計算）。脚の角度はBridgett・Linthorne（2006：61±3°）、Nemtsevら（2016、女子：59.6±2.8°）。踏切の接地時間はNemtsevら（2016、女子：0.133±0.011秒）。離地の速さと角度はNemtsevら（2016、240コマ/秒の真横の撮影、女子（平均5.50 m）：水平7.06・鉛直2.75 m/秒、角度21.3°、記録との相関 鉛直 r = 0.61・水平 r = 0.64（女子））。踏切角度の最適は人ごとに20.9〜25.4°（Linthorneら 2005）で、目標にする値ではありません。</p>
           <p>骨格：選手を見つけて追うのはMediaPipe、接地の判定・重心・角度と画像・スロー再生の骨格はRTMPose（{measured.refiner === 'webgpu' ? 'WebGPU' : measured.refiner === 'wasm' ? 'WebAssembly' : '今回は未使用'}）です。</p></details>
       </>}
       <button onClick={save}>結果を保存（JSON）</button>
+    </section>}
+    {result && measured && !result.reason && takeoff && <section className="sprint10-card" aria-label="物差し"><h2>3　踏切板と砂場の物差し（任意）</h2>
+      <p>踏切板と砂場が映っていれば、踏切線（踏切板の白と緑の境目）から砂が始まる所までの距離を物差しにして、速さをより正確に出せます（目安の幅 ±{SPREADS.ruler * 100}%）。下の拡大画面で、4つの点を、踏切線と砂の始まりが<strong>助走路の奥の縁・手前の縁と交わる所</strong>に合わせてください。</p>
+      <div className="longjump-ruler-options">
+        <label>踏切線から砂まで<input type="number" inputMode="decimal" min={DISTANCE.min} max={DISTANCE.max} step=".01" value={ruler.distanceText}
+          onChange={e => setRuler(r => ({ ...r, distanceText: e.target.value }))} aria-label="踏切線から砂までの距離（m）" />m</label>
+        <label><input type="checkbox" checked={ruler.use} disabled={!ruler.points || !distance} onChange={e => setRuler(r => ({ ...r, use: e.target.checked }))} />物差しを使う</label>
+      </div>
+      <div className="longjump-frame-step" role="group" aria-label="物差しを合わせるコマ">
+        <button type="button" disabled={rulerShift <= -FRAME_REACH + 1e-9} onClick={() => setRulerShift(v => Math.round((v - FRAME_STEP) * 10) / 10)}>◀ 0.1秒前</button>
+        <span>踏切の接地{rulerShift === 0 ? '' : ` ${rulerShift > 0 ? '+' : ''}${rulerShift.toFixed(1)}秒`}のコマ</span>
+        <button type="button" disabled={rulerShift >= FRAME_REACH - 1e-9} onClick={() => setRulerShift(v => Math.round((v + FRAME_STEP) * 10) / 10)}>0.1秒後 ▶</button>
+      </div>
+      {rulerStill && ruler.points ? <RulerSetter key={`${file?.name}-${measured.frames.length}`} still={rulerStill} points={ruler.points}
+        foot={{ x: takeoff.x / measured.width, y: takeoff.groundY / measured.height }} onChange={points => setRuler(r => ({ ...r, points }))} />
+        : <p role="status">踏切のコマを読み込んでいます…</p>}
+      {ruler.use && (sc?.source === 'ruler' && sc.ruler
+        ? <p className="sprint10-note" role="status">物差しの縮尺 {sc.pxPerM.toFixed(0)} 画素/m（踏切足は踏切線の{sc.ruler.behind.toFixed(2)} m手前、助走路の奥から{Math.round(sc.ruler.across * 100)}%の位置）。{sc.trunk ? `身長からの縮尺との差 ${Math.round((sc.trunk / sc.pxPerM - 1) * 100)}%。` : ''}上の解析結果はこの物差しで計算しています。</p>
+        : <p className="sprint10-note" role="status">4つの点から物差しを作れませんでした。奥の点が手前の点より上に、踏切線と砂の始まりが左右に離れているか確かめてください。</p>)}
     </section>}
     <footer>{LONG_JUMP_VERSION} · 動画はこの端末内で処理します。解析時間は端末の性能により変わります。</footer>
   </main>;
