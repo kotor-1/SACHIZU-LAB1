@@ -86,6 +86,32 @@ export function analyzeCurveStart(frames: readonly CrouchFrame[], setting: Curve
   const empty = (reason: string, camera: CurveStartResult['camera'] = null): CurveStartResult => ({ version: CURVE_START_VERSION, reason, camera, start: null, tangent: null, runStart: null, lastFrame: null,
     steps: [], path: [], straight: { inward: null, verdict: null, until: null, atTangent: null, aim: null }, after: { cm: [], median: null, max: null }, lean: { straight: null, curve: null, pairs: [] },
     lines: { inner, outer, measure: [], start: startPts }, notes: [] });
+  // The athlete and the run's start come first: a video with no start says so whatever the lines.
+  const P = (fr: CrouchFrame, k: number) => { const q = (fr.refined ?? fr.pose)?.[k]; return q ? { x: q.x * W, y: q.y * H, v: q.visibility ?? 1 } : null; };
+  const pelvisOf = (fr: CrouchFrame): P2 | null => { const a = P(fr, 23), b = P(fr, 24); return a && b ? [(a.x + b.x) / 2, (a.y + b.y) / 2] : null; };
+  const sizeOf = (fr: CrouchFrame) => { const ys = [0, 11, 12, 23, 24, 27, 28].map(k => P(fr, k)?.y).filter((y): y is number => Number.isFinite(y)); return ys.length > 3 ? Math.max(...ys) - Math.min(...ys) : NaN; };
+  const shoulders = (fr: CrouchFrame) => { const a = P(fr, 11), b = P(fr, 12); return a && b && a.v >= .3 && b.v >= .3 ? Math.hypot(a.x - b.x, a.y - b.y) : NaN; };
+  const wristsY = (fr: CrouchFrame, minV: number) => { const a = P(fr, 15), b = P(fr, 16); return a && b && a.v >= minV && b.v >= minV ? (a.y + b.y) / 2 : NaN; };
+  const seen = frames.filter(f => f.refined ?? f.pose);
+  if (seen.length < 30) return empty('選手を追えませんでした。ブロックの真後ろから、選手の全身と左右の白線が映るように撮影してください。');
+
+  // 2. The run's start: the wrists leave the ground (rise LIFT shoulder widths) for 3 frames, and the athlete then moves
+  // away (shoulders 15% narrower 0.7-1 s later).
+  let runStart: number | null = null, hands: number[] = [], lifted = false;
+  for (let i = 0; i < seen.length && runStart === null; i++) {
+    const rest = med(hands.slice(-30)), sw = med(seen.slice(Math.max(0, i - 15), i + 1).map(shoulders));
+    const lift = seen.slice(i, i + 3);
+    if (hands.length >= 3 && Number.isFinite(rest) && Number.isFinite(sw) && lift.length === 3 && lift.every(f => wristsY(f, .1) < rest - LIFT * sw)
+      && lift.some(f => Number.isFinite(wristsY(f, LIFT_SEEN)))) {
+      const later = med(seen.slice(i + 40, i + 61).map(shoulders));
+      if (!Number.isFinite(later) || later < .85 * sw) { runStart = seen[i].frame; break; }
+      lifted = true;   // the hands left the ground but the athlete did not move away
+    }
+    const y = wristsY(seen[i], .3); if (Number.isFinite(y)) hands.push(y);
+  }
+  if (runStart === null) return empty(lifted
+    ? '手は地面から離れましたが、選手が遠ざかっていません（走り出していないか、走り出してすぐに動画が終わっています）。スタートから選手が15 m先まで走るまでを撮影してください。'
+    : 'スタート（手が地面から離れて走り出す瞬間）が映っていません。構えのままや、構えを解いて終わっている動画では解析できません。スタートから選手が15 m先まで走るまでを撮影してください。');
   if (inner.length < 20 || outer.length < 20) return empty('レーンの白線をたどれませんでした。選手のレーンの内側と外側の白線に、スタートラインと交わる所で点を合わせてください。');
   if (startPts.length < 5) return empty('スタートラインが見つかりませんでした。2つの点を、スタートラインと白線が交わる所に合わせてください。');
   const near = setting.lines.near ?? { inner, outer };
@@ -97,28 +123,6 @@ export function analyzeCurveStart(frames: readonly CrouchFrame[], setting: Curve
   if (fit.rms > 15) notes.push(`白線とカメラの計算の合いが悪い（${fit.rms.toFixed(0)}画素）ため、位置の誤差が大きい可能性があります。点の位置を確かめてください。`);
   if (h < .6) notes.push('カメラが低い（地面から60 cm未満）ため、遠くの足の位置の誤差が大きくなります。1.3 m以上の高さを勧めます。');
 
-  const P = (fr: CrouchFrame, k: number) => { const q = (fr.refined ?? fr.pose)?.[k]; return q ? { x: q.x * W, y: q.y * H, v: q.visibility ?? 1 } : null; };
-  const pelvisOf = (fr: CrouchFrame): P2 | null => { const a = P(fr, 23), b = P(fr, 24); return a && b ? [(a.x + b.x) / 2, (a.y + b.y) / 2] : null; };
-  const sizeOf = (fr: CrouchFrame) => { const ys = [0, 11, 12, 23, 24, 27, 28].map(k => P(fr, k)?.y).filter((y): y is number => Number.isFinite(y)); return ys.length > 3 ? Math.max(...ys) - Math.min(...ys) : NaN; };
-  const shoulders = (fr: CrouchFrame) => { const a = P(fr, 11), b = P(fr, 12); return a && b && a.v >= .3 && b.v >= .3 ? Math.hypot(a.x - b.x, a.y - b.y) : NaN; };
-  const wristsY = (fr: CrouchFrame, minV: number) => { const a = P(fr, 15), b = P(fr, 16); return a && b && a.v >= minV && b.v >= minV ? (a.y + b.y) / 2 : NaN; };
-  const seen = frames.filter(f => f.refined ?? f.pose);
-  if (seen.length < 30) return empty('選手を追えませんでした。ブロックの真後ろから、選手の全身と左右の白線が映るように撮影してください。', camera);
-
-  // 2. The run's start: the wrists leave the ground (rise LIFT shoulder widths) for 3 frames, and the athlete then moves
-  // away (shoulders 15% narrower 0.7-1 s later).
-  let runStart: number | null = null, hands: number[] = [];
-  for (let i = 0; i < seen.length && runStart === null; i++) {
-    const rest = med(hands.slice(-30)), sw = med(seen.slice(Math.max(0, i - 15), i + 1).map(shoulders));
-    const lift = seen.slice(i, i + 3);
-    if (hands.length >= 3 && Number.isFinite(rest) && Number.isFinite(sw) && lift.length === 3 && lift.every(f => wristsY(f, .1) < rest - LIFT * sw)
-      && lift.some(f => Number.isFinite(wristsY(f, LIFT_SEEN)))) {
-      const later = med(seen.slice(i + 40, i + 61).map(shoulders));
-      if (!Number.isFinite(later) || later < .85 * sw) { runStart = seen[i].frame; break; }
-    }
-    const y = wristsY(seen[i], .3); if (Number.isFinite(y)) hands.push(y);
-  }
-  if (runStart === null) return empty('スタート（手が地面から離れる瞬間）が見つかりませんでした。構えから走り出しまでが映る動画を使ってください。', camera);
   // The start point: on the start line, across from the hands where they rested.
   const rested = seen.filter(f => f.frame < runStart! && P(f, 15)!.v >= .4 && P(f, 16)!.v >= .4).slice(-30);
   const handX = rested.length ? med(rested.map(f => (P(f, 15)!.x + P(f, 16)!.x) / 2)) : NaN;
