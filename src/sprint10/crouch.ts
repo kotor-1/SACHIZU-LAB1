@@ -5,7 +5,7 @@
  * ground. Contacts are found as such places (with the toes of both sides
  * pooled), so the left/right labels of the pose model, which swap when the
  * legs cross in a side view, are never needed. */
-import { contactOf, contactPlants, legLength, median, PLANT_GAP, plantedToes, plantsOf, quantile, toesOf, visible, type Contact, type Toe } from './contacts';
+import { contactOf, contactPlants, legLength, median, PLANT_GAP, plantedToes, plantsOf, quantile, TOE, toesOf, visible, type Contact, type Toe } from './contacts';
 import { kneeAngle, shankAngle, sideNearest, trunkAngle } from './angles';
 /** v2 (2026-10-04): angles from RTMPose when given (`refined`). */
 export const CROUCH_VERSION = 'crouch-start-v2-experimental';
@@ -64,6 +64,9 @@ const GAP_BEFORE = .5, MOVE_LEGS = .3, MOVE_SECONDS = .3, RUN_LEGS = 2, RUN_SECO
  * ahead. Against the picture (3 athletes, 240 fps): 0.08 gave -5.8/+1.2/+2.0
  * frames, 0.10 -3.8/+2.2/+2.0, 0.12 -1.8/+4.2/+5.0. */
 const FRONT_LEAVE = .10;
+/** The clearance search (exported for the study scripts, as crouch-pixels' PIXEL_SETTINGS): the toe score counted,
+ * the time a front toe may go unseen (s), and whether frames without the athlete's pose count as unseen. */
+export const CLEARANCE_SETTINGS = { score: .5, gap: BLOCK_GAP, poseGaps: 0, refined: 0, leave: FRONT_LEAVE };
 
 export function analyzeCrouchStart(frames: readonly CrouchFrame[], options: CrouchOptions): CrouchResult {
   const base: CrouchResult = { version: CROUCH_VERSION, reason: null, direction: 0, set: null, blockClearance: null, blocks: null,
@@ -116,10 +119,16 @@ export function analyzeCrouchStart(frames: readonly CrouchFrame[], options: Crou
   const early = pushing.filter(o => o.t <= onset + .15);
   const frontAlong = early.length ? quantile(early.map(o => along(o.x)), .75) : zone[1];
   let clearance = onset;
-  for (const o of toes.filter(q => q.t >= onset).sort((a, b) => a.t - b.t)) {
+  const C = CLEARANCE_SETTINGS, seenPts = seen.map(f => f.pts);
+  const pointsOf = (f: CrouchFrame) => C.refined && f.refined ? f.refined : f.pose!;
+  const searched = C.score === .5 && !C.refined ? toes : seen.flatMap(f => TOE.filter(k => visible(pointsOf(f)[k], C.score)).map(k => ({ t: f.pts, frame: f.frame, x: pointsOf(f)[k].x * W, y: pointsOf(f)[k].y * H })));
+  // the time unseen: with C.poseGaps, frames without the athlete's pose do not count
+  const unseen = (from: number, to: number) => !C.poseGaps ? to - from : seenPts.filter(t => t > from && t < to).length * interval;
+  const interval = median(seen.slice(1).map((f, i) => f.pts - seen[i].pts).filter(v => v > 0)) || 1 / 240;
+  for (const o of searched.filter(q => q.t >= onset).sort((a, b) => a.t - b.t)) {
     const d = along(o.x) - frontAlong;
-    if (d < -FRONT_BEHIND * leg || d > FRONT_LEAVE * leg) continue;
-    if (o.t - clearance > BLOCK_GAP) break;
+    if (d < -FRONT_BEHIND * leg || d > C.leave * leg) continue;
+    if (unseen(clearance, o.t) > C.gap) break;
     clearance = o.t;
   }
   const frontToes = pushing.filter(o => o.t >= clearance - .05);
@@ -151,16 +160,26 @@ export function analyzeCrouchStart(frames: readonly CrouchFrame[], options: Crou
   return base;
 }
 
+/** Index of the first hip from which the hip gets RUN_LEGS ahead within RUN_SECONDS (the run); -1 without. */
+function runIndex(hips: { t: number; x: number }[], leg: number, direction: number): number {
+  for (let i = 0; i < hips.length; i++)
+    for (let k = i + 1; k < hips.length && hips[k].t - hips[i].t <= RUN_SECONDS; k++)
+      if ((hips[k].x - hips[i].x) * direction >= RUN_LEGS * leg) return i;
+  return -1;
+}
+/** When the run out of the blocks begins (s), from poses at any rate (the quick look at 30 frames a second, see
+ * `measureCrouchStart`); null when no run is in the picture. */
+export function runStart(frames: readonly CrouchFrame[], W: number, H: number): number | null {
+  const seen = frames.filter(f => f.pose), leg = legLength(seen, W, H);
+  const hips = seen.flatMap(f => { const p = f.pose!; return visible(p[23], .3) && visible(p[24], .3) ? [{ t: f.pts, x: (p[23].x + p[24].x) / 2 * W }] : []; });
+  if (hips.length < 2 || !(leg > 0)) return null;
+  const direction = Math.sign(hips.at(-1)!.x - hips[0].x), i = direction ? runIndex(hips, leg, direction) : -1;
+  return i < 0 ? null : hips[i].t;
+}
+
 /** Index in `hips` where the set is looked for (see GAP_BEFORE); 0 for a video beginning in the set. */
 function setFrom(hips: { t: number; x: number }[], leg: number, direction: number): number {
-  const along = (h: { x: number }) => h.x * direction;
-  // the run: the first hip from which the hip gets RUN_LEGS ahead within RUN_SECONDS
-  let run = -1;
-  for (let i = 0, j = 0; i < hips.length && run < 0; i++) {
-    if (j < i) j = i;
-    for (let k = j; k < hips.length && hips[k].t - hips[i].t <= RUN_SECONDS; k++)
-      if (along(hips[k]) - along(hips[i]) >= RUN_LEGS * leg) { run = i; break; }
-  }
+  const run = runIndex(hips, leg, direction);
   if (run < 0) return 0;
   // the last still stretch before it
   let still = -1;

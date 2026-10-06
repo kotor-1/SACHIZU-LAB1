@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
 import { analyzeCrouchStart, CROUCH_VERSION, MAX_STEPS, type CrouchFrame, type CrouchResult } from './crouch';
-import { measureCrouch } from './recording';
+import { measureCrouchStart } from './recording';
 import { useFirstFrame } from './first-frame';
 import PlayerBar from './PlayerBar';
 import { crouchPhases, type Phase } from './crouch-figure';
@@ -96,7 +96,7 @@ export default function CrouchLab() {
     const control = new AbortController(); owner.current = control;
     setBusy(true); setMeasured(null); setProgress(0); setMessage('');
     try {
-      const data = await measureCrouch(file, start, control.signal, (fraction, text) => { setProgress(fraction); setMessage(text); });
+      const data = await measureCrouchStart(file, start, control.signal, (fraction, text) => { setProgress(fraction); setMessage(text); });
       if (control.signal.aborted) return;
       // The video once more, only round the feet near the judged moments; without these pictures the pose's moments stay.
       const regions = regionsOf(analyzeCrouchStart(data.frames, { width: data.width, height: data.height }), data.frames, data.width, data.height);

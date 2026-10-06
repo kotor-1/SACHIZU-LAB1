@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeCrouchStart, MAX_STEPS, type CrouchFrame, type CrouchPoint } from '../src/sprint10/crouch';
+import { analyzeCrouchStart, MAX_STEPS, runStart, type CrouchFrame, type CrouchPoint } from '../src/sprint10/crouch';
 import { crouchPhases, drawCrouchFigure, figureView, markText } from '../src/sprint10/crouch-figure';
 import { frameInterval, insideFrame } from '../src/sprint10/CrouchViews';
 import { crouchAdvice, GUIDE } from '../src/sprint10/crouch-advice';
 import type { CrouchResult, StepResult } from '../src/sprint10/crouch';
 import { applyEdits, effectsOf, footDown, moments } from '../src/sprint10/crouch-edit';
 import { legLength } from '../src/sprint10/contacts';
-import { refineByPixels, regionsOf, type RegionPictures } from '../src/sprint10/crouch-pixels';
+import { PIXEL_SETTINGS, refineByPixels, regionsOf, type RegionPictures } from '../src/sprint10/crouch-pixels';
 
 // A synthetic crouch start filmed from the side at 240 fps, 1920x1080, running to the right.
 // Leg length about 240 px; ground at y = 800 px. Set until 0.5 s; the rear foot (left landmarks)
@@ -131,6 +131,17 @@ describe('crouch start (side view)', () => {
     expect(r.reason).toBeNull();
     expect(r.blockClearance!.pts - lead).toBeCloseTo(plain.blockClearance!.pts, 6);
     expect(r.contacts.length).toBe(plain.contacts.length);
+  });
+  it('finds when the run begins from a quick look (every 8th frame), for the window measured in full', () => {
+    // the synthetic set until 0.5 s, the movement then: the window (1 s before, 3 s after) holds the set and the steps
+    const quick = startFrames().filter(f => f.frame % 8 === 0), run = runStart(quick, W, H)!;
+    // at or a little before the movement (0.5 s): the first frame from which the hip gets 2 leg lengths ahead in 0.8 s
+    expect(run).toBeGreaterThan(0); expect(run).toBeLessThanOrEqual(.5);
+    const window = startFrames().filter(f => f.pts >= run - 1 && f.pts <= run + 3);
+    const whole = analyzeCrouchStart(startFrames(), { width: W, height: H }), part = analyzeCrouchStart(window, { width: W, height: H });
+    expect(part.blockClearance!.pts).toBe(whole.blockClearance!.pts);
+    expect(part.contacts.map(c => c.touchdown)).toEqual(whole.contacts.map(c => c.touchdown));
+    expect(runStart(startFrames({ until: .45 }), W, H)).toBeNull();   // no run in the picture
   });
   it('says so when the set position is not in the video', () => {
     expect(analyzeCrouchStart(startFrames({ set: false }), { width: W, height: H }).reason).toContain('構え');
@@ -331,6 +342,24 @@ describe('crouch start: moments set again from the pictures round the feet', () 
     expect(r.steps[0].contactSeconds! - auto.steps[0].contactSeconds!).toBeCloseTo(-4 / 240, 1);
     expect(Math.abs(r.blockClearance!.frame - truth.bc)).toBeLessThanOrEqual(1);
     expect(r.firstFlight! - auto.firstFlight!).toBeGreaterThan(3 / 240);
+  });
+  it('takes the clearance when the tip of the shoe leaves the block, not when the heel rises', () => {
+    // As in the videos: the pose's clearance early, the toe leaving 6 frames after it; the heel rising over the 10 frames
+    // before (the forefoot's pixels turning bare from the back), the shoe's tip (its front 30%, lower 40%) on the block to the end.
+    const q = regions.find(g => g.key === 'bc')!, leave = auto.blockClearance!.frame + 6;
+    const at = (i: number) => { const x = (i / 3) % q.w, y = Math.floor(i / 3 / q.w); return x >= q.w * .7 && y >= q.h * .6 ? leave : leave - 10 + 10 * x / (q.w * .7); };
+    const byFrame = new Map<number, Uint8Array>();
+    for (let f = q.from; f <= q.to; f++) {
+      const px = new Uint8Array(q.w * q.h * 3);
+      for (let i = 0; i < px.length; i += 3) { const [r, g, b] = f <= at(i) ? [225, 205, 40] : [110, 118, 125]; px[i] = r + grain(); px[i + 1] = g + grain(); px[i + 2] = b + grain(); }
+      byFrame.set(f, px);
+    }
+    const heelUp: RegionPictures = new Map([['bc', byFrame]]);
+    const bcAt = () => refineByPixels(auto, heelUp, [q], frames, W, H).moments.find(m => m.key === 'clearance')!.frame!;
+    const tip = bcAt();
+    expect(Math.abs(tip - (leave + .5))).toBeLessThan(1);
+    PIXEL_SETTINGS.BC_TIP = 0;   // the forefoot alone: earlier, as the heel rises
+    try { expect(bcAt()).toBeLessThan(tip - 1); } finally { PIXEL_SETTINGS.BC_TIP = 1; }
   });
   it('keeps the moments judged from the pose where the pictures do not tell the shoe from the ground', () => {
     const { result: r, moments } = refineByPixels(auto, pictures([111, 118, 124]), regions, frames, W, H);
