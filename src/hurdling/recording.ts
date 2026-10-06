@@ -101,7 +101,8 @@ export async function measureHurdle(file: File, signal: AbortSignal, progress: (
     await untilAborted(watcher.initialize(signal, message => progress(0, message)), signal);
     // 1. The running direction.
     progress(0, '走る向きを確認しています。');
-    const d = await untilAborted(demuxMP4(file), signal), count = d.frames.length;
+    // Only the count is kept: a demuxed video holds the file and a copy of each sample (twice the file in memory).
+    const count = (await untilAborted(demuxMP4(file), signal)).frames.length;
     const step = Math.max(1, Math.floor(count / SURVEY_FRAMES)), samples: { pts: number; people: { x: number; y: number }[] }[] = [];
     await readFrames(file, signal, i => i % step === 0, async (frame, source, w, h) => {
       samples.push({ pts: frame.pts, people: SURVEY_REGIONS.flatMap(r => detect(watcher, source, r, frame, w, h)).map(pelvis) });
@@ -114,7 +115,7 @@ export async function measureHurdle(file: File, signal: AbortSignal, progress: (
     let width = 0, height = 0;
     const frames: CrouchFrame[] = [];
     await measureSprint(file, direction > 0 ? .03 : .97, signal, (f, m) => progress(.1 + .75 * f, m), direction > 0 ? .97 : .03, 'flying', 10, {
-      maxFps: CROUCH_FPS,
+      maxFps: CROUCH_FPS, watcher,
       onSelected: (frame, selected, w, h) => { width = w; height = h;
         frames.push({ frame: frame.frameIndex, pts: frame.pts, pose: selected.length === 33 ? selected.map(p => ({ x: p.x, y: p.y, visibility: p.visibility })) : null }); },
       afterSelected: refiner ? async source => { const f = frames.at(-1); if (f?.pose) f.refined = await refiner!.refine(source, f.pose); } : undefined,

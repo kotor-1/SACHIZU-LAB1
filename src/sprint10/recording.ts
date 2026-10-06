@@ -28,6 +28,10 @@ interface FrameOptions {
   onSelected?: (frame: { frameIndex: number; pts: number }, selected: Point[], width: number, height: number) => void;
   /** Awaited after onSelected, with the frame still on `source`. */
   afterSelected?: (source: HTMLCanvasElement) => Promise<void>;
+  /** A flying start's watcher already made and initialized (full, SPRINT_POSES, image mode), lent by the caller and
+   * not disposed here: each pose model holds its own WebAssembly memory, and with the hurdle's own watcher alive a
+   * second one took the page to 1.4-1.6 GB in WebKit (an iPhone closed the page, the long jump, 2026-10-06). */
+  watcher?: MobileCMJPose;
 }
 export async function measureSprint(file: File, startX: number, signal: AbortSignal,
   progress: (fraction: number, message: string) => void, finishX?: number, start: SprintStart = 'standing', distanceM = 10,
@@ -49,7 +53,7 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
   // (its own timeline, so neither model's tracking is disturbed). Image mode: a newcomer is
   // detected at once; in video mode the watcher kept following the people it had already
   // found and saw the runner only 0.26 s later, past the entry (recorded).
-  let watcher: MobileCMJPose | null = null;
+  let watcher: MobileCMJPose | null = options.watcher ?? null;
   const watching = async () => {
     if (!watcher) { watcher = new MobileCMJPose('full', undefined, 'CPU', SPRINT_POSES, 'IMAGE'); await untilAborted(watcher.initialize(signal), signal); check(); }
     return watcher;
@@ -90,7 +94,7 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
       if (now - lastYield > 32) { await new Promise<void>(r => setTimeout(r, 0)); lastYield = performance.now(); check(); }
     }
     progress(1, '解析が終わりました。'); return processor.samples;
-  } finally { signal.removeEventListener('abort', abort); decoder.dispose(); model.dispose(); (watcher as MobileCMJPose | null)?.dispose(); source.width = 0; }
+  } finally { signal.removeEventListener('abort', abort); decoder.dispose(); model.dispose(); if (watcher !== options.watcher) (watcher as MobileCMJPose | null)?.dispose(); source.width = 0; }
 }
 
 /** A crouch start: the athlete's pose in every frame (up to CROUCH_FPS), followed
