@@ -7,20 +7,23 @@ const d = (pts: P2[]) => pts.map((q, i) => `${i ? 'L' : 'M'}${q[0].toFixed(1)},$
 
 /** The path drawn on the video's last frame (the track clear): the athlete's lane, the straight line the blocks aim
  * along (from the start, tangent to the line 20 cm into the lane), the footprints and the body's path between them. */
-export function PathPicture({ result, image, width, height }: { result: CurveStartResult; image: string; width: number; height: number }) {
-  const S = result.start?.img, T = result.tangent?.img; if (!S || !T) return null;
-  const pts = [S, ...result.steps.map(q => q.img)], xs = pts.map(q => q[0]), ys = pts.map(q => q[1]);
+export function PathPicture({ result, image, width, height, offset = [0, 0] }: { result: CurveStartResult; image: string; width: number; height: number; offset?: P2 }) {
+  // The result is in the first frame's picture; the picture drawn on is the last frame, `offset` further on.
+  const o = (q: P2): P2 => [q[0] + offset[0], q[1] + offset[1]];
+  const S0 = result.start?.img, T0 = result.tangent?.img; if (!S0 || !T0) return null;
+  const S = o(S0), T = o(T0), steps = result.steps.map(q => ({ ...q, img: o(q.img) })), path = result.path.map(q => o(q.img)), measure = result.lines.measure.map(o);
+  const pts = [S, ...steps.map(q => q.img)], xs = pts.map(q => q[0]), ys = pts.map(q => q[1]);
   const pad = .1 * Math.max(width, height), x0 = Math.max(0, Math.min(...xs) - pad), x1 = Math.min(width, Math.max(...xs) + pad);
   const y0 = Math.max(0, Math.min(...ys) - pad * .6), y1 = Math.min(height, Math.max(...ys) + pad * .8), unit = (x1 - x0) / 100;
   const far: P2 = [S[0] + (T[0] - S[0]) * 1.8, S[1] + (T[1] - S[1]) * 1.8];
   return <figure className="sprint10-chart curvestart-picture">
     <figcaption>動画の上に描いた軌跡<small>（白い点線＝まっすぐの線、黄＝体の通り道）</small></figcaption>
-    <svg viewBox={`${x0} ${y0} ${x1 - x0} ${y1 - y0}`} role="img" aria-label={`軌跡：${result.steps.length}歩の足跡と体の通り道`}>
+    <svg viewBox={`${x0} ${y0} ${x1 - x0} ${y1 - y0}`} role="img" aria-label={`軌跡：${steps.length}歩の足跡と体の通り道`}>
       <image href={image} x={0} y={0} width={width} height={height} preserveAspectRatio="none" />
-      <path d={d(result.lines.measure)} fill="none" stroke="rgba(255,255,255,.55)" strokeWidth={unit * .25} strokeDasharray={`${unit} ${unit}`} />
+      <path d={d(measure)} fill="none" stroke="rgba(255,255,255,.55)" strokeWidth={unit * .25} strokeDasharray={`${unit} ${unit}`} />
       <line x1={S[0]} y1={S[1]} x2={far[0]} y2={far[1]} stroke={IDEAL} strokeWidth={unit * .5} strokeDasharray={`${unit * 2} ${unit * 1.4}`} />
-      <path d={d(result.path.map(q => q.img))} fill="none" stroke={PATH} strokeWidth={unit * .9} strokeLinejoin="round" strokeLinecap="round" />
-      {result.steps.map(q => <g key={q.i}><circle cx={q.img[0]} cy={q.img[1]} r={unit * 1.1} fill={q.side === 'L' ? LEFT_FOOT : RIGHT_FOOT} stroke="#000" strokeWidth={unit * .15} />
+      <path d={d(path)} fill="none" stroke={PATH} strokeWidth={unit * .9} strokeLinejoin="round" strokeLinecap="round" />
+      {steps.map(q => <g key={q.i}><circle cx={q.img[0]} cy={q.img[1]} r={unit * 1.1} fill={q.side === 'L' ? LEFT_FOOT : RIGHT_FOOT} stroke="#000" strokeWidth={unit * .15} />
         <text x={q.img[0] + unit * 1.6} y={q.img[1] - unit} fontSize={unit * 4.2} fontWeight={800} fill="#fff" stroke="#000" strokeWidth={unit * .7} paintOrder="stroke">{q.i}</text></g>)}
       <circle cx={S[0]} cy={S[1]} r={unit * 1.3} fill="#fff" stroke="#000" strokeWidth={unit * .2} />
       <circle cx={T[0]} cy={T[1]} r={unit * 1.1} fill="none" stroke="#fff" strokeWidth={unit * .35} />

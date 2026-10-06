@@ -2,6 +2,9 @@
 .curvestart-marks{position:absolute;inset:0;pointer-events:none}
 .curvestart-marks svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
 .curvestart-marks svg line{stroke:#ffd166;stroke-width:2;stroke-dasharray:6 5;filter:drop-shadow(0 0 2px #000)}
+.curvestart-trace polyline{fill:none;stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round;opacity:.9;filter:drop-shadow(0 0 1.5px #000)}
+.curvestart-trace .inner{stroke:#7dff6b}.curvestart-trace .outer{stroke:#ff9f1c}.curvestart-trace .start{stroke:#fff}
+.sprint10 .curvestart-trace-hint{margin:8px 0 0;font-size:13px;line-height:1.5;color:#2f4a40}
 .sprint10 .curvestart-point{pointer-events:auto;touch-action:none;position:absolute;width:44px;height:44px;min-height:0;padding:0;transform:translate(-50%,-50%);border:0;border-radius:50%;background:transparent;cursor:move}
 .curvestart-point:before{content:'';position:absolute;left:50%;top:50%;width:12px;height:12px;transform:translate(-50%,-50%);border-radius:50%;border:2px solid #fff;box-shadow:0 0 3px #000}
 .curvestart-point.inner:before{background:#7dff6b}.curvestart-point.outer:before{background:#ff9f1c}

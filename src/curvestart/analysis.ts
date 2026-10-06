@@ -25,7 +25,7 @@
 import type { CrouchFrame, CrouchPoint } from '../sprint10/crouch';
 import { fitCamera, LANE, type CameraFit, type LaneLine, type P2 } from './camera';
 
-export const CURVE_START_VERSION = 'curvestart-v1-experimental';
+export const CURVE_START_VERSION = 'curvestart-v2-experimental';
 /** The measurement line: 20 cm from the inner line (TR14.2/14.4; lane 1 is 30 cm from the kerb). */
 export const MEASURE = .2;
 /** The body path counts as having left its own straight line, or as drawn inside the ideal path, beyond this (cm). */
@@ -172,8 +172,10 @@ export function analyzeCurveStart(frames: readonly CrouchFrame[], setting: Curve
     const t = cuts(q, v, outer).filter(x => x > 5).sort((a, b) => a - b)[0]; if (t === undefined) continue;
     measure.push([q[0] + v[0] * t * MEASURE / LANE, q[1] + v[1] * t * MEASURE / LANE]);
   }
-  let Timg: P2 | null = null, bearing = -Infinity;
-  for (const q of measure) { if (q[1] >= Simg[1] - 30) continue; const b = Math.atan2(q[0] - Simg[0], Simg[1] - q[1]); if (b > bearing) { bearing = b; Timg = q; } }
+  let Timg: P2 | null = null, bearing = -Infinity, Tat = -1;
+  for (let i = 0; i < measure.length; i++) { const q = measure[i]; if (q[1] >= Simg[1] - 30) continue; const b = Math.atan2(q[0] - Simg[0], Simg[1] - q[1]); if (b > bearing) { bearing = b; Timg = q; Tat = i; } }
+  // The line turns away beyond a true tangent point; at the end of the traced line it may only be where the trace stopped.
+  if (Timg && Tat >= measure.length - 3) notes.push('内側の白線を、まっすぐの線が接する所の先までたどれませんでした。接点が手前に出て、判定と出た向きの誤差が大きい可能性があります。遠くの白線まで映るように撮影してください。');
   const Tg = Timg ? cam.ground(Timg[0], Timg[1]) : null;
   if (!Timg || !Tg) return { ...empty('内側のラインに接するまっすぐの線を決められませんでした（内側の白線が十分に映っていません）。', camera), lines: { inner, outer, measure, start: startPts } };
   const Lt = Math.hypot(Tg[0] - Sg[0], Tg[1] - Sg[1]), ud: P2 = [(Tg[0] - Sg[0]) / Lt, (Tg[1] - Sg[1]) / Lt];

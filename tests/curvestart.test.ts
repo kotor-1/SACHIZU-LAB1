@@ -4,6 +4,9 @@ import { analyzeCurveStart, MEASURE } from '../src/curvestart/analysis';
 import { curveAdvice } from '../src/curvestart/advice';
 import { focalFromBytes } from '../src/curvestart/focal';
 import { laneLine, traceLanes, type Luma } from '../src/curvestart/lanes';
+import { driftAt, pictureShift, shrink, type Drift } from '../src/curvestart/drift';
+import { analyzeRecording } from '../src/curvestart/run';
+import type { CurveRecording } from '../src/curvestart/recording';
 import type { CrouchFrame, CrouchPoint } from '../src/sprint10/crouch';
 
 // A curve start filmed from behind the blocks as the test videos: 4K portrait, 25 mm, the camera 1.4 m high, 4.5 m behind
@@ -131,15 +134,26 @@ describe('curve start path and lean', () => {
   });
 });
 
-describe('lane lines in a picture', () => {
-  // A grey track with two white lines (the curve's inner and outer lines as the camera sees them) and a start line across.
+/** A grey track with two white lines (the curve's inner and outer lines as the camera sees them) and a start line across,
+ * painted with a round brush 2 px at a time; `move` moves the whole picture (the drift of a video). Specks on the track give
+ * the drift something to match where the lines are straight. */
+function paintedTrack(move: P2 = [0, 0]): Luma {
   const L: Luma = { data: new Uint8Array(W * H).fill(120), width: W, height: H };
-  // A round brush along each line, 2 px at a time.
+  let seed = 7; const rand = () => (seed = seed * 16807 % 2147483647) / 2147483647;
+  for (let n = 0; n < 4000; n++) { const x = Math.round(rand() * W + move[0]), y = Math.round(.4 * H + rand() * .6 * H + move[1]), v = 70 + Math.round(rand() * 40);
+    for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) if (x + dx >= 0 && x + dx < W && y + dy >= 0 && y + dy < H) L.data[(y + dy) * W + x + dx] = v; }
   const paint = (pts: P2[], r: number) => { for (let i = 0; i + 1 < pts.length; i++) {
     const n = Math.max(1, Math.ceil(Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]) / 2));
-    for (let k = 0; k <= n; k++) { const x = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * k / n, y = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * k / n;
+    for (let k = 0; k <= n; k++) { const x = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * k / n + move[0], y = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * k / n + move[1];
       for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) { if (dx * dx + dy * dy > r * r) continue; const xi = Math.round(x + dx), yi = Math.round(y + dy); if (xi >= 0 && yi >= 0 && xi < W && yi < H) L.data[yi * W + xi] = 220; } } } };
   paint(INNER, 10); paint(OUTER, 10); paint(START, 6);
+  return L;
+}
+/** Where the user sets the points: where the start line crosses the inner and the outer line. */
+const CROSS = { inner: INNER.find(q => Math.abs(q[1] - START[0][1]) < 20)!, outer: OUTER.find(q => Math.abs(q[1] - START.at(-1)![1]) < 20)! };
+
+describe('lane lines in a picture', () => {
+  const L = paintedTrack();
   it('follows a white line from a point set on it, through the start line', () => {
     const seed = INNER.reduce((best, q) => Math.abs(q[1] - START[0][1]) < Math.abs(best[1] - START[0][1]) ? q : best);
     const line = laneLine(L, seed)!;
@@ -149,10 +163,48 @@ describe('lane lines in a picture', () => {
     expect(line.filter(q => toInner(q) > 6).length).toBeLessThan(line.length * .05);
   });
   it('traces the lane and its start line from points set where they cross', () => {
-    const y = START[Math.floor(START.length / 2)][1], xi = INNER.find(q => Math.abs(q[1] - START[0][1]) < 20)!, xo = OUTER.find(q => Math.abs(q[1] - START.at(-1)![1]) < 20)!;
-    const t = traceLanes(L, [xi[0], xi[1]], [xo[0], xo[1]]);
+    const y = START[Math.floor(START.length / 2)][1], t = traceLanes(L, CROSS.inner, CROSS.outer);
     expect(t.inner.length).toBeGreaterThan(50); expect(t.outer.length).toBeGreaterThan(50); expect(t.start.length).toBeGreaterThanOrEqual(5);
     expect(Math.abs(t.start[0][1] - y)).toBeLessThan(30);
+  });
+  it('finds the lines from points set up to 150 px off them, as a finger sets them on a phone', () => {
+    const xAt = (pts: P2[], y: number) => { for (let i = 0; i + 1 < pts.length; i++) { const [x0, y0] = pts[i], [x1, y1] = pts[i + 1]; if ((y - y0) * (y - y1) <= 0 && y0 !== y1) return x0 + (x1 - x0) * (y - y0) / (y1 - y0); } return null; };
+    for (const [dx, dy] of [[-150, 0], [150, 0], [-100, -40], [100, 40], [0, -70], [0, 70]]) {
+      const t = traceLanes(L, [CROSS.inner[0] + dx, CROSS.inner[1] + dy], [CROSS.outer[0] + dx, CROSS.outer[1] + dy]);
+      expect(Math.abs(xAt(t.inner, CROSS.inner[1])! - CROSS.inner[0])).toBeLessThan(8);
+      expect(Math.abs(xAt(t.outer, CROSS.outer[1])! - CROSS.outer[0])).toBeLessThan(8);
+      expect(t.start.length).toBeGreaterThanOrEqual(5);
+    }
+  });
+});
+
+describe('a picture that drifts while the video is recorded', () => {
+  // The whole picture moves while the athlete runs (the four test videos: 21-166 px at 4K over 3-5 s): the points are set
+  // on the first frame and the lines traced in the last, and each frame's pose is where it was in its own frame.
+  const frames = athleteFrames(), last = frames.at(-1)!.frame, at = (f: number): P2 => { const u = f / last; return [70 * u * u, -110 * u + 30 * u * u]; };
+  const drift: Drift[] = []; for (let f = 0; f <= last; f += 4) { const [dx, dy] = at(f); drift.push({ frame: f, dx, dy }); }
+  if (drift.at(-1)!.frame !== last) { const [dx, dy] = at(last); drift.push({ frame: last, dx, dy }); }
+  const move = (q: CrouchPoint[] | null | undefined, d: P2) => q ? q.map(p => ({ ...p, x: p.x + d[0] / W, y: p.y + d[1] / H })) : null;
+  const moved: CrouchFrame[] = frames.map(f => ({ ...f, pose: move(f.pose, at(f.frame)), refined: move(f.refined, at(f.frame)) }));
+  const points = { inner: { x: CROSS.inner[0] / W, y: CROSS.inner[1] / H }, outer: { x: CROSS.outer[0] / W, y: CROSS.outer[1] / H } };
+  const record = (fr: CrouchFrame[], luma: Luma, d: Drift[]): CurveRecording => ({ frames: fr, width: W, height: H, refiner: 'wasm', clear: { luma, image: '', frame: last }, mm35: MM, mm35Read: true, drift: d });
+  it('measures how far the picture moved from the first frame', () => {
+    const a = shrink(paintedTrack().data, W, H), b = shrink(paintedTrack([37, -52]).data, W, H), [dx, dy] = pictureShift(a, b, [30, -40]);
+    expect(Math.abs(dx - 37)).toBeLessThan(3); expect(Math.abs(dy + 52)).toBeLessThan(3);
+    expect(driftAt([{ frame: 0, dx: 0, dy: 0 }, { frame: 4, dx: 8, dy: -4 }], 1)).toEqual([2, -1]);
+    expect(driftAt([{ frame: 0, dx: 0, dy: 0 }, { frame: 4, dx: 8, dy: -4 }], 9)).toEqual([8, -4]);
+  });
+  it('gives the same result as a still picture once each frame is moved back by its drift', () => {
+    const still = analyzeRecording(record(frames, paintedTrack(), [{ frame: 0, dx: 0, dy: 0 }]), points).result;
+    const { result: r, offset } = analyzeRecording(record(moved, paintedTrack(at(last)), drift), points);
+    expect(still.reason).toBeNull(); expect(r.reason).toBeNull();
+    expect(offset[0]).toBeCloseTo(at(last)[0], 6); expect(offset[1]).toBeCloseTo(at(last)[1], 6);
+    expect(Math.abs(r.start!.cm! - still.start!.cm!)).toBeLessThan(2);
+    expect(Math.abs(r.straight.inward! - still.straight.inward!)).toBeLessThan(2);
+    expect(Math.abs(r.straight.aim! - still.straight.aim!)).toBeLessThan(.3);
+    expect(Math.abs(r.after.median! - still.after.median!)).toBeLessThan(3);
+    expect(Math.abs(r.lean.curve! - still.lean.curve!)).toBeLessThan(1);
+    expect(r.straight.verdict).toBe(still.straight.verdict);
   });
 });
 

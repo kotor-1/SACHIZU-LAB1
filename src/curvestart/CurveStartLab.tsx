@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
 import { useFirstFrame, type FirstFrame } from '../sprint10/first-frame';
-import { readFrames } from '../hurdling/recording';
 import PlayerBar from '../sprint10/PlayerBar';
 import { CrouchReplay, frameInterval, insideFrame, type ReplayEvent } from '../sprint10/CrouchViews';
-import { analyzeCurveStart, CURVE_START_VERSION, LEAVE_CM, type CurveStartResult } from './analysis';
+import { CURVE_START_VERSION, LEAVE_CM, type CurveStartResult } from './analysis';
 import { CURVE_GUIDE, curveAdvice } from './advice';
+import { measureCurveStart, readEnds, type CurveRecording, type VideoEnds } from './recording';
 import { traceLanes } from './lanes';
-import { measureCurveStart, type CurveRecording } from './recording';
+import { driftAt } from './drift';
+import type { P2 } from './camera';
+import { analyzeRecording } from './run';
 import { LeanChart, PathPicture, TopView } from './CurveStartCharts';
 import '../sprint10/sprint10.css';
 import './curvestart.css';
@@ -35,22 +37,17 @@ export default function CurveStartLab() {
   // The first frame to set the points on, decoded as the analysis decodes it, from the moment a video is chosen: on an
   // iPhone the browser's player shows a 4K (HDR) video black until it is played, and a frame taken from the player came
   // out black (the user, 2026-10-06: 「アップロードしてすぐ、黒くて再生押さないと表示されない」). The player's frame is
-  // shown while it is made, where the browser gives one.
+  // shown while it is made, where the browser gives one. The same pass reads on to the last frame, where the lines the
+  // analysis follows are found, so they can be drawn while the points are set (readEnds).
   const fromPlayer = useFirstFrame(url), [decoded, setDecoded] = useState<FirstFrame | null>(null);
+  const [ends, setEnds] = useState<VideoEnds | null>(null), [reading, setReading] = useState(false), background = useRef<AbortController | null>(null);
   useEffect(() => {
-    setDecoded(null);
+    setDecoded(null); setEnds(null); setReading(false);
     if (!file) return;
-    let closed = false; const control = new AbortController();
-    void (async () => {
-      let picture: FirstFrame | null = null;
-      try {
-        await readFrames(file, control.signal, i => i === 0, async (_f, source, w, h) => {
-          const k = Math.min(1, 1280 / w), c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k);
-          c.getContext('2d')!.drawImage(source, 0, 0, c.width, c.height); picture = { image: c.toDataURL('image/jpeg', .85), width: w, height: h }; c.width = 0;
-        });
-      } catch { picture = null; }
-      if (!closed && picture) setDecoded(picture);
-    })();
+    let closed = false; const control = new AbortController(); background.current = control; setReading(true);
+    readEnds(file, control.signal, picture => { if (!closed) setDecoded(picture); })
+      .then(e => { if (!closed) setEnds(e); }, () => undefined)
+      .finally(() => { if (!closed) setReading(false); });
     return () => { closed = true; control.abort(); };
   }, [file]);
   const still = decoded ?? fromPlayer, ready = loaded || !!still;
@@ -59,15 +56,28 @@ export default function CurveStartLab() {
   useEffect(() => setCover(true), [url]);
   const [points, setPoints] = useState<Points>(START), [chosen, setChosen] = useState<Handle>('inner'), [message, setMessage] = useState('');
   const [measured, setMeasured] = useState<CurveRecording | null>(null), [used, setUsed] = useState<Points | null>(null);
+  // The lines the analysis will follow from the points, drawn on the first frame as the points are set (the user,
+  // 2026-10-06, after 「スタートラインが見つかりませんでした」 on an iPhone): followed in the last frame (the recording's once
+  // it is made, else the one read when the video was chosen) and moved back by how far the picture moved since the first.
+  const linesFrom = useMemo(() => measured ? { luma: measured.clear.luma, shift: driftAt(measured.drift, measured.clear.frame) } : ends, [measured, ends]);
+  const [dragging, setDragging] = useState(false), [trace, setTrace] = useState<{ inner: P2[]; outer: P2[]; start: P2[] } | null>(null);
+  useEffect(() => {
+    if (!linesFrom) { setTrace(null); return; }
+    if (dragging) return;
+    const timer = setTimeout(() => {
+      const { luma: L, shift: [sx, sy] } = linesFrom, w = L.width, h = L.height;
+      const t = traceLanes(L, [points.inner.x * w + sx, points.inner.y * h + sy], [points.outer.x * w + sx, points.outer.y * h + sy]);
+      const back = (q: P2[]) => q.map(([x, y]) => [(x - sx) / w, (y - sy) / h] as P2);
+      setTrace({ inner: back(t.inner), outer: back(t.outer), start: back(t.start) });
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [linesFrom, points, dragging]);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   useEffect(() => () => { owner.current?.abort(); owner.current = null; }, []);
   // Development builds keep the last recording reachable for the browser checks (dev-validation/curve/ui.mjs).
   useEffect(() => { if (import.meta.env.DEV && measured) (window as unknown as { __curvestart?: unknown }).__curvestart = { measured, used }; }, [measured, used]);
-  const result: CurveStartResult | null = useMemo(() => {
-    if (!measured || !used) return null;
-    const { width: w, height: h } = measured, lines = traceLanes(measured.clear.luma, [used.inner.x * w, used.inner.y * h], [used.outer.x * w, used.outer.y * h]);
-    return analyzeCurveStart(measured.frames, { width: w, height: h, lines, mm35: measured.mm35 });
-  }, [measured, used]);
+  const analysed = useMemo(() => measured && used ? analyzeRecording(measured, used) : null, [measured, used]);
+  const result: CurveStartResult | null = analysed?.result ?? null;
   const advice = useMemo(() => result && !result.reason ? curveAdvice(result) : [], [result]);
   const checks = advice.filter(a => a.level === 'check').length;
   const events: ReplayEvent[] = useMemo(() => result && !result.reason ? result.steps.map(q => ({ label: `${q.i}歩目（${q.side === 'L' ? '左' : '右'}足）の足跡`, short: `${q.i}歩`, pts: q.pts })) : [], [result]);
@@ -86,7 +96,12 @@ export default function CurveStartLab() {
     owner.current?.abort(); owner.current = null; setBusy(false);
     setFile(next); setUrl(next ? URL.createObjectURL(next) : ''); setLoaded(false); setMeasured(null); setUsed(null); setMessage('');
   }
-  const place = (h: Handle, x: number, y: number) => { if (!busy) setPoints(p => ({ ...p, [h]: { x: clamp(x), y: clamp(y) } })); };
+  // The points belong to the first frame: moving one brings it back over the player.
+  const place = (h: Handle, x: number, y: number) => {
+    if (busy) return;
+    if (!cover && still) { video.current?.pause(); setCover(true); }
+    setPoints(p => ({ ...p, [h]: { x: clamp(x), y: clamp(y) } }));
+  };
   const nudge = (dx: number, dy: number) => place(chosen, points[chosen].x + dx, points[chosen].y + dy);
   function drag(h: Handle) {
     return (event: React.PointerEvent<HTMLButtonElement>) => {
@@ -96,9 +111,11 @@ export default function CurveStartLab() {
     };
   }
   const handle = (h: Handle) => ({
-    onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => { setChosen(h); e.currentTarget.setPointerCapture(e.pointerId); },
+    onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => { setChosen(h); setDragging(true); e.currentTarget.setPointerCapture(e.pointerId); },
     onPointerMove: drag(h),
-    onPointerUp: (e: React.PointerEvent<HTMLButtonElement>) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); },
+    onPointerUp: (e: React.PointerEvent<HTMLButtonElement>) => { setDragging(false); if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); },
+    onPointerCancel: () => setDragging(false),
+    onLostPointerCapture: () => setDragging(false),
     onFocus: () => setChosen(h),
     onKeyDown: (e: React.KeyboardEvent<HTMLButtonElement>) => {
       const by: Record<string, [number, number]> = { ArrowLeft: [-NUDGE, 0], ArrowRight: [NUDGE, 0], ArrowUp: [0, -NUDGE], ArrowDown: [0, NUDGE] };
@@ -107,6 +124,7 @@ export default function CurveStartLab() {
   });
   async function analyze() {
     if (!file || busy) return;
+    background.current?.abort();   // one decoder at a time; the lines are drawn from the recording once it is made
     const control = new AbortController(); owner.current = control;
     setBusy(true); setMeasured(null); setProgress(0); setMessage('');
     try {
@@ -129,6 +147,15 @@ export default function CurveStartLab() {
     a.href = href; a.download = 'curvestart-result.json'; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
   }
   const s = result?.straight, L = result?.tangent?.length ?? null, cam = result?.camera ?? null;
+  const showTrace = !!trace && !!still && cover && !dragging;
+  const traceHint = !file || !still || busy ? null
+    : !linesFrom ? (reading ? '白線を探す準備をしています（動画を最後まで読んでいます）…' : null)
+    : !showTrace ? null
+    : !trace!.inner.length && !trace!.outer.length ? '白線が見つかりません。2つの点を、選手のレーンの左右の白線がスタートラインと交わる所に近づけてください。'
+    : !trace!.inner.length ? '内側の白線が見つかりません。緑の点を、内側の白線とスタートラインが交わる所に近づけてください。'
+    : !trace!.outer.length ? '外側の白線が見つかりません。橙の点を、外側の白線とスタートラインが交わる所に近づけてください。'
+    : !trace!.start.length ? 'スタートラインが見つかりません。2つの点を、スタートラインと白線が交わる所に近づけてください。'
+    : '見つかった線を表示しています（緑＝内側の白線、橙＝外側の白線、白＝スタートライン）。線がレーンの白線に重なっていれば解析できます。';
   const verdict = s?.verdict === 'early' ? '早く曲がった' : s?.verdict === 'straight' ? 'まっすぐ出られた' : null;
   return <main className="sprint10 curvestart">
     <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
@@ -142,7 +169,7 @@ export default function CurveStartLab() {
       {file && <p className="sprint10-file">{file.name} · {(file.size / 1024 / 1024).toFixed(1)} MB</p>}
     </section>
     <section className="sprint10-card"><h2>2　レーンの白線に点を合わせる</h2>
-      <p>選手のレーンの内側（カーブの内側）と外側の白線に、スタートラインと交わる所で点を合わせます。点はドラッグで動かし、選んだ点は下の矢印で細かく動かせます。</p>
+      <p>選手のレーンの内側（カーブの内側）と外側の白線に、スタートラインと交わる所で点を合わせます。点はドラッグで動かし、選んだ点は下の矢印で細かく動かせます。点の近くで見つかった白線とスタートラインが、線で表示されます。</p>
       <div ref={stage} className="sprint10-player curvestart-stage">
         <video ref={video} src={url || undefined} playsInline preload="auto" poster={still?.image}
           style={still ? { aspectRatio: `${still.width} / ${still.height}` } : undefined}
@@ -152,12 +179,15 @@ export default function CurveStartLab() {
         {file && !still && <p className="curvestart-preparing" role="status">最初のコマを準備しています…</p>}
         {ready && <div className="curvestart-marks">
           <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+            {showTrace && <g className="curvestart-trace">{(['inner', 'outer', 'start'] as const).map(k => trace![k].length > 1 &&
+              <polyline key={k} className={k} points={trace![k].map(q => `${(q[0] * 100).toFixed(2)},${(q[1] * 100).toFixed(2)}`).join(' ')} vectorEffect="non-scaling-stroke" />)}</g>}
             <line x1={points.inner.x * 100} y1={points.inner.y * 100} x2={points.outer.x * 100} y2={points.outer.y * 100} vectorEffect="non-scaling-stroke" />
           </svg>
           {HANDLES.map(([h, label, tag]) => <button key={h} type="button" aria-label={`${label}の点`} aria-pressed={chosen === h} disabled={busy}
             className={`curvestart-point ${h}`} style={{ left: `${points[h].x * 100}%`, top: `${points[h].y * 100}%` }} {...handle(h)}><span>{tag}</span></button>)}
         </div>}
       </div>
+      {traceHint && <p className="curvestart-trace-hint" aria-live="polite">{traceHint}</p>}
       {url && <PlayerBar video={video} url={url} disabled={busy} />}
       <div className="curvestart-nudge" role="group" aria-label="選んだ点を細かく動かす">
         <div className="sprint10-seg" role="group" aria-label="動かす点">{HANDLES.map(([h, label, tag]) =>
@@ -196,9 +226,9 @@ export default function CurveStartLab() {
             {result.notes.map(n => <p className="sprint10-note" key={n}>{n}</p>)}
           </div>
           <div id="curvestart-panel-path" role="tabpanel" aria-labelledby="curvestart-tab-path" hidden={tab !== 'path'}>
-            <PathPicture result={result} image={measured.clear.image} width={measured.width} height={measured.height} />
+            <PathPicture result={result} image={measured.clear.image} width={measured.width} height={measured.height} offset={analysed!.offset} />
             <ul className="sprint10-mark-legend" aria-label="線の色"><li><i style={{ background: '#ffffff', outline: '1px solid #9fb8ae' }} />まっすぐの線（ブロックからの理想の進路）</li>
-              <li><i style={{ background: '#ffd400' }} />体の通り道（左右の足の中点）</li><li><i style={{ background: '#ff4d4d' }} />左足</li><li><i style={{ background: '#3d7bff' }} />右足</li></ul>
+              <li><i style={{ background: '#ffd400' }} />体の通り道（各歩で骨盤の真下の地面）</li><li><i style={{ background: '#ff4d4d' }} />左足</li><li><i style={{ background: '#3d7bff' }} />右足</li></ul>
             <p className="sprint10-hint">白い丸がスタート位置、白い輪が接点（まっすぐの線が内側から20 cmの線に接する所）。点線の白い線は内側から20 cmの線（規則で距離を測る線）です。</p>
           </div>
           <div id="curvestart-panel-lean" role="tabpanel" aria-labelledby="curvestart-tab-lean" hidden={tab !== 'lean'}>

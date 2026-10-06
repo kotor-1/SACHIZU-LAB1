@@ -12,8 +12,10 @@ import type { CrouchFrame, CrouchPoint } from '../sprint10/crouch';
 import { loadRefiner, type Refiner } from '../sprint10/rtm-refine';
 import { readFrames } from '../hurdling/recording';
 import { luminance, type Luma } from './lanes';
-import { FOCAL_35MM_DEFAULT } from './camera';
+import type { FirstFrame } from '../sprint10/first-frame';
+import { FOCAL_35MM_DEFAULT, type P2 } from './camera';
 import { readFocal35 } from './focal';
+import { pictureShift, shrinkCanvas, type Drift, type Small } from './drift';
 
 type Pt = { x: number; y: number; visibility?: number };
 type Region = { x: number; y: number; w: number; h: number };
@@ -24,6 +26,8 @@ const SEED_REGIONS: Region[] = [{ x: 0, y: .3, w: .7, h: .55 }, { x: .3, y: .3, 
 const FOLLOW_SIZES = 2.2, FOLLOW_MIN = .08, FOLLOW_REACH = .6, SIZE_KEEP = .97;
 /** The clear frame's picture for drawing: at most this many pixels on its long side. */
 const PICTURE = 1600;
+/** The picture's drift from the first frame is measured every DRIFT_EVERY frames (and on the last). */
+const DRIFT_EVERY = 4;
 
 function boxOf(pose: readonly Pt[], w: number, h: number) {
   const s = pose.filter(q => (q.visibility ?? 0) >= .3); if (s.length < 5) return null;
@@ -42,10 +46,12 @@ function detect(model: MobileCMJPose, source: HTMLCanvasElement, region: Region,
 
 export interface CurveRecording {
   frames: CrouchFrame[]; width: number; height: number; refiner: Refiner['backend'] | null;
-  /** The last frame: its luminance for the lane lines, and a smaller JPEG for drawing. */
-  clear: { luma: Luma; image: string };
+  /** The last frame: its luminance for the lane lines, a smaller JPEG for drawing, and its index. */
+  clear: { luma: Luma; image: string; frame: number };
   /** The focal length used (35 mm equivalent) and whether it came from the video. */
   mm35: number; mm35Read: boolean;
+  /** How far the picture moved from the first frame, frame by frame (full-size px; see drift.ts). */
+  drift: Drift[];
 }
 export async function measureCurveStart(file: File, signal: AbortSignal, progress: (fraction: number, message: string) => void): Promise<CurveRecording> {
   let refiner: Refiner | null = null;
@@ -57,7 +63,8 @@ export async function measureCurveStart(file: File, signal: AbortSignal, progres
     const read = await readFocal35(file).catch(() => null);
     const count = (await untilAborted(demuxMP4(file), signal)).frames.length;
     const frames: CrouchFrame[] = [];
-    let width = 0, height = 0, last: Pt[] | null = null, size = 0, clear: CurveRecording['clear'] | null = null;
+    let width = 0, height = 0, last: Pt[] | null = null, size = 0, clear: CurveRecording['clear'] | null = null, first: Small | null = null;
+    const drift: Drift[] = [];
     await readFrames(file, signal, () => true, async (frame, source, w, h) => {
       width = w; height = h;
       let found: Pt[] | null = null;
@@ -85,15 +92,44 @@ export async function measureCurveStart(file: File, signal: AbortSignal, progres
       if (refined && boxOf(refined, w, h)) last = refined; else if (found) last = found;
       if (last && !size) { const lb = boxOf(last, w, h)!; size = Math.max(lb.x1 - lb.x0, lb.y1 - lb.y0); }
       frames.push({ frame: frame.frameIndex, pts: frame.pts, pose: found as CrouchPoint[] | null, ...(refiner ? { refined } : {}) });
+      if (frame.frameIndex % DRIFT_EVERY === 0 || frame.frameIndex === count - 1) {
+        const small = shrinkCanvas(source, w, h);
+        if (!first) { first = small; drift.push({ frame: frame.frameIndex, dx: 0, dy: 0 }); }
+        else { const prev = drift.at(-1)!, [dx, dy] = pictureShift(first, small, [prev.dx, prev.dy]); drift.push({ frame: frame.frameIndex, dx, dy }); }
+      }
       if (frame.frameIndex === count - 1) {
         const ctx = source.getContext('2d')!, k = Math.min(1, PICTURE / Math.max(w, h)), small = document.createElement('canvas');
         small.width = Math.round(w * k); small.height = Math.round(h * k); small.getContext('2d')!.drawImage(source, 0, 0, small.width, small.height);
-        clear = { luma: luminance(ctx.getImageData(0, 0, w, h).data, w, h), image: small.toDataURL('image/jpeg', .85) }; small.width = 0;
+        clear = { luma: luminance(ctx.getImageData(0, 0, w, h).data, w, h), image: small.toDataURL('image/jpeg', .85), frame: frame.frameIndex }; small.width = 0;
       }
       progress(.05 + .95 * frame.frameIndex / Math.max(1, count), '選手を追っています。');
     });
     if (!frames.some(f => f.pose || f.refined)) throw new Error('選手を見つけられませんでした。ブロックの真後ろから、構えた選手の全身が映るように撮影してください。');
     if (!clear) throw new Error('動画の最後のコマを読み出せませんでした。');
-    return { frames, width, height, refiner: refiner?.backend ?? null, clear, mm35: read ?? FOCAL_35MM_DEFAULT, mm35Read: read !== null };
+    return { frames, width, height, refiner: refiner?.backend ?? null, clear, mm35: read ?? FOCAL_35MM_DEFAULT, mm35Read: read !== null, drift };
   } finally { model.dispose(); }
+}
+
+/** The picture to set the points on (the first frame, as the analysis decodes it) and the lines' picture (the last frame,
+ * the track clear, and how far it has moved from the first), read in one pass when a video is chosen, so the lines the
+ * analysis will follow can be drawn while the points are set. The first frame is handed on as soon as it is read. On the
+ * first frame the athlete in the blocks hides parts of the lines and their arms and legs look like lines, so the lines are
+ * followed in the last frame, as the analysis does. */
+export interface VideoEnds { luma: Luma; shift: P2; frame: number }
+export async function readEnds(file: File, signal: AbortSignal, first: (picture: FirstFrame) => void): Promise<VideoEnds | null> {
+  const count = (await untilAborted(demuxMP4(file), signal)).frames.length;
+  let small: Small | null = null, ends: VideoEnds | null = null;
+  await readFrames(file, signal, i => i === 0 || i === count - 1, async (frame, source, w, h) => {
+    if (frame.frameIndex === 0) {
+      const k = Math.min(1, 1280 / w), c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k);
+      c.getContext('2d')!.drawImage(source, 0, 0, c.width, c.height); first({ image: c.toDataURL('image/jpeg', .85), width: w, height: h }); c.width = 0;
+      small = shrinkCanvas(source, w, h);
+    }
+    if (frame.frameIndex === count - 1 && small) {
+      // Straight from the first frame to the last, so searched wider than frame to frame (±380 px).
+      const shift = pictureShift(small, shrinkCanvas(source, w, h), [0, 0], 24);
+      ends = { luma: luminance(source.getContext('2d')!.getImageData(0, 0, w, h).data, w, h), shift, frame: frame.frameIndex };
+    }
+  });
+  return ends;
 }
