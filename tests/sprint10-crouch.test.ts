@@ -4,6 +4,8 @@ import { crouchPhases, drawCrouchFigure, figureView, markText } from '../src/spr
 import { frameInterval, insideFrame } from '../src/sprint10/CrouchViews';
 import { crouchAdvice, GUIDE } from '../src/sprint10/crouch-advice';
 import type { CrouchResult, StepResult } from '../src/sprint10/crouch';
+import { applyEdits, effectsOf, footDown, moments } from '../src/sprint10/crouch-edit';
+import { legLength } from '../src/sprint10/contacts';
 
 // A synthetic crouch start filmed from the side at 240 fps, 1920x1080, running to the right.
 // Leg length about 240 px; ground at y = 800 px. Set until 0.5 s; the rear foot (left landmarks)
@@ -211,5 +213,52 @@ describe('crouch start screen', () => {
     const html = renderToStaticMarkup(createElement(CrouchLab));
     for (const text of ['1　動画を選ぶ', '2　スタートラインを合わせる', '3　解析する', `${MAX_STEPS}歩目`]) expect(html).toContain(text);
     for (const text of ['目印', '歩幅', 'm/s']) expect(html).not.toContain(text);
+  });
+});
+
+describe('crouch start: moments moved by the user', () => {
+  const frames = startFrames(), auto = analyzeCrouchStart(frames, { width: W, height: H });
+  it('changes nothing without edits', () => {
+    expect(applyEdits(auto, {}, frames, W, H)).toBe(auto);
+    const list = moments(auto, {}, auto, frames, W, H);
+    expect(list.map(m => m.key)).toEqual(['clearance', 'td1', 'to1', 'td2', 'to2', 'td3', 'to3']);
+    expect(list.every(m => m.frame === m.autoFrame && m.flag === null)).toBe(true);
+  });
+  it('takes the times and the angles from the frames chosen, and the values that use them change at once', () => {
+    const td2 = auto.contacts[1].touchdownFrame!, r = applyEdits(auto, { td2: td2 + 3 }, frames, W, H);
+    expect(r.contacts[1].touchdownFrame).toBe(td2 + 3); expect(r.contacts[1].touchdown).toBeCloseTo((td2 + 3) / 240, 9);
+    expect(r.steps[1].contactSeconds! - auto.steps[1].contactSeconds!).toBeCloseTo(-3 / 240, 9);
+    expect(r.steps[0].flightSeconds! - auto.steps[0].flightSeconds!).toBeCloseTo(3 / 240, 9);
+    expect(r.steps[0].pitch).toBeCloseTo(1 / r.steps[0].stepSeconds!, 9);
+    expect(r.steps[1].shankAngle).not.toBeNull();
+    // the automatic result is left as it was
+    expect(auto.contacts[1].touchdownFrame).toBe(td2);
+    const m = moments(auto, { td2: td2 + 3 }, r, frames, W, H).find(q => q.key === 'td2')!;
+    expect(m.frame).toBe(td2 + 3); expect(m.autoFrame).toBe(td2);
+    expect(effectsOf(auto, r, m).map(e => e.label)).toEqual(['1歩目の後の滞空', '2歩目の接地時間']);
+  });
+  it('moves the block clearance: its posture and the time to the first touchdown', () => {
+    const at = auto.blockClearance!.frame, r = applyEdits(auto, { clearance: at - 4 }, frames, W, H);
+    expect(r.blockClearance!.frame).toBe(at - 4);
+    expect(r.firstFlight! - auto.firstFlight!).toBeCloseTo(4 / 240, 9);
+    expect(r.steps).toEqual(auto.steps);
+  });
+  it('flags times out of the usual range, and a video where the toe is not seen', () => {
+    const td1 = auto.contacts[0].touchdownFrame!, to1 = auto.contacts[0].toeOffFrame!;
+    // a contact of 10 frames (0.042 s) is too short for a first step
+    const edits = { td1: to1 - 10 }, r = applyEdits(auto, edits, frames, W, H), list = moments(auto, edits, r, frames, W, H);
+    expect(list.find(m => m.key === 'td1')!.flag).toBeTruthy();   // also late for the block (0.18 s): either message
+    expect(list.find(m => m.key === 'to1')!.flag).toContain('接地時間');
+    expect(list.find(m => m.key === 'td2')!.flag).toBeNull();
+    // the toes faint around the second touchdown
+    const td2 = auto.contacts[1].touchdownFrame!;
+    const dim = frames.map(f => Math.abs(f.frame - td2) <= 3 ? { ...f, pose: f.pose!.map((p, k) => k === 31 || k === 32 ? { ...p, visibility: .2 } : p) } : f);
+    expect(moments(auto, {}, auto, dim, W, H).find(m => m.key === 'td2')!.flag).toContain('足先');
+    expect(td1).toBeLessThan(to1);
+  });
+  it('tells in each frame whether the foot is down, as the judgment sees it', () => {
+    const leg = legLength(frames.filter(f => f.pose), W, H), m = moments(auto, {}, auto, frames, W, H).find(q => q.key === 'td2')!;
+    const at = (n: number) => footDown(frames[n], m, W, H, leg);
+    expect(at(m.autoFrame)).toBe(true); expect(at(m.autoFrame + 10)).toBe(true); expect(at(m.autoFrame - 10)).toBe(false);
   });
 });

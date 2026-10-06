@@ -8,12 +8,14 @@ import { crouchPhases, type Phase } from './crouch-figure';
 import { crouchAdvice, GUIDE } from './crouch-advice';
 import CrouchCharts, { StepTable } from './CrouchCharts';
 import { CrouchReplay, frameInterval, insideFrame, PhaseFigures, type ReplayEvent } from './CrouchViews';
+import { applyEdits, moments } from './crouch-edit';
+import { CrouchReview } from './CrouchReview';
 
 /** One ◀/▶ tap moves the line by 0.2% of the frame width. */
 const NUDGE = .002;
 const seconds = (v: number | null | undefined, digits = 3) => v == null ? '—' : v.toFixed(digits);
-type Tab = 'advice' | 'pose' | 'steps' | 'replay';
-const TABS: [Tab, string][] = [['advice', 'ポイント'], ['pose', '姿勢'], ['steps', '歩ごと'], ['replay', 'スロー']];
+type Tab = 'advice' | 'check' | 'pose' | 'steps' | 'replay';
+const TABS: [Tab, string][] = [['advice', 'ポイント'], ['check', '確認'], ['pose', '姿勢'], ['steps', '歩ごと'], ['replay', 'スロー']];
 /** The colours of the measured lines on the pictures (markColor in crouch-figure). */
 const LEGEND = [['#ffb02e', '体幹（腰→肩）'], ['#3ad7ff', '脛（足首→膝）'], ['#ff6fd8', '前膝'], ['#b58cff', '後膝']] as const;
 
@@ -32,8 +34,19 @@ export default function CrouchLab() {
   const [measured, setMeasured] = useState<{ frames: CrouchFrame[]; width: number; height: number; refiner: 'webgpu' | 'wasm' | null } | null>(null);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   useEffect(() => () => { owner.current?.abort(); owner.current = null; }, []);
-  const result: CrouchResult | null = useMemo(() => measured ? analyzeCrouchStart(measured.frames, { width: measured.width, height: measured.height }) : null, [measured]);
-  const phases: Phase[] = useMemo(() => result && !result.reason ? crouchPhases(result) : [], [result]);
+  const auto: CrouchResult | null = useMemo(() => measured ? analyzeCrouchStart(measured.frames, { width: measured.width, height: measured.height }) : null, [measured]);
+  // The judged moments the user moved (frames by moment key), those confirmed, and the one being checked; everything shown
+  // uses the result with them (the user, 2026-10-06: 「自動解析→ズレていたら手動で微調整→自動的に数値もそれに伴ってすぐに変化する」).
+  const [edits, setEdits] = useState<Record<string, number>>({}), [checked, setChecked] = useState<ReadonlySet<string>>(new Set()), [moment, setMoment] = useState<string | null>(null);
+  useEffect(() => { setEdits({}); setChecked(new Set()); setMoment(null); }, [measured]);
+  const result: CrouchResult | null = useMemo(() => auto && measured ? applyEdits(auto, edits, measured.frames, measured.width, measured.height) : auto, [auto, edits, measured]);
+  const list = useMemo(() => auto && result && measured ? moments(auto, edits, result, measured.frames, measured.width, measured.height) : [], [auto, edits, result, measured]);
+  const waiting = list.filter(m => m.flag && !checked.has(m.key)).length, editedCount = Object.keys(edits).length;
+  const editedSteps = new Set(Object.keys(edits).flatMap(k => k === 'clearance' ? [] : k.startsWith('td') ? [+k.slice(2), +k.slice(2) - 1] : [+k.slice(2)]));
+  // The pictures of the phases are made again only when a phase's frame or angles change (not for a toe-off).
+  const phasesNow: Phase[] = result && !result.reason ? crouchPhases(result) : [];
+  const phaseKey = JSON.stringify(phasesNow.map(p => [p.key, p.frame, p.marks.map(k => k.value)]));
+  const phases: Phase[] = useMemo(() => phasesNow, [phaseKey]);   // eslint-disable-line react-hooks/exhaustive-deps
   const advice = useMemo(() => result && !result.reason ? crouchAdvice(result) : [], [result]);
   const checks = advice.filter(a => a.level === 'check').length;
   const events: ReplayEvent[] = useMemo(() => !result || result.reason ? [] : [
@@ -86,11 +99,23 @@ export default function CrouchLab() {
     const top = panels.current?.getBoundingClientRect().top, bar = tabs.current?.offsetHeight ?? 0;
     if (top !== undefined && top < bar) window.scrollBy({ top: top - bar });
   }
+  /** A moment set (or confirmed as judged), and on to the next one not yet checked. */
+  function setMomentFrame(key: string, frame: number) {
+    const m = list.find(q => q.key === key); if (!m) return;
+    setEdits(e => { const next = { ...e }; if (frame === m.autoFrame) delete next[key]; else next[key] = frame; return next; });
+    setChecked(c => new Set(c).add(key));
+    const i = list.indexOf(m), next = [...list.slice(i + 1), ...list.slice(0, i)].find(q => !checked.has(q.key));
+    setMoment(next ? next.key : key);
+  }
+  function revert(key: string) { setEdits(e => { const next = { ...e }; delete next[key]; return next; }); }
+  /** The check, from the first moment worth a look not yet checked. */
+  function openCheck() { const first = list.find(q => q.flag && !checked.has(q.key)) ?? list.find(q => !checked.has(q.key)); if (first) setMoment(first.key); choose('check'); }
   /** A phase in the slow replay: its tab, paused on its frame. */
   function show(p: Phase) { seekTo.current = p.pts; choose('replay'); }
   function save() {
     if (!result) return;
-    const blob = new Blob([JSON.stringify({ version: CROUCH_VERSION, file: file?.name, startX: start, result }, null, 2)],
+    const blob = new Blob([JSON.stringify({ version: CROUCH_VERSION, file: file?.name, startX: start, result,
+      ...(editedCount ? { edited: { frames: edits, auto } } : {}), checked: [...checked] }, null, 2)],
       { type: 'application/json' });
     const href = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = href; a.download = 'crouch-start-result.json'; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
@@ -136,19 +161,29 @@ export default function CrouchLab() {
     </section>
     {result && <section ref={resultCard} className="sprint10-card sprint10-result" aria-label="解析結果"><h2>解析結果</h2>
       {result.reason ? <p role="alert" className="sprint10-note">{result.reason}</p> : <>
-        <div className="sprint10-metrics sprint10-summary">{[['解析した歩数', `${result.contacts.length}`, '歩'],
-          ['ブロック→1歩目の接地', seconds(result.firstFlight), '秒']].map(([label, v, unit]) =>
-          <div key={label}><span>{label}</span><strong>{v}<small>{unit}</small></strong></div>)}</div>
+        <div className="sprint10-metrics sprint10-summary">{[['解析した歩数', `${result.contacts.length}`, '歩', false],
+          ['ブロック→1歩目の接地', seconds(result.firstFlight), '秒', edits.clearance !== undefined || edits.td1 !== undefined]].map(([label, v, unit, edited]) =>
+          <div key={String(label)}><span>{label}{edited && <i className="crouch-edited" aria-label="（手で直した値）">✎</i>}</span><strong>{v}<small>{unit}</small></strong></div>)}</div>
+        <p className="crouch-check-note"><span>{editedCount ? `手で直したコマを使っています（${editedCount}か所）。` : '接地・離地などのコマは自動判定です。ずれていたら1コマ単位で直せます。'}
+          {waiting > 0 && ` 要確認 ${waiting}か所。`}</span>
+          {tab !== 'check' && <button type="button" onClick={openCheck}>確認する</button>}</p>
         {measured && !measured.refiner && <p className="sprint10-note">高精度の骨格モデル（RTMPose）を読み込めなかったため、角度と骨格の表示はMediaPipeの骨格を使っています。</p>}
-        <div ref={tabs} className="sprint10-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
-          <button key={id} id={`crouch-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`crouch-panel-${id}`} onClick={() => choose(id)}>
-            {label}{id === 'advice' && checks > 0 && <span className="sprint10-badge" aria-label={`確かめたい点 ${checks}件`}>{checks}</span>}</button>)}</div>
+        <div ref={tabs} className="sprint10-tabs crouch-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
+          <button key={id} id={`crouch-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`crouch-panel-${id}`} onClick={() => id === 'check' ? openCheck() : choose(id)}>
+            {label}{id === 'advice' && checks > 0 && <span className="sprint10-badge" aria-label={`確かめたい点 ${checks}件`}>{checks}</span>}
+            {id === 'check' && waiting > 0 && <span className="sprint10-badge" aria-label={`要確認 ${waiting}か所`}>{waiting}</span>}</button>)}</div>
         <div ref={panels} className="sprint10-panels">
           <div id="crouch-panel-advice" role="tabpanel" aria-labelledby="crouch-tab-advice" hidden={tab !== 'advice'}>
             {advice.length > 0 ? <><ul className="sprint10-advice" aria-label="見方のポイント">{advice.map(a => <li key={a.topic + a.text} className={a.level}>
               <span aria-hidden="true">{a.level === 'good' ? '✓' : '!'}</span><div><strong>{a.topic}</strong>{a.text}</div></li>)}</ul>
               <p className="sprint10-hint">目安は短距離選手の研究で報告された一般的な値で、選手ごとの目標ではありません（出典は「数値の見方」）。</p></>
               : <p>目安と比べられる値がありませんでした。</p>}
+          </div>
+          <div id="crouch-panel-check" role="tabpanel" aria-labelledby="crouch-tab-check" hidden={tab !== 'check'}>
+            <p className="sprint10-hint">自動判定のコマを1つずつ確かめます。ずれていたら◀▶か下のコマで合わせて「このコマに決める」、合っていれば「OK」。数値はすぐ変わります。</p>
+            {tab === 'check' && auto && <CrouchReview url={url} frames={measured!.frames} width={measured!.width} height={measured!.height}
+              auto={auto} result={result} list={list} edits={edits} checked={checked} at={moment} onAt={setMoment}
+              onSet={setMomentFrame} onRevert={revert} onRevertAll={() => setEdits({})} onDone={() => choose('steps')} />}
           </div>
           <div id="crouch-panel-pose" role="tabpanel" aria-labelledby="crouch-tab-pose" hidden={tab !== 'pose'}>
             <ul className="sprint10-mark-legend" aria-label="線の色">{LEGEND.map(([color, label]) => <li key={label}><i style={{ background: color }} />{label}</li>)}</ul>
@@ -157,7 +192,7 @@ export default function CrouchLab() {
               guides={{ set: `目安：前膝 ${GUIDE.frontKnee[0]}〜${GUIDE.frontKnee[1]}°・後膝 ${GUIDE.rearKnee[0]}〜${GUIDE.rearKnee[1]}°` }} /> : <p>角度を測れる局面がありませんでした。</p>}
           </div>
           <div id="crouch-panel-steps" role="tabpanel" aria-labelledby="crouch-tab-steps" hidden={tab !== 'steps'}>
-            <StepTable result={result} />
+            <StepTable result={result} edited={editedSteps} />
             <p className="sprint10-hint">—：映っていないため出せない値（滞空とピッチは次の接地まで、接地時間は離地まで必要）。</p>
             {result.notes.map(n => <p className="sprint10-note" key={n}>{n}</p>)}
             <h3>歩ごとの変化</h3>
@@ -175,6 +210,7 @@ export default function CrouchLab() {
           <p>骨格の推定が崩れたコマの角度は出しません。</p>
           <p>骨格：選手を見つけて追い、接地・離地を判定するのはMediaPipe、角度と画像・スロー再生の骨格はRTMPose（{measured?.refiner === 'webgpu' ? 'WebGPU' : measured?.refiner === 'wasm' ? 'WebAssembly' : '今回は未使用'}）です。かがんだ構えではRTMPoseの方が膝・腰の位置が体に合い、接地・離地の時刻は映像との差がMediaPipeの方が小さかったためです（3人の検証動画）。</p>
           <p>目安の出典：構えの膝はCavedonら（2019、地方〜全国レベルの短距離選手42人：前膝90〜92°、後膝112〜117°）とBezodisら（2019、総説：前膝91〜99°、後膝117〜136°）。ブロックを離れてから1歩目の接地までは0.045±0.025秒（Bezodisら 2019）。1歩目の接地はトップ選手の例0.177秒（Čoh・Tomazin 2006、100m 10.15秒の選手）、ダイヤモンドリーグの選手の平均0.210秒（男子）・0.225秒（女子）（Bezodisら 2019）。グラフの点線はČoh・Tomazin（2006）の1〜4歩目。歩ごとに脛と体幹が起きていくことはDonaldsonら（2022）。</p>
+          <p>接地・離地・ブロックを離れる瞬間は、「確認」で1コマ単位で直せます。直した値には ✎ を付け、保存（JSON）には自動の結果も残します。暗い動画や、カメラの性能が低いスマホの動画では、自動の判定が1コマ以上ずれることがあります。</p>
           <p>この解析の時間はコマ単位（1/240秒）で判定しているため、0.01〜0.02秒の差は誤差の範囲です。ブロックを離れる瞬間は平均で約0.01秒早めに判定するため、1歩目の接地までの時間は少し長めに出ます。</p></details>
       </>}
       <button onClick={save}>結果を保存（JSON）</button>

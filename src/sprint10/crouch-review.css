@@ -1,0 +1,43 @@
+/* Crouch start: the judged moments checked one at a time (CrouchReview.tsx). */
+.crouch-review{display:flex;flex-direction:column;gap:10px;outline:none}
+.crouch-review-progress{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:14px;color:#3f5f55}
+.crouch-review-progress b{font-size:18px;color:#173a36;font-variant-numeric:tabular-nums}
+.crouch-review-progress .warn,.crouch-review-progress .ok,.crouch-review-progress .edited{padding:2px 9px;border-radius:999px;font-size:12px;font-weight:750}
+.crouch-review-progress .warn{background:#fff1d6;color:#8a5300}.crouch-review-progress .ok{background:#e1f4ea;color:#11663f}.crouch-review-progress .edited{background:#e4edff;color:#1d4fb8}
+.sprint10 .crouch-review-moments{margin:0}
+.sprint10 .crouch-review-moments button{display:inline-flex;align-items:center;gap:3px;font-size:13px;padding:4px 9px}
+.crouch-review-moments i{font-style:normal;font-weight:800;font-size:12px}
+.sprint10 .crouch-review-moments button.warn{border-color:#e3a33b}.crouch-review-moments button.warn i{color:#c77700}
+.crouch-review-moments button.ok i{color:#1d8a52}.crouch-review-moments button.edited i{color:#2a62d8}
+.sprint10 .crouch-review-moments button[aria-pressed=true] i{color:#fff}
+.crouch-review-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.crouch-review-head strong{font-size:18px}.crouch-review-head small{font-size:13px;color:#557468;font-variant-numeric:tabular-nums}
+.crouch-review-flag{margin:0;padding:8px 12px;border-radius:10px;background:#fff1d6;color:#7a4b00;font-size:13px;line-height:1.5}
+.crouch-review-view{position:relative;aspect-ratio:4/3;overflow:hidden;border-radius:12px;background:#0c1816}
+.sprint10 .crouch-review-view video,.crouch-review-view svg{position:absolute;max-width:none;min-height:0;pointer-events:none}
+.crouch-review-tools{position:absolute;left:8px;right:8px;bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;line-height:1.2}
+.crouch-review-tools .sprint10-seg{background:rgba(230,239,234,.92)}
+.crouch-review-tools label{display:flex;align-items:center;gap:4px;padding:6px 10px;border-radius:10px;background:rgba(230,239,234,.92);font-size:13px;font-weight:650;color:#173a36}
+.crouch-review-strip{display:grid;grid-template-columns:repeat(9,minmax(0,1fr));gap:3px}
+.sprint10 .crouch-review-strip button{min-height:46px;padding:4px 0 5px;display:flex;flex-direction:column;align-items:center;justify-content:space-between;gap:4px;border-radius:9px;background:#fff;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
+.sprint10 .crouch-review-strip button.auto{border:2px solid #c77700}
+.sprint10 .crouch-review-strip button.set{border:2px solid #2a62d8}
+.sprint10 .crouch-review-strip button[aria-current=true]{background:#173a36;color:#fff;border-color:#173a36}
+.crouch-review-strip i{display:block;width:70%;height:5px;border-radius:3px;background:#dfe6e3}
+.crouch-review-strip i.down{background:#2a9d6f}.crouch-review-strip i.up{background:#c9d3cf}
+.crouch-review-legend{margin:-4px 0 0;font-size:12px;color:#557468}
+.crouch-review-effect{list-style:none;margin:0;padding:8px 12px;border-radius:10px;background:#eff6f2;display:grid;gap:2px;font-size:14px;font-variant-numeric:tabular-nums}
+.crouch-review-effect li{display:flex;align-items:baseline;gap:6px}.crouch-review-effect span{flex:1}
+.crouch-review-effect s{color:#7d8f87}.crouch-review-effect b{font-size:16px;color:#135a48}.crouch-review-effect small{color:#557468}
+.crouch-review-actions{display:grid;grid-template-columns:56px 1fr 56px;gap:8px}
+.sprint10 .crouch-review-actions button{min-height:56px;font-size:18px;padding:0}
+.sprint10 .crouch-review-actions .sprint10-primary{min-width:0;font-size:16px}
+.crouch-review-more{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+.sprint10 .crouch-review-more button{min-height:40px;padding:6px 12px;font-size:13px;background:transparent;border-color:#cfdcd6;color:#3f5f55}
+.sprint10-tabs.crouch-tabs{grid-template-columns:repeat(5,minmax(0,1fr))}.sprint10 .crouch-tabs button{font-size:14px;padding:6px 0}
+.crouch-tabs .sprint10-badge{position:absolute;top:-4px;right:-2px;margin:0;min-width:17px;height:17px;font-size:10.5px;vertical-align:0;box-shadow:0 0 0 2px #fff}
+.crouch-edited{color:#2a62d8;font-weight:800;margin-left:2px}
+.crouch-check-note{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0 0;padding:10px 12px;border-radius:10px;background:#eef4ff;color:#23406e;font-size:13px;line-height:1.5}
+.sprint10 .crouch-check-note button{flex:0 0 auto;min-height:40px;padding:6px 12px;background:#2a62d8;border:0;color:#fff;font-weight:700}
+.crouch-review-done{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:10px;background:#e1f4ea;color:#11663f;font-size:13px;line-height:1.5}
+.sprint10 .crouch-review-done button{flex:0 0 auto;min-height:40px;padding:6px 12px;background:#11663f;border:0;color:#fff;font-weight:700}

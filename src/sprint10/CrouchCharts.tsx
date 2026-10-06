@@ -72,11 +72,11 @@ export default function CrouchCharts({ result }: { result: CrouchResult }) {
 
 const fixed = (v: number | null, digits: number) => v === null ? '—' : v.toFixed(digits);
 /** Every step's values in one table, in place of a card per step. */
-export function StepTable({ result }: { result: CrouchResult }) {
+export function StepTable({ result, edited }: { result: CrouchResult; /** Steps with a value from a frame the user chose. */ edited?: ReadonlySet<number> }) {
   return <div className="sprint10-table-wrap"><table className="sprint10-table" aria-label="1歩ごとの値">
     <thead><tr><th scope="col">歩</th><th scope="col">接地<small>秒</small></th><th scope="col">滞空<small>秒</small></th>
       <th scope="col">ピッチ<small>歩/秒</small></th><th scope="col">脛<small>接地時</small></th><th scope="col">体幹<small>接地時</small></th></tr></thead>
-    <tbody>{result.steps.map(s => <tr key={s.step}><th scope="row">{s.step}歩目</th>
+    <tbody>{result.steps.map(s => <tr key={s.step}><th scope="row">{s.step}歩目{edited?.has(s.step) && <i className="crouch-edited" aria-label="（手で直した値を含む）">✎</i>}</th>
       <td>{fixed(s.contactSeconds, 3)}</td><td>{fixed(s.flightSeconds, 3)}</td><td>{fixed(s.pitch, 2)}</td>
       <td>{s.shankAngle === null ? '—' : `${Math.round(s.shankAngle)}°`}</td><td>{s.trunkAngle === null ? '—' : `${Math.round(s.trunkAngle)}°`}</td></tr>)}</tbody>
   </table></div>;

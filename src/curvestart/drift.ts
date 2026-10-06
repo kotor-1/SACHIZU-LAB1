@@ -55,12 +55,16 @@ export function driftAt(drift: readonly Drift[], frame: number): [number, number
   const t = (frame - a.frame) / (b.frame - a.frame);
   return [a.dx + (b.dx - a.dx) * t, a.dy + (b.dy - a.dy) * t];
 }
-/** A 1/8-size grey copy of a picture on a canvas (the browser shrinks it). */
+/** A 1/8-size grey copy of a picture on a canvas. The browser shrinks it on one small canvas kept for the purpose (not
+ * one marked for frequent reading: drawing a large picture into such a canvas copies the whole picture out first, about
+ * 33 MB at 4K for every frame measured), and only the small copy is read. */
+let small: HTMLCanvasElement | null = null;
 export function shrinkCanvas(source: HTMLCanvasElement, width: number, height: number, k = 8): Small {
-  const w = Math.floor(width / k), h = Math.floor(height / k), c = document.createElement('canvas'); c.width = w; c.height = h;
-  const ctx = c.getContext('2d', { willReadFrequently: true })!; ctx.imageSmoothingQuality = 'high'; ctx.drawImage(source, 0, 0, width, height, 0, 0, w, h);
+  const w = Math.floor(width / k), h = Math.floor(height / k);
+  small ??= document.createElement('canvas');
+  if (small.width !== w || small.height !== h) { small.width = w; small.height = h; }
+  const ctx = small.getContext('2d')!; ctx.imageSmoothingQuality = 'high'; ctx.drawImage(source, 0, 0, width, height, 0, 0, w, h);
   const rgba = ctx.getImageData(0, 0, w, h).data, data = new Float32Array(w * h);
   for (let i = 0, j = 0; i < data.length; i++, j += 4) data[i] = .3 * rgba[j] + .59 * rgba[j + 1] + .11 * rgba[j + 2];
-  c.width = 0;
   return { data, width: w, height: h };
 }

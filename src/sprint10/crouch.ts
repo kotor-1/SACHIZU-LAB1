@@ -135,8 +135,18 @@ export function analyzeCrouchStart(frames: readonly CrouchFrame[], options: Crou
   // Steps.
   const first = base.contacts[0];
   base.firstFlight = first?.touchdown != null ? first.touchdown - clearance : null;
-  base.steps = base.contacts.map((c, i) => {
-    const next = base.contacts[i + 1] ?? null;
+  base.steps = stepsOf(base.contacts, frames, W, H, direction, leg);
+  if (!base.contacts.length) base.notes.push('ブロックを離れた後の接地が映っていません。');
+  const partial = base.contacts.filter(c => c.toeOff === null).map(c => c.index);
+  if (partial.length) base.notes.push(`${partial.join('・')}歩目は離地が映っていないため、接地時間を出していません。`);
+  return base;
+}
+
+/** The steps from the contacts: times between the touchdowns and toe-offs, and the angles at each touchdown (also used
+ * when the user moves a judged moment, crouch-edit.ts). */
+export function stepsOf(contacts: readonly Contact[], frames: readonly CrouchFrame[], W: number, H: number, direction: number, leg: number): StepResult[] {
+  return contacts.map((c, i) => {
+    const next = contacts[i + 1] ?? null;
     const contactSeconds = c.touchdown !== null && c.toeOff !== null ? c.toeOff - c.touchdown : null;
     const flightSeconds = next?.touchdown != null && c.toeOff !== null ? next.touchdown - c.toeOff : null;
     const stepSeconds = next?.touchdown != null && c.touchdown !== null ? next.touchdown - c.touchdown : null;
@@ -146,17 +156,13 @@ export function analyzeCrouchStart(frames: readonly CrouchFrame[], options: Crou
       shankAngle: at && side !== null ? shankAngle(at, side, W, H, direction) : null,
       trunkAngle: at ? trunkAngle(at, W, H, direction, leg) : null, side };
   });
-  if (!base.contacts.length) base.notes.push('ブロックを離れた後の接地が映っていません。');
-  const partial = base.contacts.filter(c => c.toeOff === null).map(c => c.index);
-  if (partial.length) base.notes.push(`${partial.join('・')}歩目は離地が映っていないため、接地時間を出していません。`);
-  return base;
 }
 
 /** Median angles over `frames`, each given only when at least half of the
  * frames yield it (a collapsed set pose left a few frames, all misread);
  * the front leg is the side whose toe is nearest the front block. The frame
  * shown is `at`, or else the frame whose angles are nearest the medians. */
-function posture(frames: CrouchFrame[], frontX: number, W: number, H: number, direction: number, leg: number, at?: CrouchFrame): Posture {
+export function posture(frames: CrouchFrame[], frontX: number, W: number, H: number, direction: number, leg: number, at?: CrouchFrame): Posture {
   const angles = (f: CrouchFrame) => {
     const pose = anglePose(f)!, side = sideNearest(pose, frontX, W);
     return { side, trunk: trunkAngle(pose, W, H, direction, leg), front: side === null ? null : kneeAngle(pose, side, W, H, leg),
