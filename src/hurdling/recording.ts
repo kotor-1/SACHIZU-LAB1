@@ -18,7 +18,7 @@ import { trackRotation } from '../cmj/video-orientation';
 import { untilAborted } from '../cmj/session-lifecycle';
 import type { CrouchFrame, CrouchPoint } from '../sprint10/crouch';
 import { loadRefiner, type Refiner } from '../sprint10/rtm-refine';
-import { CROUCH_FPS, measureSprint, SPRINT_POSES } from '../sprint10/recording';
+import { CROUCH_FPS, DECODE_RETRIES, DecodeFailure, decodeStep, measureSprint, SPRINT_POSES } from '../sprint10/recording';
 
 type Pt = { x: number; y: number; visibility?: number };
 type Region = { x: number; y: number; w: number; h: number };
@@ -43,17 +43,20 @@ export async function readFrames(file: File, signal: AbortSignal, wanted: (index
   const check = () => { if (signal.aborted) throw new DOMException('中止', 'AbortError'); };
   const d = await untilAborted(demuxMP4(file), signal); check();
   const rotation = trackRotation((d.videoTrack as typeof d.videoTrack & { matrix?: ArrayLike<number> }).matrix);
-  const decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
+  let decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
   const source = document.createElement('canvas'), ctx = source.getContext('2d');
   if (!ctx) throw new Error('映像処理を開始できません。');
   const abort = () => decoder.dispose();
   signal.addEventListener('abort', abort, { once: true });
   const last = d.frames.reduce((m, f) => wanted(f.frameIndex) ? f.frameIndex : m, -1);
+  // A decoder failing partway is made again and read from the start, the frames already visited skipped (DECODE_RETRIES).
+  let done = -1;
   try {
+    for (let attempt = 0; ; attempt++) try {
     for (const frame of d.frames) {
       if (frame.frameIndex > last) break;
-      if (!wanted(frame.frameIndex)) { await untilAborted(decoder.skipExactFrame(frame.frameIndex), signal); check(); continue; }
-      const decoded = await untilAborted(decoder.decodeExactFrame(frame.frameIndex), signal); check();
+      if (frame.frameIndex <= done || !wanted(frame.frameIndex)) { await decodeStep(decoder.skipExactFrame(frame.frameIndex), signal, frame.frameIndex); check(); continue; }
+      const decoded = await decodeStep(decoder.decodeExactFrame(frame.frameIndex), signal, frame.frameIndex); check();
       if (decoded.status !== 'SUCCESS' || decoded.actualDecodedFrameIndex !== frame.frameIndex) throw new Error('動画フレームを正しく読み出せません。');
       const bitmap = decoded.bitmap, w = rotation % 180 ? bitmap.height : bitmap.width, h = rotation % 180 ? bitmap.width : bitmap.height;
       if (source.width !== w || source.height !== h) { source.width = w; source.height = h; }
@@ -61,6 +64,12 @@ export async function readFrames(file: File, signal: AbortSignal, wanted: (index
       ctx.translate(w / 2, h / 2); ctx.rotate(rotation * Math.PI / 180);
       ctx.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2); ctx.setTransform(1, 0, 0, 1, 0, 0);
       await visit(frame, source, w, h); check();
+      done = frame.frameIndex;
+    }
+    break;
+    } catch (e) {
+      if (!(e instanceof DecodeFailure) || signal.aborted || attempt >= DECODE_RETRIES) throw e;
+      decoder.dispose(); decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
     }
   } finally { signal.removeEventListener('abort', abort); decoder.dispose(); source.width = 0; }
   return d.frames.length;
@@ -91,15 +100,23 @@ export function surveyDirection(samples: { pts: number; people: { x: number; y: 
   return Math.abs(votes) < RUN_SPEED[0] ? 0 : Math.sign(votes);
 }
 
-/** In two stages, so the pose models and RTMPose are not in memory together: the hurdle's pass held two
- * MediaPipe models (a watcher and a tracker, ~120 MB each and growing) beside RTMPose (~500 MB), and an iPhone
- * closed the page in the long jump while the high jump and the throws (one model) were fine (WebKit: 1.22-1.28 GB
- * against 1.12-1.18; the user, 2026-10-06). First the athlete is found and followed with MediaPipe, the models then
- * let go; then RTMPose refines every followed frame in one more reading of the video (the same pixels as before). */
+/** Three readings of the video, as before the iPhone's trouble, but the models in memory changed: the hurdle's pass
+ * held two MediaPipe models (a watcher and a tracker, ~120 MB each and growing) beside RTMPose (~500 MB), and an
+ * iPhone closed the page in the long jump while the high jump and the throws (one model) were fine (WebKit: 1.22-1.28
+ * GB against 1.12-1.18; the user, 2026-10-06). So: (1) the direction, with the watcher; (2) the runner followed, the
+ * watcher lent to the sprint pass as its own, no RTMPose yet; the tracker then let go; (3) RTMPose loaded, and one more
+ * reading both finds the athlete before the tracking began (the watcher) and refines every followed frame (the same
+ * pixels as before): one MediaPipe model beside RTMPose, as the crouch start. A two-stage version with a fourth
+ * reading was lighter still but an iPhone 18 Pro Max then stopped with "Decoder failure" (the long jump's 887 frames
+ * read four times); a failing decoder is now made again (DECODE_RETRIES) and the stage named if it still fails. */
 export async function measureHurdle(file: File, signal: AbortSignal, progress: (fraction: number, message: string) => void):
   Promise<{ frames: CrouchFrame[]; width: number; height: number; refiner: Refiner['backend'] | null; direction: number }> {
   const frames: CrouchFrame[] = [];
-  let width = 0, height = 0, direction = 0;
+  let width = 0, height = 0, direction = 0, refiner: Refiner | null = null;
+  const stage = async <T>(name: string, run: () => Promise<T>) => {
+    try { return await run(); }
+    catch (e) { if (e instanceof DecodeFailure) throw new Error(`${name}の途中で、${e.message}`); throw e; }
+  };
   const watcher = new MobileCMJPose('full', undefined, 'CPU', SPRINT_POSES, 'IMAGE');
   try {
     await untilAborted(watcher.initialize(signal, message => progress(0, message)), signal);
@@ -108,33 +125,37 @@ export async function measureHurdle(file: File, signal: AbortSignal, progress: (
     // Only the count is kept: a demuxed video holds the file and a copy of each sample (twice the file in memory).
     const count = (await untilAborted(demuxMP4(file), signal)).frames.length;
     const step = Math.max(1, Math.floor(count / SURVEY_FRAMES)), samples: { pts: number; people: { x: number; y: number }[] }[] = [];
-    await readFrames(file, signal, i => i % step === 0, async (frame, source, w, h) => {
+    await stage('走る向きの確認', () => readFrames(file, signal, i => i % step === 0, async (frame, source, w, h) => {
       samples.push({ pts: frame.pts, people: SURVEY_REGIONS.flatMap(r => detect(watcher, source, r, frame, w, h)).map(pelvis) });
       progress(.1 * frame.frameIndex / count, '走る向きを確認しています。');
-    });
+    }));
     direction = surveyDirection(samples);
     if (!direction) throw new Error('走っている選手を見つけられませんでした。選手が画面を横切る動画を使ってください。');
 
-    // 2. Follow the runner coming in.
-    await measureSprint(file, direction > 0 ? .03 : .97, signal, (f, m) => progress(.1 + .6 * f, m), direction > 0 ? .97 : .03, 'flying', 10, {
+    // 2. Follow the runner coming in (the tracker is let go at the end of the pass).
+    await stage('選手の追跡', () => measureSprint(file, direction > 0 ? .03 : .97, signal, (f, m) => progress(.1 + .6 * f, m), direction > 0 ? .97 : .03, 'flying', 10, {
       maxFps: CROUCH_FPS, watcher,
       onSelected: (frame, selected, w, h) => { width = w; height = h;
         frames.push({ frame: frame.frameIndex, pts: frame.pts, pose: selected.length === 33 ? selected.map(p => ({ x: p.x, y: p.y, visibility: p.visibility })) : null }); },
-    });
+    }));
 
-    // 3. Before the athlete was decided: along the path led back.
+    // 3. RTMPose; then one reading: before the athlete was decided, along the path led back (the watcher), and every
+    // followed frame refined.
+    try { refiner = await untilAborted(loadRefiner(signal, text => progress(.7, text)), signal); }
+    catch (e) { if (signal.aborted) throw e; refiner = null; }
     const followed = frames.filter(f => f.pose);
-    if (followed.length) {
-      const first = followed[0], start = followed.filter(f => f.pts - first.pts <= PATH_FIT_SECONDS).map(f => ({ t: f.pts, ...pelvis(f.pose!) }));
-      const mt = start.reduce((s, p) => s + p.t, 0) / start.length, mx = start.reduce((s, p) => s + p.x, 0) / start.length;
-      const den = start.reduce((s, p) => s + (p.t - mt) ** 2, 0);
-      const speed = den > 0 ? start.reduce((s, p) => s + (p.t - mt) * (p.x - mx), 0) / den : 0;
-      const ys = followed.slice(0, 30).flatMap(f => f.pose!.filter(p => (p.visibility ?? 0) >= .3).map(p => p.y));
-      const top = Math.max(0, Math.min(...ys) - .1), bottom = Math.min(1, Math.max(...ys) + .1);
-      const expected = (t: number) => mx + speed * (t - mt);
-      const earlier = new Map<number, CrouchFrame>();
-      progress(.7, '踏切の前の動きを確認しています。');
-      await readFrames(file, signal, i => i < first.frame, async (frame, source, w, h) => {
+    if (!followed.length) return { frames, width, height, refiner: refiner?.backend ?? null, direction };
+    const first = followed[0], start = followed.filter(f => f.pts - first.pts <= PATH_FIT_SECONDS).map(f => ({ t: f.pts, ...pelvis(f.pose!) }));
+    const mt = start.reduce((s, p) => s + p.t, 0) / start.length, mx = start.reduce((s, p) => s + p.x, 0) / start.length;
+    const den = start.reduce((s, p) => s + (p.t - mt) ** 2, 0);
+    const speed = den > 0 ? start.reduce((s, p) => s + (p.t - mt) * (p.x - mx), 0) / den : 0;
+    const ys = followed.slice(0, 30).flatMap(f => f.pose!.filter(p => (p.visibility ?? 0) >= .3).map(p => p.y));
+    const top = Math.max(0, Math.min(...ys) - .1), bottom = Math.min(1, Math.max(...ys) + .1);
+    const expected = (t: number) => mx + speed * (t - mt);
+    const earlier = new Map<number, CrouchFrame>(), byFrame = new Map(followed.map(f => [f.frame, f])), last = followed.at(-1)!.frame;
+    progress(.75, '踏切の前の動きを確認しています。');
+    await stage('骨格の仕上げ', () => readFrames(file, signal, i => i < first.frame || (!!refiner && byFrame.has(i)), async (frame, source, w, h) => {
+      if (frame.frameIndex < first.frame) {
         const x = expected(frame.pts);
         if (x < -.02 || x > 1.02) return;
         const region = { x: Math.max(0, Math.min(.64, x - .18)), y: top, w: .36, h: bottom - top };
@@ -142,27 +163,19 @@ export async function measureHurdle(file: File, signal: AbortSignal, progress: (
           .filter(c => c.d < PATH_TOLERANCE).sort((a, b) => a.d - b.d)[0]?.p;
         if (!pose) return;
         const found: CrouchFrame = { frame: frame.frameIndex, pts: frame.pts, pose: pose.map(p => ({ x: p.x, y: p.y, visibility: p.visibility ?? 0 })) as CrouchPoint[] };
+        if (refiner) found.refined = await refiner.refine(source, found.pose!);
         earlier.set(frame.frameIndex, found);
-        progress(.7 + .1 * frame.frameIndex / first.frame, '踏切の前の動きを確認しています。');
-      });
-      const merged = new Map(frames.map(f => [f.frame, f]));
-      for (const [i, f] of earlier) merged.set(i, f);
-      frames.splice(0, frames.length, ...[...merged.values()].sort((a, b) => a.frame - b.frame));
-    }
+        progress(.75 + .05 * frame.frameIndex / first.frame, '踏切の前の動きを確認しています。');
+      } else {
+        const f = byFrame.get(frame.frameIndex)!;
+        f.refined = await refiner!.refine(source, f.pose!);
+        progress(.8 + .2 * frame.frameIndex / last, '骨格を細かく調べています。');
+      }
+    }));
+    const merged = new Map(frames.map(f => [f.frame, f]));
+    for (const [i, f] of earlier) merged.set(i, f);
+    frames.splice(0, frames.length, ...[...merged.values()].sort((a, b) => a.frame - b.frame));
   } finally { watcher.dispose(); }
-
-  // 4. RTMPose on every followed frame, the pose models let go.
-  let refiner: Refiner | null = null;
-  try { refiner = await untilAborted(loadRefiner(signal, text => progress(.8, text)), signal); }
-  catch (e) { if (signal.aborted) throw e; refiner = null; }
-  if (refiner && frames.some(f => f.pose)) {
-    const followed = new Map(frames.filter(f => f.pose).map(f => [f.frame, f])), last = Math.max(...followed.keys());
-    await readFrames(file, signal, i => followed.has(i), async (frame, source) => {
-      const f = followed.get(frame.frameIndex)!;
-      f.refined = await refiner!.refine(source, f.pose!);
-      progress(.8 + .2 * frame.frameIndex / last, '骨格を細かく調べています。');
-    });
-  }
   progress(1, '解析が終わりました。');
   return { frames, width, height, refiner: refiner?.backend ?? null, direction };
 }

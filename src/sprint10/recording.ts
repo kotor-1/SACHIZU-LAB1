@@ -15,6 +15,24 @@ export { SPRINT_POSES };
  * section's run-in side, at 30; the watch crop at half the analysis rate.
  * Recorded: a 5.9 s, 240 fps video took 48 s with every frame and a watch on
  * each (28 ms of pose estimation per frame). */
+/** A reading of the video starts again with a new decoder up to this many times when the decoder fails partway (an
+ * iPhone gave "Decoder failure" in the long jump, which reads the most frames, 2026-10-06): the frames already handled
+ * are decoded again, not handled again. */
+export const DECODE_RETRIES = 2;
+/** The video decoder failed at a frame (index from 0); its own message kept as `reason`. */
+export class DecodeFailure extends Error {
+  constructor(readonly frame: number, readonly reason: string) {
+    super(`動画の読み出しに失敗しました（${frame + 1}コマ目：${reason}）。もう一度お試しください。`);
+  }
+}
+/** A decoder step awaited, its failure (not an abort) turned into a DecodeFailure at `frame`. */
+export async function decodeStep<T>(step: Promise<T>, signal: AbortSignal, frame: number): Promise<T> {
+  try { return await untilAborted(step, signal); }
+  catch (e) {
+    if (signal.aborted || (e instanceof DOMException && e.name === 'AbortError')) throw e;
+    throw new DecodeFailure(frame, e instanceof Error ? e.message : String(e));
+  }
+}
 export const ANALYSIS_FPS = 120;
 export const IDLE_FPS = 30;
 /** The crouch start is timed to the frame: every frame up to this rate is
@@ -45,7 +63,7 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
   if (!d.frames.length || d.frames.length > 3600 || d.frames.at(-1)!.pts - d.frames[0].pts > 30)
     throw new Error('1走分・30秒以内・3600フレーム以内の動画を選んでください。');
   const rotation = trackRotation((d.videoTrack as typeof d.videoTrack & { matrix?: ArrayLike<number> }).matrix);
-  const decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
+  let decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
   // Up to four people per frame: with two, two people jogging behind the track
   // took both places and the runner passing them was never detected (recorded).
   const model = new MobileCMJPose('full', undefined, 'CPU', SPRINT_POSES);
@@ -66,18 +84,19 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
   let lastYield = performance.now(), lastUpdate = -Infinity;
   const span = d.frames.at(-1)!.pts - d.frames[0].pts, fps = span > 0 ? (d.frames.length - 1) / span : ANALYSIS_FPS;
   const stride = Math.max(1, Math.round(fps / (options.maxFps ?? ANALYSIS_FPS))), idleStride = Math.max(stride, Math.round(fps / IDLE_FPS));
-  let nextAnalysed = 0;
+  let nextAnalysed = 0, done = -1;
   try {
     await untilAborted(model.initialize(signal, message => progress(0, message)), signal); check();
+    for (let attempt = 0; ; attempt++) try {
     for (const frame of d.frames) {
-      if (frame.frameIndex < nextAnalysed) {
-        await untilAborted(decoder.skipExactFrame(frame.frameIndex), signal); check();
+      if (frame.frameIndex <= done || frame.frameIndex < nextAnalysed) {
+        await decodeStep(decoder.skipExactFrame(frame.frameIndex), signal, frame.frameIndex); check();
         continue;
       }
-      nextAnalysed = frame.frameIndex + stride;
-      const decoded = await untilAborted(decoder.decodeExactFrame(frame.frameIndex).then(result => {
+      const decoded = await decodeStep(decoder.decodeExactFrame(frame.frameIndex).then(result => {
         if (signal.aborted) decoder.dispose(); return result;
-      }), signal); check();
+      }), signal, frame.frameIndex); check();
+      nextAnalysed = frame.frameIndex + stride;
       if (decoded.status !== 'SUCCESS' || decoded.actualDecodedFrameIndex !== frame.frameIndex) throw new Error('動画フレームを正しく読み出せません。');
       const bitmap = decoded.bitmap;
       const w = rotation % 180 ? bitmap.height : bitmap.width, h = rotation % 180 ? bitmap.width : bitmap.height;
@@ -88,10 +107,17 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
       const selected = await processor.process(w, h, frame);
       options.onSelected?.(frame, selected, w, h);
       if (options.afterSelected) { await untilAborted(options.afterSelected(source), signal); check(); }
+      done = frame.frameIndex;
       if (processor.idle) nextAnalysed = frame.frameIndex + idleStride;
       const now = performance.now();
       if (now - lastUpdate > 100) { progress((frame.frameIndex + 1) / d.frames.length, '選手と脚の動きを解析しています。'); lastUpdate = now; }
       if (now - lastYield > 32) { await new Promise<void>(r => setTimeout(r, 0)); lastYield = performance.now(); check(); }
+    }
+    break;
+    } catch (e) {
+      if (!(e instanceof DecodeFailure) || signal.aborted || attempt >= DECODE_RETRIES) throw e;
+      progress((done + 1) / d.frames.length, '動画の読み出しをやり直しています。');
+      decoder.dispose(); decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
     }
     progress(1, '解析が終わりました。'); return processor.samples;
   } finally { signal.removeEventListener('abort', abort); decoder.dispose(); model.dispose(); if (watcher !== options.watcher) (watcher as MobileCMJPose | null)?.dispose(); source.width = 0; }
