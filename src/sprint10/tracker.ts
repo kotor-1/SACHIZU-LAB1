@@ -387,7 +387,16 @@ export class SprintTracker {
     const replaced = this.challenge(valid, pts);
     if (replaced) return replaced;
     const since = pts - this.pts;
-    if (since - MAX_PREDICTION_SECONDS > TIME_EPSILON) return [];
+    if (since - MAX_PREDICTION_SECONDS > TIME_EPSILON) {
+      // A standing or crouch start, before the run: a subject lost for longer than a prediction lasts is looked for
+      // again at the start line. Otherwise it was never followed again: someone seen for a moment early in a long
+      // video (the athlete walking in, kneeling) left the athlete in the set unfollowed, 「選手を十分に捉えられません
+      // でした」 (the user's 13 s video, 2026-10-06; built again from a test video: 10 frames, then 2 s of empty
+      // blocks, then the athlete in the set for 1.9 s - never followed). After the run, a lost runner stays lost.
+      if (this.start === 'flying' || this.running) return [];
+      this.searchAgain();
+      return this.acquire(valid, pts);
+    }
     if (since - this.shortGap() > TIME_EPSILON || this.resumption) return this.resume(valid, pts);
     const centre = this.reference(pts) ?? this.expected(pts);
     if (this.start === 'flying') {

@@ -95,6 +95,42 @@ describe('crouch start (side view)', () => {
     const r = analyzeCrouchStart(startFrames({ until: 2.4, contacts }), { width: W, height: H });
     expect(r.contacts).toHaveLength(MAX_STEPS);
   });
+  it('finds the set after the athlete walked in and settled (a long video)', () => {
+    // 1.5 s before the start: walking in from x 100 (hip) with one step planted behind the blocks, then still in
+    // the set from 1.14 s. Before, the set was taken from the video's first hips (the walk) and the walk was the onset.
+    const plain = analyzeCrouchStart(startFrames(), { width: W, height: H }), lead = 1.5, walk: CrouchFrame[] = [];
+    for (let frame = 0; frame / 240 < lead; frame++) {
+      const t = frame / 240, hip = { x: Math.min(500, 100 + 350 * t), y: 650 }, settled = t >= 1.14;
+      const pose: CrouchPoint[] = Array.from({ length: 33 }, () => ({ x: hip.x / W, y: (hip.y - 150) / H, visibility: .9 }));
+      const put = (k: number, x: number, y: number) => { pose[k] = { x: x / W, y: y / H, visibility: .9 }; };
+      const shoulder = { x: hip.x + 200 * Math.sin(110 * Math.PI / 180), y: hip.y - 200 * Math.cos(110 * Math.PI / 180) };
+      put(11, shoulder.x, shoulder.y); put(12, shoulder.x + 4, shoulder.y + 2); put(23, hip.x, hip.y); put(24, hip.x + 4, hip.y + 2);
+      const toes = settled ? [{ x: 400, y: GROUND - 10 }, { x: 480, y: GROUND - 10 }]
+        : [t >= .3 && t <= .8 ? { x: 200, y: GROUND } : { x: hip.x - 40, y: GROUND - 40 }, { x: hip.x + 40, y: GROUND - 40 }];
+      toes.forEach((toe, side) => {
+        const heel = { x: toe.x - 50, y: toe.y - 15 }, ankle = { x: heel.x + 10, y: heel.y - 25 };
+        put(25 + side, (hip.x + ankle.x) / 2 + 35, (hip.y + ankle.y) / 2); put(27 + side, ankle.x, ankle.y); put(29 + side, heel.x, heel.y); put(31 + side, toe.x, toe.y);
+      });
+      walk.push({ frame, pts: t, pose });
+    }
+    const shifted = startFrames().map(f => ({ ...f, frame: f.frame + walk.length, pts: f.pts + lead }));
+    const r = analyzeCrouchStart([...walk, ...shifted], { width: W, height: H });
+    expect(r.reason).toBeNull();
+    expect(r.blockClearance!.pts - lead).toBeCloseTo(plain.blockClearance!.pts, 6);
+    // within a frame: the walking poses' legs change the leg length every threshold is scaled by
+    expect(r.contacts.length).toBe(plain.contacts.length);
+    r.contacts.forEach((c, i) => expect(Math.abs(c.touchdown! - lead - plain.contacts[i].touchdown!)).toBeLessThanOrEqual(1 / 240 + 1e-9));
+    expect(r.blocks!.front).toBeCloseTo(plain.blocks!.front, 6);
+  });
+  it('finds the set after a moment of someone seen and a gap (a long video)', () => {
+    const plain = analyzeCrouchStart(startFrames(), { width: W, height: H }), lead = 2;
+    const moment = startFrames({ until: .04 }).map(f => ({ ...f, pose: f.pose!.map(p => ({ ...p, x: p.x + .2 })) }));
+    const shifted = startFrames().map(f => ({ ...f, frame: f.frame + 480, pts: f.pts + lead }));
+    const r = analyzeCrouchStart([...moment, ...shifted], { width: W, height: H });
+    expect(r.reason).toBeNull();
+    expect(r.blockClearance!.pts - lead).toBeCloseTo(plain.blockClearance!.pts, 6);
+    expect(r.contacts.length).toBe(plain.contacts.length);
+  });
   it('says so when the set position is not in the video', () => {
     expect(analyzeCrouchStart(startFrames({ set: false }), { width: W, height: H }).reason).toContain('構え');
   });

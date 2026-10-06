@@ -115,12 +115,23 @@ describe('10m subject acquisition', () => {
     expect(tracker.choose([target], .04)).toBe(target);
   });
 
-  it('abandons a confirmed track that has been lost for more than 1.5 s', () => {
+  it('looks again at the start line for a track lost for more than 1.5 s before the run', () => {
+    // Recorded: a crouch start whose video began 8 s before the set; someone seen for a moment and lost left the
+    // athlete in the set never followed (the old track was abandoned and nobody looked again).
     const tracker = new SprintTracker(.2), target = pose(.2);
     tracker.choose([target], 0); tracker.choose([target], .01);
     expect(tracker.choose([target], .02)).toBe(target);
     expect(tracker.choose([], .1)).toEqual([]);
-    for (const t of [1.520001, 1.53, 1.54, 1.55, 1.56, 1.57]) expect(tracker.choose([target], t)).toEqual([]);
+    // taken again after three sightings at the line
+    expect(tracker.choose([target], 1.520001)).toEqual([]);
+    expect(tracker.choose([target], 1.53)).toEqual([]);
+    for (const t of [1.54, 1.55, 1.56]) expect(tracker.choose([target], t)).toBe(target);
+  });
+
+  it('keeps a runner lost after the run lost, even with someone at the start line', () => {
+    const tracker = new SprintTracker(.2, .6), fps = 120;
+    for (let frame = 0; frame / fps <= .6; frame++) { const t = frame / fps; tracker.choose([pose(.2 + .5 * Math.max(0, t - .1))], t); }
+    for (const t of [2.7, 2.71, 2.72, 2.73, 2.74, 2.75]) expect(tracker.choose([pose(.2)], t)).toEqual([]);
   });
 
   it('keeps a running subject when a slow bystander walking the other way is briefly nearest', () => {

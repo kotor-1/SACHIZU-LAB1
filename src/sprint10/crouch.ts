@@ -53,6 +53,13 @@ const ONSET_LEGS = .06;
 /** The block zone reaches this far (leg lengths) beyond the set toes; a pushing
  * toe may be unseen for up to BLOCK_GAP s. */
 const BLOCK_MARGIN = .15, BLOCK_GAP = .05, FRONT_BEHIND = .12, SET_SPAN = .2, SET_MIN = .1;
+/** A video may begin long before the set (the athlete walking in and setting the blocks, or someone seen for a
+ * moment and lost: the user's 13 s video stopped with 「選手を十分に捉えられませんでした」, 2026-10-06). The set is looked
+ * for after the last disturbance before the run: a gap of over GAP_BEFORE s in the followed hips, or the hip moving
+ * over MOVE_LEGS leg lengths within MOVE_SECONDS (walking). The run: the hip RUN_LEGS ahead within RUN_SECONDS (a
+ * walk does not reach it). The disturbances are looked for only before the last still STILL_SECONDS (the hip within
+ * STILL_LEGS) before the run. Without a run in the picture, or none of these, the whole video as before. */
+const GAP_BEFORE = .5, MOVE_LEGS = .3, MOVE_SECONDS = .3, RUN_LEGS = 2, RUN_SECONDS = .8, STILL_SECONDS = .2, STILL_LEGS = .1;
 /** The front foot has left the block when its toe is this many leg lengths
  * ahead. Against the picture (3 athletes, 240 fps): 0.08 gave -5.8/+1.2/+2.0
  * frames, 0.10 -3.8/+2.2/+2.0, 0.12 -1.8/+4.2/+5.0. */
@@ -75,15 +82,17 @@ export function analyzeCrouchStart(frames: readonly CrouchFrame[], options: Crou
   if (!direction) return fail('走る向きを確認できませんでした。');
   base.direction = direction;
 
-  // Movement onset: the first time the hip is ONSET_LEGS ahead of where it was at the start and stays ahead.
-  const startHip = median(hips.slice(0, Math.max(3, Math.round(hips.length * .05))).map(h => h.x));
-  const onsetIndex = hips.findIndex((h, i) => (h.x - startHip) * direction > ONSET_LEGS * leg
-    && hips.slice(i, i + 10).every(q => (q.x - startHip) * direction > ONSET_LEGS * leg));
+  // Movement onset: the first time the hip is ONSET_LEGS ahead of where it was at the start and stays ahead; the
+  // start is the set's (see GAP_BEFORE), the video's first hips when it begins in the set.
+  const from = setFrom(hips, leg, direction), rest = hips.slice(from);
+  const startHip = median(rest.slice(0, Math.max(3, Math.round((from ? rest.length : hips.length) * .05))).map(h => h.x));
+  const onsetIndex = rest.findIndex((h, i) => (h.x - startHip) * direction > ONSET_LEGS * leg
+    && rest.slice(i, i + 10).every(q => (q.x - startHip) * direction > ONSET_LEGS * leg));
   if (onsetIndex < 0) return fail('走り出しを確認できませんでした。');
-  const onset = hips[onsetIndex].t;
+  const onset = rest[onsetIndex].t, setFirst = from ? rest[0].t : -Infinity;
   // The set must be seen still before the movement (a video starting as the athlete
   // rose, with the front foot still on its block, was otherwise taken for a set).
-  if (onset - hips[0].t < SET_MIN) return fail('スタートの構えを確認できませんでした。構えから映っている動画を使ってください。');
+  if (onset - rest[0].t < SET_MIN) return fail('スタートの構えを確認できませんでした。構えから映っている動画を使ってください。');
 
   // Toes of both sides, pooled.
   const toes = toesOf(seen, W, H), planted = plantedToes(toes, leg), real = plantsOf(planted, leg);
@@ -93,7 +102,7 @@ export function analyzeCrouchStart(frames: readonly CrouchFrame[], options: Crou
   // leaves last: the front block clearance. Told apart by time, not place: a
   // small athlete's two blocks were 0.3 leg lengths apart and the set toes
   // wandered as far (recorded).
-  const held = planted.filter(o => o.t < onset);
+  const held = planted.filter(o => o.t >= setFirst && o.t < onset);
   if (held.length < 4) return fail('スタートの構え（ブロック上の足）を確認できませんでした。構えから映っている動画を使ってください。');
   const along = (x: number) => x * direction;
   const zone = [quantile(held.map(o => along(o.x)), .05) - BLOCK_MARGIN * leg, quantile(held.map(o => along(o.x)), .95) + BLOCK_MARGIN * leg];
@@ -140,6 +149,36 @@ export function analyzeCrouchStart(frames: readonly CrouchFrame[], options: Crou
   const partial = base.contacts.filter(c => c.toeOff === null).map(c => c.index);
   if (partial.length) base.notes.push(`${partial.join('・')}歩目は離地が映っていないため、接地時間を出していません。`);
   return base;
+}
+
+/** Index in `hips` where the set is looked for (see GAP_BEFORE); 0 for a video beginning in the set. */
+function setFrom(hips: { t: number; x: number }[], leg: number, direction: number): number {
+  const along = (h: { x: number }) => h.x * direction;
+  // the run: the first hip from which the hip gets RUN_LEGS ahead within RUN_SECONDS
+  let run = -1;
+  for (let i = 0, j = 0; i < hips.length && run < 0; i++) {
+    if (j < i) j = i;
+    for (let k = j; k < hips.length && hips[k].t - hips[i].t <= RUN_SECONDS; k++)
+      if (along(hips[k]) - along(hips[i]) >= RUN_LEGS * leg) { run = i; break; }
+  }
+  if (run < 0) return 0;
+  // the last still stretch before it
+  let still = -1;
+  for (let e = run; e >= 0 && still < 0; e--) {
+    const win = hips.filter(h => h.t <= hips[e].t && h.t >= hips[e].t - STILL_SECONDS);
+    const xs = win.map(h => h.x);
+    if (win.length >= 3 && win.at(-1)!.t - win[0].t >= STILL_SECONDS / 2 && Math.max(...xs) - Math.min(...xs) < STILL_LEGS * leg)
+      still = hips.indexOf(win[0]);
+  }
+  if (still < 0) return 0;
+  // the last disturbance before it: a gap, or a walk
+  let from = 0;
+  for (let j = 1, k = 0; j <= still; j++) {
+    if (hips[j].t - hips[j - 1].t > GAP_BEFORE) from = j;
+    while (hips[j].t - hips[k].t > MOVE_SECONDS) k++;
+    for (let m = k; m < j; m++) if (Math.abs(hips[j].x - hips[m].x) > MOVE_LEGS * leg) { from = j + 1; break; }
+  }
+  return Math.min(from, still);
 }
 
 /** The steps from the contacts: times between the touchdowns and toe-offs, and the angles at each touchdown (also used
