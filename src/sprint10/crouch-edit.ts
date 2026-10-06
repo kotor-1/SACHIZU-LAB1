@@ -54,7 +54,9 @@ export function applyEdits(auto: CrouchResult, edits: Edits, frames: readonly Cr
 
 /** The moments in time order, with the user's frames, where to look, and which are worth a look (`result`: the result
  * with the edits, whose times are checked). */
-export function moments(auto: CrouchResult, edits: Edits, result: CrouchResult, frames: readonly CrouchFrame[], W: number, H: number): Moment[] {
+export function moments(auto: CrouchResult, edits: Edits, result: CrouchResult, frames: readonly CrouchFrame[], W: number, H: number,
+  /** Moments set from the pictures round the feet (crouch-pixels.ts): the toe point's clearness does not matter there. */
+  fromPictures: ReadonlySet<string> = new Set()): Moment[] {
   if (auto.reason) return [];
   const byFrame = new Map(frames.map(f => [f.frame, f])), out: Moment[] = [];
   const add = (key: string, kind: MomentKind, step: number | null, label: string, short: string, autoFrame: number,
@@ -91,7 +93,7 @@ export function moments(auto: CrouchResult, edits: Edits, result: CrouchResult, 
     }
   }
   for (const m of out) {
-    if (m.flag || !m.focus) continue;
+    if (m.flag || !m.focus || fromPictures.has(m.key)) continue;
     const around = frames.filter(f => Math.abs(f.frame - m.autoFrame) <= NEAR);
     const missing = around.filter(f => !f.pose).length;
     const seenToes = around.flatMap(f => f.pose ? [nearestToe(f.pose, m.focus!.x, W)?.visibility ?? 0] : []);

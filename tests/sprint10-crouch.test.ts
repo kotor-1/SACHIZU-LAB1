@@ -6,6 +6,7 @@ import { crouchAdvice, GUIDE } from '../src/sprint10/crouch-advice';
 import type { CrouchResult, StepResult } from '../src/sprint10/crouch';
 import { applyEdits, effectsOf, footDown, moments } from '../src/sprint10/crouch-edit';
 import { legLength } from '../src/sprint10/contacts';
+import { refineByPixels, regionsOf, type RegionPictures } from '../src/sprint10/crouch-pixels';
 
 // A synthetic crouch start filmed from the side at 240 fps, 1920x1080, running to the right.
 // Leg length about 240 px; ground at y = 800 px. Set until 0.5 s; the rear foot (left landmarks)
@@ -296,5 +297,45 @@ describe('crouch start: moments moved by the user', () => {
     const leg = legLength(frames.filter(f => f.pose), W, H), m = moments(auto, {}, auto, frames, W, H).find(q => q.key === 'td2')!;
     const at = (n: number) => footDown(frames[n], m, W, H, leg);
     expect(at(m.autoFrame)).toBe(true); expect(at(m.autoFrame + 10)).toBe(true); expect(at(m.autoFrame - 10)).toBe(false);
+  });
+});
+
+describe('crouch start: moments set again from the pictures round the feet', () => {
+  const frames = startFrames(), auto = analyzeCrouchStart(frames, { width: W, height: H }), regions = regionsOf(auto, frames, W, H);
+  // Pictures of each region: a grey, grainy track; a yellow shoe over the whole region while the foot is down (the truth,
+  // a few frames off the pose's moments), and over the block region until the front foot leaves.
+  let seed = 3; const grain = () => (seed = seed * 16807 % 2147483647) % 17 - 8;
+  const truth = { bc: auto.blockClearance!.frame - 3, td: auto.contacts.map(c => c.touchdownFrame! + 2), to: auto.contacts.map(c => c.toeOffFrame! - 2) };
+  const pictures = (shoe: [number, number, number]): RegionPictures => new Map(regions.map(q => {
+    const down = (f: number) => q.key === 'bc' ? f <= truth.bc : f >= truth.td[+q.key.slice(1) - 1] && f <= truth.to[+q.key.slice(1) - 1];
+    const byFrame = new Map<number, Uint8Array>();
+    for (let f = q.from; f <= q.to; f++) {
+      const px = new Uint8Array(q.w * q.h * 3);
+      for (let i = 0; i < px.length; i += 3) { const [r, g, b] = down(f) ? shoe : [110, 118, 125]; px[i] = r + grain(); px[i + 1] = g + grain(); px[i + 2] = b + grain(); }
+      byFrame.set(f, px);
+    }
+    return [q.key, byFrame];
+  }));
+  it('takes the pictures round each toe and the front foot only (a few kB each)', () => {
+    expect(regions.map(q => q.key)).toEqual(['bc', 'c1', 'c2', 'c3']);
+    for (const q of regions) { expect(q.w * q.h).toBeLessThan(80 * 60); expect(q.to - q.from).toBeLessThan(120); }
+  });
+  it('sets each moment where the shoe comes and goes in the pictures, and the values from them', () => {
+    const { result: r, moments } = refineByPixels(auto, pictures([225, 205, 40]), regions, frames, W, H);
+    expect(moments.every(m => m.fromPixels)).toBe(true);
+    r.contacts.forEach((c, i) => {
+      // the shoe first seen in truth.td: the share passes one half between it and the frame before
+      expect(Math.abs(c.touchdown! * 240 - (truth.td[i] - .5))).toBeLessThan(.6);
+      expect(Math.abs(c.toeOff! * 240 - (truth.to[i] + .5))).toBeLessThan(.6);
+    });
+    expect(r.steps[0].contactSeconds! - auto.steps[0].contactSeconds!).toBeCloseTo(-4 / 240, 1);
+    expect(Math.abs(r.blockClearance!.frame - truth.bc)).toBeLessThanOrEqual(1);
+    expect(r.firstFlight! - auto.firstFlight!).toBeGreaterThan(3 / 240);
+  });
+  it('keeps the moments judged from the pose where the pictures do not tell the shoe from the ground', () => {
+    const { result: r, moments } = refineByPixels(auto, pictures([111, 118, 124]), regions, frames, W, H);
+    expect(moments.some(m => m.fromPixels)).toBe(false);
+    expect(r.contacts.map(c => [c.touchdown, c.toeOff])).toEqual(auto.contacts.map(c => [c.touchdown, c.toeOff]));
+    expect(refineByPixels(auto, new Map(), regions, frames, W, H).result.contacts).toEqual(auto.contacts);
   });
 });

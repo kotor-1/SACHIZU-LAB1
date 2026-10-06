@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CrouchFrame, CrouchResult } from './crouch';
 import { legLength } from './contacts';
 import { applyEdits, effectsOf, footDown, type Edits, type Moment } from './crouch-edit';
+import type { PixelMoment } from './crouch-pixels';
 import { frameInterval, insideFrame } from './CrouchViews';
 import './crouch-review.css';
 
@@ -15,8 +16,10 @@ type View = 'foot' | 'all';
  * and set; the values change at once. Made so a check of a whole start is a few taps (the user, 2026-10-06:
  * 「デザインUIも含めて操作が面倒に感じないように工夫してほしい」): the moments worth a look are marked, the buttons
  * are where the thumb is, and each decision goes on to the next moment. */
-export function CrouchReview({ url, frames, width: W, height: H, auto, result, list, edits, checked, at, onAt, onSet, onRevert, onRevertAll, onDone }: {
+export function CrouchReview({ url, frames, width: W, height: H, pixels, auto, result, list, edits, checked, at, onAt, onSet, onRevert, onRevertAll, onDone }: {
   url: string; frames: readonly CrouchFrame[]; width: number; height: number;
+  /** The moments set from the pictures round the feet, with the share of the shoe seen frame by frame. */
+  pixels: readonly PixelMoment[];
   /** The automatic result and the result with the user's frames. */
   auto: CrouchResult; result: CrouchResult; list: Moment[]; edits: Edits; checked: ReadonlySet<string>;
   at: string | null; onAt: (key: string) => void;
@@ -37,7 +40,7 @@ export function CrouchReview({ url, frames, width: W, height: H, auto, result, l
   const allowed = (frame: number) => frame > lo && frame < hi && byFrame.has(frame);
 
   // The video: loaded once (Safari shows no picture until a video has played), then moved to the frame chosen.
-  const video = useRef<HTMLVideoElement>(null), [ready, setReady] = useState(false), [shown, setShown] = useState<number | null>(null);
+  const video = useRef<HTMLVideoElement>(null), [ready, setReady] = useState(false);
   useEffect(() => {
     const v = video.current; if (!v) return;
     let closed = false; setReady(false);
@@ -47,10 +50,7 @@ export function CrouchReview({ url, frames, width: W, height: H, auto, result, l
   }, [url]);
   useEffect(() => {
     const v = video.current, f = byFrame.get(cursor); if (!v || !f || !ready) return;
-    const done = () => setShown(f.frame);
-    v.addEventListener('seeked', done, { once: true });
     v.pause(); v.currentTime = insideFrame(f.pts, interval);
-    return () => v.removeEventListener('seeked', done);
   }, [cursor, ready, byFrame, interval]);
 
   // The strip: STRIP frames round the cursor, moved only when the cursor reaches its ends.
@@ -76,9 +76,12 @@ export function CrouchReview({ url, frames, width: W, height: H, auto, result, l
   const effects = m ? effectsOf(result, candidate ?? result, m) : [];
 
   if (!m) return <p>確かめられる瞬間がありません。</p>;
+  // The strip's bars: from the pictures round the feet when the moment came from them, else from the pose's toe point.
+  const px = pixels.find(q => q.key === m.key), share = px?.fromPixels ? px.share : null;
+  const down = (f: CrouchFrame) => share ? (share.has(f.frame) ? share.get(f.frame)! >= .5 : null) : footDown(f, m, W, H, leg);
   const region = regionOf(view, m, W, H, leg), box = {
     left: `${-region.x / region.w * 100}%`, top: `${-region.y / region.h * 100}%`, width: `${W / region.w * 100}%`, height: `${H / region.h * 100}%` };
-  const pose = byFrame.get(shown ?? cursor)?.pose ?? null, unit = region.w / 100;
+  const unit = region.w / 100;
   const offset = cursor - m.autoFrame, dt = (byFrame.get(cursor)?.pts ?? m.pts) - (byFrame.get(m.autoFrame)?.pts ?? m.pts);
   const step = (by: number) => { const k = ordered.findIndex(f => f.frame === cursor), next = ordered[k + by]; if (next && allowed(next.frame)) setCursor(next.frame); };
   const decide = () => onSet(m.key, cursor);
@@ -104,15 +107,18 @@ export function CrouchReview({ url, frames, width: W, height: H, auto, result, l
         {state && <i aria-hidden="true">{state === 'edited' ? '✎' : state === 'ok' ? '✓' : '!'}</i>}{q.short}</button>;
     })}</div>
     <div className="crouch-review-head"><strong>{m.label}</strong>
-      <small>{offset === 0 ? '自動の判定' : `自動より ${offset > 0 ? '+' : ''}${offset}コマ（${dt > 0 ? '+' : ''}${dt.toFixed(3)}秒）`}</small></div>
+      <small>{offset === 0 ? `自動の判定（${share ? '足元の画像' : '骨格'}）` : `自動より ${offset > 0 ? '+' : ''}${offset}コマ（${dt > 0 ? '+' : ''}${dt.toFixed(3)}秒）`}</small></div>
     {m.flag && !checked.has(m.key) && <p className="crouch-review-flag">{m.flag}</p>}
     <div className="crouch-review-view">
       <video ref={video} src={url} muted playsInline preload="auto" style={box} />
       {marks && <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={box} aria-hidden="true">
         {m.ground !== null && <line x1={region.x} x2={region.x + region.w} y1={m.ground * H} y2={m.ground * H} stroke="#7dff6b" strokeWidth={unit * .5} strokeDasharray={`${unit * 2} ${unit * 1.5}`} />}
         {m.kind === 'clearance' && m.focus && <line x1={m.focus.x * W} x2={m.focus.x * W} y1={region.y} y2={region.y + region.h} stroke="#7dff6b" strokeWidth={unit * .5} strokeDasharray={`${unit * 2} ${unit * 1.5}`} />}
-        {pose && [31, 32].map(k => pose[k] && <circle key={k} cx={pose[k].x * W} cy={pose[k].y * H} r={unit * 1.3} fill="none"
-          stroke="#ffd400" strokeWidth={unit * .45} opacity={(pose[k].visibility ?? 1) < .5 ? .45 : .95} />)}
+        {/* Where the foot is set down: the place the toe stood through the contact (the median over its frames), which does
+            not wander as a single frame's toe point does (the user, 2026-10-06: 「つま先がズレてるんだよね。フレームによっては
+            ぜんぜんズレてる」: 7-23 px while the foot stood still, jumps of 65-150 px). */}
+        {m.kind !== 'clearance' && m.focus && m.ground !== null && <path fill="#7dff6b" stroke="#0c1816" strokeWidth={unit * .25}
+          d={`M${m.focus.x * W},${m.ground * H + unit * .6}l${unit * 1.5},${unit * 2.6}h${-unit * 3}z`} />}
       </svg>}
       <div className="crouch-review-tools">
         <div className="sprint10-seg" role="group" aria-label="表示の範囲">{([['foot', '足元'], ['all', '全体']] as const).map(([id, label]) =>
@@ -121,14 +127,15 @@ export function CrouchReview({ url, frames, width: W, height: H, auto, result, l
       </div>
     </div>
     <div className="crouch-review-strip" role="group" aria-label="コマを選ぶ">{strip.map(f => {
-      const off = f.frame - m.autoFrame, down = footDown(f, m, W, H, leg);
+      const off = f.frame - m.autoFrame, isDown = down(f);
       return <button key={f.frame} type="button" disabled={!allowed(f.frame)} aria-current={f.frame === cursor}
         className={[f.frame === m.autoFrame ? 'auto' : '', f.frame === m.frame && m.frame !== m.autoFrame ? 'set' : ''].join(' ').trim() || undefined}
-        aria-label={`${off === 0 ? '自動の判定' : `自動より${off > 0 ? '+' : ''}${off}`}コマ${down === null ? '' : down ? '（足先が床）' : '（足先が離れている）'}`}
+        aria-label={`${off === 0 ? '自動の判定' : `自動より${off > 0 ? '+' : ''}${off}`}コマ${isDown === null ? '' : isDown ? '（足が着いている）' : '（足が離れている）'}`}
         onClick={() => setCursor(f.frame)}>
-        <span>{off === 0 ? '自動' : off > 0 ? `+${off}` : off}</span><i className={down === null ? undefined : down ? 'down' : 'up'} /></button>;
+        <span>{off === 0 ? '自動' : off > 0 ? `+${off}` : off}</span><i className={isDown === null ? undefined : isDown ? 'down' : 'up'} /></button>;
     })}</div>
-    <p className="crouch-review-legend">帯：緑＝{m.kind === 'clearance' ? '足がブロックの位置' : '足先が床の高さ'}（骨格から見た目安）。黄色の丸は足先の点です。</p>
+    <p className="crouch-review-legend">{m.kind === 'clearance' ? '点線は前のブロックの足の位置。' : '点線は床、▲は足が着く場所。'}帯の緑は、{share
+      ? `足元の画像で${m.kind === 'clearance' ? '足がブロックにある' : '靴が着いている'}コマ` : `骨格から見て${m.kind === 'clearance' ? '足がブロックの位置にある' : '足先が床の高さにある'}コマ（目安）`}。映像の靴と床を見て決めてください。</p>
     {effects.length > 0 && <ul className="crouch-review-effect" aria-live="polite">{effects.map(e => <li key={e.label}>
       <span>{e.label}</span>{candidate ? <><s>{fixed(e.from, e.digits)}</s>→<b>{fixed(e.to, e.digits)}</b></> : <b>{fixed(e.from, e.digits)}</b>}<small>{e.unit}</small></li>)}</ul>}
     <div className="crouch-review-actions">

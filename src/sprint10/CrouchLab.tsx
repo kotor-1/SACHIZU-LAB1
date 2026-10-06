@@ -9,6 +9,8 @@ import { crouchAdvice, GUIDE } from './crouch-advice';
 import CrouchCharts, { StepTable } from './CrouchCharts';
 import { CrouchReplay, frameInterval, insideFrame, PhaseFigures, type ReplayEvent } from './CrouchViews';
 import { applyEdits, moments } from './crouch-edit';
+import { refineByPixels, regionsOf, type PixelRegion, type RegionPictures } from './crouch-pixels';
+import { readPictures } from './crouch-pixels-read';
 import { CrouchReview } from './CrouchReview';
 
 /** One ◀/▶ tap moves the line by 0.2% of the frame width. */
@@ -31,16 +33,25 @@ export default function CrouchLab() {
   const still = useFirstFrame(url), ready = loaded || !!still;
   const [start, setStart] = useState(.3);
   const [message, setMessage] = useState('');
-  const [measured, setMeasured] = useState<{ frames: CrouchFrame[]; width: number; height: number; refiner: 'webgpu' | 'wasm' | null } | null>(null);
+  const [measured, setMeasured] = useState<{ frames: CrouchFrame[]; width: number; height: number; refiner: 'webgpu' | 'wasm' | null;
+    /** The small pictures round the feet the moments are set again from (crouch-pixels.ts). */
+    regions: PixelRegion[]; pictures: RegionPictures } | null>(null);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   useEffect(() => () => { owner.current?.abort(); owner.current = null; }, []);
-  const auto: CrouchResult | null = useMemo(() => measured ? analyzeCrouchStart(measured.frames, { width: measured.width, height: measured.height }) : null, [measured]);
+  // Development builds keep the last recording reachable for the browser checks (dev-validation/crouch/dump-poses.mjs).
+  // The moments judged from the pose, then set again from the pictures round the feet where those are clear (the pose's
+  // toe point wanders; in darkened test videos the touchdowns were up to 9.5 frames off, from the pictures 5.3).
+  const pixels = useMemo(() => measured ? refineByPixels(analyzeCrouchStart(measured.frames, { width: measured.width, height: measured.height }),
+    measured.pictures, measured.regions, measured.frames, measured.width, measured.height) : null, [measured]);
+  const auto: CrouchResult | null = pixels?.result ?? null;
+  const fromPixels = useMemo(() => new Set(pixels?.moments.filter(m => m.fromPixels).map(m => m.key) ?? []), [pixels]);
+  useEffect(() => { if (import.meta.env.DEV && measured) (window as unknown as { __crouch?: unknown }).__crouch = { measured, auto, pixels }; }, [measured, auto, pixels]);
   // The judged moments the user moved (frames by moment key), those confirmed, and the one being checked; everything shown
   // uses the result with them (the user, 2026-10-06: 「自動解析→ズレていたら手動で微調整→自動的に数値もそれに伴ってすぐに変化する」).
   const [edits, setEdits] = useState<Record<string, number>>({}), [checked, setChecked] = useState<ReadonlySet<string>>(new Set()), [moment, setMoment] = useState<string | null>(null);
   useEffect(() => { setEdits({}); setChecked(new Set()); setMoment(null); }, [measured]);
   const result: CrouchResult | null = useMemo(() => auto && measured ? applyEdits(auto, edits, measured.frames, measured.width, measured.height) : auto, [auto, edits, measured]);
-  const list = useMemo(() => auto && result && measured ? moments(auto, edits, result, measured.frames, measured.width, measured.height) : [], [auto, edits, result, measured]);
+  const list = useMemo(() => auto && result && measured ? moments(auto, edits, result, measured.frames, measured.width, measured.height, fromPixels) : [], [auto, edits, result, measured, fromPixels]);
   const waiting = list.filter(m => m.flag && !checked.has(m.key)).length, editedCount = Object.keys(edits).length;
   const editedSteps = new Set(Object.keys(edits).flatMap(k => k === 'clearance' ? [] : k.startsWith('td') ? [+k.slice(2), +k.slice(2) - 1] : [+k.slice(2)]));
   // The pictures of the phases are made again only when a phase's frame or angles change (not for a toe-off).
@@ -87,7 +98,14 @@ export default function CrouchLab() {
     try {
       const data = await measureCrouch(file, start, control.signal, (fraction, text) => { setProgress(fraction); setMessage(text); });
       if (control.signal.aborted) return;
-      setMeasured(data); setMessage('解析が終わりました。');
+      // The video once more, only round the feet near the judged moments; without these pictures the pose's moments stay.
+      const regions = regionsOf(analyzeCrouchStart(data.frames, { width: data.width, height: data.height }), data.frames, data.width, data.height);
+      let pictures: RegionPictures = new Map();
+      setMessage('足元の画像で、接地・離地の瞬間を確かめています。'); setProgress(0);
+      try { pictures = await readPictures(file, regions, control.signal, setProgress); }
+      catch (e) { if (control.signal.aborted) throw e; pictures = new Map(); }
+      if (control.signal.aborted) return;
+      setMeasured({ ...data, regions, pictures }); setMessage('解析が終わりました。');
     } catch (e) {
       if (!control.signal.aborted) setMessage(e instanceof Error ? e.message : String(e));
     } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
@@ -115,7 +133,8 @@ export default function CrouchLab() {
   function save() {
     if (!result) return;
     const blob = new Blob([JSON.stringify({ version: CROUCH_VERSION, file: file?.name, startX: start, result,
-      ...(editedCount ? { edited: { frames: edits, auto } } : {}), checked: [...checked] }, null, 2)],
+      ...(editedCount ? { edited: { frames: edits, auto } } : {}), checked: [...checked],
+      fromPictures: [...fromPixels] }, null, 2)],
       { type: 'application/json' });
     const href = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = href; a.download = 'crouch-start-result.json'; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
@@ -181,7 +200,7 @@ export default function CrouchLab() {
           </div>
           <div id="crouch-panel-check" role="tabpanel" aria-labelledby="crouch-tab-check" hidden={tab !== 'check'}>
             <p className="sprint10-hint">自動判定のコマを1つずつ確かめます。ずれていたら◀▶か下のコマで合わせて「このコマに決める」、合っていれば「OK」。数値はすぐ変わります。</p>
-            {tab === 'check' && auto && <CrouchReview url={url} frames={measured!.frames} width={measured!.width} height={measured!.height}
+            {tab === 'check' && auto && <CrouchReview url={url} frames={measured!.frames} width={measured!.width} height={measured!.height} pixels={pixels!.moments}
               auto={auto} result={result} list={list} edits={edits} checked={checked} at={moment} onAt={setMoment}
               onSet={setMomentFrame} onRevert={revert} onRevertAll={() => setEdits({})} onDone={() => choose('steps')} />}
           </div>
@@ -205,7 +224,7 @@ export default function CrouchLab() {
           </div>
         </div>
         <details className="sprint10-more"><summary>数値の見方</summary>
-          <p>接地は、つま先が床の高さまで下りた時、離地はつま先が床から離れた時を、骨格の動きから判定しています。真横から1秒240コマで撮影した3人の検証動画では、映像で見た瞬間との差は最大でおよそ1/60秒でした。</p>
+          <p>接地は靴が床に着いた時、離地はつま先が床から離れた時です。骨格の動きで、足が着く場所とおおよその瞬間を決め、その前後の足元の画像（靴先の画素が、着地した靴と床のどちらに近いか）で瞬間を決め直します。画像ではっきりしない所は骨格の判定のままです。真横から1秒240コマで撮影した3人の検証動画では、映像で見た瞬間との差は最大でおよそ1/60秒でした。同じ動画を暗く・ノイズを多くすると、骨格だけでは接地が最大約1/25秒ずれましたが、画像で決め直すと約1/45秒でした。</p>
           <p>ピッチは接地から次の接地までの時間の逆数です。角度は鉛直を0°とし、進行方向へ倒れる向きを正とします（脛は足首から膝、体幹は腰から肩）。膝は伸び切った状態が180°です。</p>
           <p>骨格の推定が崩れたコマの角度は出しません。</p>
           <p>骨格：選手を見つけて追い、接地・離地を判定するのはMediaPipe、角度と画像・スロー再生の骨格はRTMPose（{measured?.refiner === 'webgpu' ? 'WebGPU' : measured?.refiner === 'wasm' ? 'WebAssembly' : '今回は未使用'}）です。かがんだ構えではRTMPoseの方が膝・腰の位置が体に合い、接地・離地の時刻は映像との差がMediaPipeの方が小さかったためです（3人の検証動画）。</p>
