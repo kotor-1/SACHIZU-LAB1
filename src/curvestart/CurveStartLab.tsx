@@ -32,14 +32,16 @@ export default function CurveStartLab() {
   const owner = useRef<AbortController | null>(null), resultCard = useRef<HTMLElement>(null);
   const [file, setFile] = useState<File | null>(null), [url, setUrl] = useState('');
   const [loaded, setLoaded] = useState(false), [busy, setBusy] = useState(false), [progress, setProgress] = useState(0);
-  // The first frame to set the points on: from the browser's video player, or, where it shows none (HEVC in some browsers),
-  // decoded as the analysis decodes it.
+  // The first frame to set the points on, decoded as the analysis decodes it, from the moment a video is chosen: on an
+  // iPhone the browser's player shows a 4K (HDR) video black until it is played, and a frame taken from the player came
+  // out black (the user, 2026-10-06: 「アップロードしてすぐ、黒くて再生押さないと表示されない」). The player's frame is
+  // shown while it is made, where the browser gives one.
   const fromPlayer = useFirstFrame(url), [decoded, setDecoded] = useState<FirstFrame | null>(null);
   useEffect(() => {
     setDecoded(null);
-    if (!file || fromPlayer) return;
+    if (!file) return;
     let closed = false; const control = new AbortController();
-    const timer = setTimeout(() => void (async () => {
+    void (async () => {
       let picture: FirstFrame | null = null;
       try {
         await readFrames(file, control.signal, i => i === 0, async (_f, source, w, h) => {
@@ -48,10 +50,13 @@ export default function CurveStartLab() {
         });
       } catch { picture = null; }
       if (!closed && picture) setDecoded(picture);
-    })(), 4000);
-    return () => { closed = true; clearTimeout(timer); control.abort(); };
-  }, [file, fromPlayer]);
-  const still = fromPlayer ?? decoded, ready = loaded || !!still;
+    })();
+    return () => { closed = true; control.abort(); };
+  }, [file]);
+  const still = decoded ?? fromPlayer, ready = loaded || !!still;
+  // The still lies over the player until the video is played or moved (the player itself may show nothing until then).
+  const [cover, setCover] = useState(true);
+  useEffect(() => setCover(true), [url]);
   const [points, setPoints] = useState<Points>(START), [chosen, setChosen] = useState<Handle>('inner'), [message, setMessage] = useState('');
   const [measured, setMeasured] = useState<CurveRecording | null>(null), [used, setUsed] = useState<Points | null>(null);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
@@ -141,8 +146,10 @@ export default function CurveStartLab() {
       <div ref={stage} className="sprint10-player curvestart-stage">
         <video ref={video} src={url || undefined} playsInline preload="auto" poster={still?.image}
           style={still ? { aspectRatio: `${still.width} / ${still.height}` } : undefined}
-          onLoadedMetadata={() => setLoaded(true)} onLoadedData={() => setLoaded(true)}
+          onLoadedMetadata={() => setLoaded(true)} onLoadedData={() => setLoaded(true)} onPlay={() => setCover(false)} onSeeking={() => setCover(false)}
           onError={() => { setLoaded(false); setMessage('この動画を再生できません。対応形式を確認してください。'); }} />
+        {still && cover && <img className="curvestart-still" src={still.image} alt="" aria-hidden="true" />}
+        {file && !still && <p className="curvestart-preparing" role="status">最初のコマを準備しています…</p>}
         {ready && <div className="curvestart-marks">
           <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
             <line x1={points.inner.x * 100} y1={points.inner.y * 100} x2={points.outer.x * 100} y2={points.outer.y * 100} vectorEffect="non-scaling-stroke" />
