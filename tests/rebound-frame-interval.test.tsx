@@ -35,10 +35,10 @@ function poses(count = 12, fraction = .6): PoseFrame[] {
   });
 }
 
-describe('RJ from the camera (screen)', () => {
-  it('offers the camera next to recorded videos', () => {
+describe('RJ at a low frame rate (screen)', () => {
+  it('reads recorded videos only (the camera was removed, 2026-10-07)', () => {
     const html = renderToStaticMarkup(<ToeCycleLab />);
-    expect(html).toContain('録画した動画'); expect(html).toContain('カメラで計測');
+    expect(html).toContain('動画を選ぶ'); expect(html).not.toContain('カメラで計測'); expect(html).not.toContain('撮影を開始');
   });
   it('says why a 30 fps result is from the toe template and reads high', () => {
     const frames = poses().filter((_, i) => i % 8 === 0), report = toeCycleReport(frames, 'synthetic', 'camera.mp4');

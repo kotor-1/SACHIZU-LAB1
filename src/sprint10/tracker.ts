@@ -298,17 +298,12 @@ export class SprintTracker {
    * while the runner set off, and the runner was never decided). */
   /** A subject is being followed (its samples are published). */
   get following() { return this.pts !== null; }
-  /** Someone on the watched run-in side was just seen or is moving forward:
-   * a live camera then watches every frame instead of every other one. */
   /** While the subject was followed, a nearer runner at sprint speed was seen
    * and never replaced the subject: the result may be the wrong person. Judged
    * from the watch tracks and, as they can miss a runner hidden while passing a
    * person jogging (recorded, live at 9 frames/s), from any two sightings of
    * someone nearer moving forward faster than the subject. */
   get contested() { return this.rivalSeen; }
-  get watching() {
-    return this.watchTracks.some(track => track.points.length < 2 || fitLine(track.points).slope * this.direction >= RUNNING_SPEED);
-  }
   get idle() {
     return this.start === 'flying' && this.pts === null && this.provisional.every(track => {
       const recent = track.points.filter(h => track.pts - h.t <= this.decisionWindow() + TIME_EPSILON);

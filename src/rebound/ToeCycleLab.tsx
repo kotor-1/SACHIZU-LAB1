@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { FileJson, Upload } from 'lucide-react';
 import { MAX_RECORDING_BYTES, measureRecording, supportsExactRecording } from '../cmj/recording-session';
-import { cameraConstraints } from '../cmj/camera-geometry';
-import { recordCamera } from '../cmj/camera-recording';
 import { typicalInterval } from './frame-interval';
 import type { PoseFrame } from './prediction-observations';
 import { predictionSignals } from './prediction-observations';
@@ -23,8 +21,6 @@ type Observation = { file: File | null; filename: string; sourceBytes: number; h
 export const TOE_CYCLE_PRESENTATION_VERSION = 'rj-toe-cycle-presentation-v8';
 /** Below this frame rate the shoe soles are not measurable (see frame-interval.ts). */
 const LOW_FPS = 50;
-/** A camera set is recorded on the device for at most this long, then analysed. */
-const CAMERA_LIMIT = { milliseconds: 20_000, bytes: 150 * 1024 * 1024 };
 const fmt = (v: number | null | undefined, digits = 2) => v == null ? '—' : v.toFixed(digits);
 const reasons: Record<string, string> = {
   TRACKING_GAP: 'つま先の追跡が不足', TOE_TRACKING_GAP: 'つま先の追跡が不足',
@@ -144,19 +140,13 @@ export default function ToeCycleLab() {
   const [message, setMessage] = useState('RJの元動画を選んでください。');
   // The legs of the jumps; the shown result's legs (a change asks for a new calculation).
   const [legs, setLegs] = useState<JumpLegs>('BOTH'), [analysedLegs, setAnalysedLegs] = useState<JumpLegs>('BOTH');
-  // Camera: a set is recorded on the device, then analysed like a chosen video.
-  const [source, setSource] = useState<'file' | 'camera'>('file');
-  const stream = useRef<MediaStream | null>(null), recorder = useRef<ReturnType<typeof recordCamera> | null>(null);
-  const [cameraInfo, setCameraInfo] = useState<{ w: number; h: number; fps: number | null } | null>(null);
-  const [recordingSince, setRecordingSince] = useState<number | null>(null), [elapsed, setElapsed] = useState(0);
-  const [clip, setClip] = useState<File | null>(null), [analysedFps, setAnalysedFps] = useState<number | null>(null);
+  const [analysedFps, setAnalysedFps] = useState<number | null>(null);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   useEffect(() => {
     const hidden = () => { if (document.hidden) owner.current?.abort(); };
     document.addEventListener('visibilitychange', hidden);
     return () => {
       owner.current?.abort(); owner.current = null; cached.current = null; document.removeEventListener('visibilitychange', hidden);
-      recorder.current?.discard(); recorder.current = null; stream.current?.getTracks().forEach(t => t.stop()); stream.current = null;
     };
   }, []);
   function clear() { setReport(null); setSole(null); setPoses([]); setPelvisMean(null); setExportData(null); }
@@ -184,8 +174,7 @@ export default function ToeCycleLab() {
       }
     }
   }
-  async function start(chosen?: File) {
-    const file = chosen ?? selectedFile;
+  async function start() {
     if ((!file && !cached.current) || !canvas.current || owner.current) return;
     if (file && file.size > MAX_RECORDING_BYTES) { setMessage('250MB以内の動画を選んでください。1080p・120fpsで撮影すると軽くなります（解析は高さ960pxに縮小するため、4Kにしても精度は上がりません）。'); return; }
     if (file && !supportsExactRecording(file)) { setMessage('MOV/MP4の元動画と元フレーム解析に対応したブラウザが必要です。'); return; }
@@ -238,59 +227,6 @@ export default function ToeCycleLab() {
       if (owner.current === control) setMessage(control.signal.aborted ? '停止しました。途中の結果は表示しません。' : e instanceof Error ? e.message : String(e));
     } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
   }
-  useEffect(() => {
-    if (recordingSince === null) return;
-    const timer = setInterval(() => setElapsed((performance.now() - recordingSince) / 1000), 250);
-    return () => clearInterval(timer);
-  }, [recordingSince]);
-  function stopCamera() {
-    recorder.current?.discard(); recorder.current = null; setRecordingSince(null);
-    stream.current?.getTracks().forEach(t => t.stop()); stream.current = null; setCameraInfo(null);
-    if (video.current) video.current.srcObject = null;
-  }
-  function chooseSource(next: 'file' | 'camera') {
-    if (busy || next === source) return;
-    stopCamera(); setSource(next); clear();
-    setMessage(next === 'camera' ? '「カメラを起動」を押してください。' : 'RJの元動画を選んでください。');
-  }
-  async function startCamera() {
-    if (busy || stream.current) return;
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) throw new Error('カメラを利用できません。HTTPS接続を確認するか、録画した動画を読み込んでください。');
-      const media = await navigator.mediaDevices.getUserMedia(cameraConstraints(navigator.mediaDevices.getSupportedConstraints()));
-      stream.current = media; clear(); setClip(null); setFile(null); setUrl(''); cached.current = null;
-      const element = video.current!;
-      element.removeAttribute('src'); element.srcObject = media; await element.play();
-      const settings = media.getVideoTracks()[0]?.getSettings() ?? {};
-      setCameraInfo({ w: element.videoWidth || settings.width || 0, h: element.videoHeight || settings.height || 0, fps: settings.frameRate ?? null });
-      if (element.videoWidth && element.videoHeight) setAspect(element.videoWidth / element.videoHeight);
-      setMessage('全身と左右の靴・床が映っているか確認し、「撮影を開始」を押してから跳んでください。');
-    } catch (e) { stopCamera(); setMessage(e instanceof Error ? e.message : String(e)); }
-  }
-  function startRecording() {
-    if (!stream.current || recorder.current || busy) return;
-    try {
-      recorder.current = recordCamera(stream.current, () => void finishRecording(), CAMERA_LIMIT);
-      setRecordingSince(performance.now()); setElapsed(0); clear();
-      setMessage('撮影中です。跳び終えたら「撮影を終えて解析」を押してください（最長20秒）。');
-    } catch { setMessage('このブラウザでは端末内に録画できません。標準カメラで撮影した動画を読み込んでください。'); }
-  }
-  async function finishRecording() {
-    const active = recorder.current; if (!active) return;
-    recorder.current = null; setRecordingSince(null); setMessage('録画を保存しています。');
-    const recorded = await active.stop();
-    stopCamera();
-    if (!recorded) { setMessage('録画を保存できませんでした。もう一度撮影するか、標準カメラで撮影した動画を読み込んでください。'); return; }
-    const named = new File([recorded], `rj-camera-${new Date().toISOString().replace(/[:.]/g, '-')}.${recorded.type.includes('mp4') ? 'mp4' : 'webm'}`, { type: recorded.type });
-    setClip(named); setFile(named); setUrl(URL.createObjectURL(named)); cached.current = null;
-    if (!supportsExactRecording(named)) { setMessage('このブラウザの録画形式（WebM）は解析できません。撮影した動画を保存し、標準カメラで撮影したMP4/MOVを読み込んでください。'); return; }
-    await start(named);
-  }
-  function saveClip() {
-    if (!clip) return;
-    const href = URL.createObjectURL(clip), a = document.createElement('a');
-    a.href = href; a.download = clip.name; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
-  }
   function save() {
     if (!exportData) return;
     const objectURL = URL.createObjectURL(new Blob([JSON.stringify(exportData)], { type: 'application/json' }));
@@ -309,37 +245,22 @@ export default function ToeCycleLab() {
         }}>{id === 'BOTH' ? '両脚' : `片脚・${id === 'RIGHT' ? '右' : '左'}`}</button>)}</div>
       {singleLeg(legs) && <p>片脚RJ：反対の脚は床に着けずに保持してください。各コマで床に近い方の足（支持脚）のつま先と靴底で離地・着地を測ります。右・左は結果の記録用です（選手自身の左右）。</p>}
     </section>}
-    <div className="rj-legs" role="group" aria-label="映像の入力">{([['file', '録画した動画'], ['camera', 'カメラで計測']] as const).map(([id, label]) =>
-      <button key={id} type="button" className={source === id ? 'is-selected' : ''} aria-pressed={source === id}
-        disabled={busy || recordingSince !== null} onClick={() => chooseSource(id)}>{label}</button>)}</div>
-    <section className="rj-capture"><h2>{source === 'camera' ? 'カメラで撮影する' : '動画を選ぶ'}</h2>
-      {source === 'camera' ? <>
-        <p>スマホを三脚などで固定し、正面から全身と左右の靴・床が映るようにします。「撮影を開始」を押してから跳び、跳び終えたら「撮影を終えて解析」を押してください（最長20秒で自動で終わります）。映像は端末内で録画・解析し、送信しません。</p>
-        {!cameraInfo && <button className="rj-button" disabled={busy} onClick={() => void startCamera()}>{clip ? 'もう一度撮影する' : 'カメラを起動'}</button>}
-        {cameraInfo && <p className="rj-filename">カメラ {cameraInfo.w}×{cameraInfo.h} · {cameraInfo.fps ? `1秒${Math.round(cameraInfo.fps)}コマ` : 'コマ数不明'}</p>}
-        {cameraInfo?.fps != null && cameraInfo.fps < LOW_FPS && <p className="rj-warning">このカメラは1秒{Math.round(cameraInfo.fps)}コマです。1秒60コマ未満では靴底で接地を測れず、つま先の軌跡の型で計算した値（高めに出る）になります。</p>}
-        {cameraInfo && (recordingSince === null
-          ? <button className="rj-button" onClick={startRecording}>撮影を開始</button>
-          : <button className="rj-button" onClick={() => void finishRecording()}>撮影を終えて解析（{Math.floor(elapsed)}秒）</button>)}
-        {clip && !cameraInfo && !busy && <p className="rj-filename">撮影した動画 · {(clip.size / 1024 / 1024).toFixed(1)} MB
-          <button type="button" className="rj-link-button" onClick={saveClip}>動画を保存</button></p>}
-      </> : <>
+    <section className="rj-capture"><h2>動画を選ぶ</h2>
       <p>固定カメラ・全身と左右の靴・床が映る元動画（120/240fps推奨。60fpsでも解析できます。30fpsでは靴底で測れず高めに出ます）。正面から、靴と床の色がはっきり違う場所で撮影してください。</p>
       <label className="rj-upload"><input className="rj-file-input" ref={videoInput} type="file" accept="video/*" aria-label="つま先軌跡RJの動画を選ぶ" disabled={busy} onChange={e => {
         const f = e.target.files?.[0] ?? null; cached.current = null; clear(); setSavedSource(null); setFile(f); setUrl(f ? URL.createObjectURL(f) : '');
         setMessage(f ? '動画を選択しました。解析を開始できます。' : 'RJの元動画を選んでください。');
       }} /><span className="rj-upload-button" aria-hidden="true"><Upload size={19} />{file ? '別の動画を選ぶ' : '動画を選ぶ'}</span></label>
       {file && <p className="rj-filename">{file.name} · {(file.size / 1024 / 1024).toFixed(1)} MB</p>}
-      </>}
-      <div className="rj-viewer" hidden={!!savedSource || (!file && !cameraInfo)} style={{ maxWidth: Math.min(720, aspect * 520), aspectRatio: aspect, marginInline: 'auto' }}>
-        <video ref={video} src={url || undefined} controls={!!file && !busy && !cameraInfo} playsInline muted hidden={busy} onLoadedMetadata={e => {
+      <div className="rj-viewer" hidden={!!savedSource || !file} style={{ maxWidth: Math.min(720, aspect * 520), aspectRatio: aspect, marginInline: 'auto' }}>
+        <video ref={video} src={url || undefined} controls={!!file && !busy} playsInline muted hidden={busy} onLoadedMetadata={e => {
           if (e.currentTarget.videoHeight) setAspect(e.currentTarget.videoWidth / e.currentTarget.videoHeight);
         }} />
         <canvas ref={canvas} hidden={!busy} aria-label="RJの解析中の骨格" />
         {!busy && file && poses.length > 0 && <PoseReplay video={video} frames={poses} />}
       </div>
     </section>
-    {source === 'file' && <><section aria-label="保存済み骨格から再計算">
+    <section aria-label="保存済み骨格から再計算">
       <h2>保存済みJSONから再計算</h2>
       <p>以前保存した rebound-toe-cycle.json を使えます。動画の再解析・骨格の再取得はしません。保存されていたRSI値は使わず、骨格と靴底の画像データから計算し直します。靴底の画像データがない古いJSONでは、平均RSIを表示できません。</p>
       <label className="rj-upload rj-upload-secondary"><input className="rj-file-input" type="file" accept="application/json,.json" aria-label="保存済みつま先軌跡JSONを選ぶ" disabled={busy} onChange={e => {
@@ -347,7 +268,7 @@ export default function ToeCycleLab() {
       }} /><span className="rj-upload-button" aria-hidden="true"><FileJson size={18} />保存済みJSONを選ぶ</span></label>
       {savedSource && <p className="rj-warning" data-testid="toe-cycle-import-source">{savedSource} の保存済み骨格を使用。元動画との同一性や骨格の正確さは、このJSONだけでは検証できません。元動画の再生はありません。</p>}
     </section>
-    <button className="rj-button" disabled={(!file && !savedSource) || busy} onClick={() => void start()}>入力なしでRJを解析</button></>}
+    <button className="rj-button" disabled={(!file && !savedSource) || busy} onClick={() => void start()}>入力なしでRJを解析</button>
     {busy && <button className="rj-button rj-secondary" onClick={() => owner.current?.abort()}>解析を停止</button>}
     <p role="status">{message}</p>
     {report && sole && <ToeCycleResults report={report} sole={sole} pelvisMean={pelvisMean} legs={analysedLegs} fps={analysedFps} />}

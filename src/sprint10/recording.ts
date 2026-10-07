@@ -82,7 +82,7 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
   };
   const source = document.createElement('canvas'), ctx = source.getContext('2d');
   if (!ctx) throw new Error('映像処理を開始できません。');
-  const processor = new SprintFrameProcessor(source, model, watching, startX, finishX, start, distanceM, false, options.fromBlocks);
+  const processor = new SprintFrameProcessor(source, model, watching, startX, finishX, start, distanceM, options.fromBlocks);
   const abort = () => decoder.dispose();
   signal.addEventListener('abort', abort, { once: true });
   let lastYield = performance.now(), lastUpdate = -Infinity;

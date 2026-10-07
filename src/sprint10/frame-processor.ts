@@ -6,8 +6,7 @@ import { FLYING_MIN_SPEED_MPS, SprintTracker, type SprintStart } from './tracker
 export const SPRINT_POSES = 4;
 type Region = { x: number; y: number; w: number; h: number };
 
-/** One sprint's frame-by-frame analysis, shared by recorded videos and the
- * live camera: the subject's crop and pose, the flying start's watch crop,
+/** One sprint's frame-by-frame analysis of a recorded video: the subject's crop and pose, the flying start's watch crop,
  * subject selection, and the samples (with backfill and retraction applied).
  * The caller draws each frame into `source` (upright) before `process`. */
 export class SprintFrameProcessor {
@@ -22,8 +21,6 @@ export class SprintFrameProcessor {
   constructor(private readonly source: HTMLCanvasElement, private readonly model: MobileCMJPose,
     private readonly watcher: () => Promise<MobileCMJPose>,
     startX: number, finishX: number | undefined, start: SprintStart, distanceM: number,
-    /** Live camera: watch every frame while someone comes in (see SprintTracker.watching). */
-    private readonly liveWatch = false,
     /** Crouch start: the crop keeps the full picture height (narrowed to the
      * crouched set, it cut off the athlete rising out of the blocks), and the
      * tracker follows the athlete out of the blocks (see SprintTracker). */
@@ -55,9 +52,7 @@ export class SprintFrameProcessor {
     let watched: { poses: typeof poses; view: readonly [number, number] } | undefined;
     // Any offset matters: a runner entering at the frame edge is outside a crop shifted only partly
     // toward the subject (recorded: the subject's crop covered 0.12-0.48, the runner came in at 0-0.1).
-    // A live camera is processed at 15-30 frames/s: every other frame left the runner
-    // coming in 0.13 s between sightings, too few to measure the entry (recorded).
-    if (region && Math.abs(region.x - roi.x) > .01 && (this.analysed % 2 === 0 || (this.liveWatch && tracker.watching)))
+    if (region && Math.abs(region.x - roi.x) > .01 && this.analysed % 2 === 0)
       watched = { poses: this.detect(await this.watcher(), region, frame, w, h), view: [region.x, region.x + region.w] };
     const selected = tracker.choose(poses, frame.pts, [roi.x, roi.x + roi.w], watched);
     // A nearer, faster runner replaced the subject: its earlier samples belonged to someone else.

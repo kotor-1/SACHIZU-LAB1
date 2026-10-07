@@ -52,19 +52,10 @@ export function continuityLimit(samples: SprintSample[]) {
     if (samples[i].hipX !== null && samples[i - 1].hipX !== null) intervals.push(samples[i].pts - samples[i - 1].pts);
   return Math.max(.05, 2.5 * (intervals.length ? median(intervals) : 0));
 }
-/** Live camera: two processed frames in a row that both show the pelvis are
- * continuous up to this far apart (the subject was not missed, the frames
- * were). Processing stalled for 0.1 s at the finish line on the public site and
- * the crossing was not measured. A recorded video keeps a gap in its frames a
- * gap (its frames are all processed; a missing stretch is missing footage). */
-export const LIVE_STALL_SECONDS = .2;
 type Continuity = (a: SprintSample, b: SprintSample) => boolean;
-/** Whether observations a (earlier) and b of `samples` are continuous: within
- * `gap`, or consecutive processed frames within `stall`. */
-function continuityOf(samples: SprintSample[], gap = continuityLimit(samples), stall = 0): Continuity {
-  const previous = new Map<SprintSample, SprintSample>();
-  for (let i = 1; i < samples.length; i++) previous.set(samples[i], samples[i - 1]);
-  return (a, b) => !exceedsTime(b.pts - a.pts, gap) || (previous.get(b) === a && !exceedsTime(b.pts - a.pts, stall));
+/** Whether observations a (earlier) and b of `samples` are continuous: within `gap`. */
+function continuityOf(samples: SprintSample[], gap = continuityLimit(samples)): Continuity {
+  return (a, b) => !exceedsTime(b.pts - a.pts, gap);
 }
 const belowTime = (seconds: number, limit: number) => limit - seconds > TIME_EPSILON;
 const MAX_CYCLE_SECONDS = .65;
@@ -341,7 +332,7 @@ function withoutSpikes(samples: SprintSample[]): SprintSample[] {
 }
 /** distanceM: the real distance between the two gates (10 m for the standing 10 m; any known section otherwise). */
 export function analyzeSprint(samples: SprintSample[], startX: number, finishX: number, distanceM = 10,
-  run: 'standing' | 'flying' = 'standing', stall = 0): SprintResult {
+  run: 'standing' | 'flying' = 'standing'): SprintResult {
   const reasons = GATE_REASONS[run];
   const base: SprintResult = { start: null, finish: null, duration: null, steps: [], count: null, speed: null, cadence: null, stride: null,
     edgeFractions: null, strideIntervals: [], warnings: [], reason: null };
@@ -354,7 +345,7 @@ export function analyzeSprint(samples: SprintSample[], startX: number, finishX: 
   const gateSamples = run === 'flying' ? withoutSpikes(samples) : samples;
   const tracked = gateSamples.filter(s => s.hipX !== null);
   const video: [number, number] = [samples[0].pts, samples.at(-1)!.pts];
-  const gap = continuityLimit(gateSamples), continuous = continuityOf(gateSamples, gap, stall);
+  const gap = continuityLimit(gateSamples), continuous = continuityOf(gateSamples, gap);
   const finishes = crossings(gateSamples, finishX, direction, continuous);
   if (!finishes.length && run === 'flying') {
     // The exit was not seen being crossed: extend the last observations before it.
