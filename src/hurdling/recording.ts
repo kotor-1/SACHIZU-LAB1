@@ -12,13 +12,13 @@
  * 3. So the frames before are read again, the athlete looked for where the
  *    path followed in pass 2 leads back to. */
 import { demuxMP4 } from '../frame-engine/mp4-demuxer';
-import { SequentialRecordingDecoder } from '../cmj/sequential-decoder';
 import { MobileCMJPose } from '../cmj/mobile-pose';
-import { trackRotation } from '../cmj/video-orientation';
 import { untilAborted } from '../cmj/session-lifecycle';
 import type { CrouchFrame, CrouchPoint } from '../sprint10/crouch';
 import { loadRefiner, type Refiner } from '../sprint10/rtm-refine';
-import { CROUCH_FPS, DECODE_RETRIES, DecodeFailure, decodeStep, measureSprint, SPRINT_POSES } from '../sprint10/recording';
+import { CROUCH_FPS, DecodeFailure, measureSprint, readFrames, SPRINT_POSES } from '../sprint10/recording';
+/** The frame reader lives with the sprint pass (moved for the crouch start's second reading); here for the old imports. */
+export { readFrames } from '../sprint10/recording';
 
 type Pt = { x: number; y: number; visibility?: number };
 type Region = { x: number; y: number; w: number; h: number };
@@ -36,44 +36,6 @@ const PATH_FIT_SECONDS = .1, PATH_TOLERANCE = .08;
 const BODY_POINTS = [11, 12, 23, 24, 25, 26, 27, 28];
 const EDGE_MARGIN = .01;
 const pelvis = (p: Pt[]) => ({ x: (p[23].x + p[24].x) / 2, y: (p[23].y + p[24].y) / 2 });
-
-/** Reads the frames in order, decoding and drawing upright only those wanted (also the throws' implement). */
-export async function readFrames(file: File, signal: AbortSignal, wanted: (index: number) => boolean,
-  visit: (frame: { frameIndex: number; pts: number }, source: HTMLCanvasElement, w: number, h: number) => Promise<void>) {
-  const check = () => { if (signal.aborted) throw new DOMException('中止', 'AbortError'); };
-  const d = await untilAborted(demuxMP4(file), signal); check();
-  const rotation = trackRotation((d.videoTrack as typeof d.videoTrack & { matrix?: ArrayLike<number> }).matrix);
-  let decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
-  const source = document.createElement('canvas'), ctx = source.getContext('2d');
-  if (!ctx) throw new Error('映像処理を開始できません。');
-  const abort = () => decoder.dispose();
-  signal.addEventListener('abort', abort, { once: true });
-  const last = d.frames.reduce((m, f) => wanted(f.frameIndex) ? f.frameIndex : m, -1);
-  // A decoder failing partway is made again and read from the start, the frames already visited skipped (DECODE_RETRIES).
-  let done = -1;
-  try {
-    for (let attempt = 0; ; attempt++) try {
-    for (const frame of d.frames) {
-      if (frame.frameIndex > last) break;
-      if (frame.frameIndex <= done || !wanted(frame.frameIndex)) { await decodeStep(decoder.skipExactFrame(frame.frameIndex), signal, frame.frameIndex); check(); continue; }
-      const decoded = await decodeStep(decoder.decodeExactFrame(frame.frameIndex), signal, frame.frameIndex); check();
-      if (decoded.status !== 'SUCCESS' || decoded.actualDecodedFrameIndex !== frame.frameIndex) throw new Error('動画フレームを正しく読み出せません。');
-      const bitmap = decoded.bitmap, w = rotation % 180 ? bitmap.height : bitmap.width, h = rotation % 180 ? bitmap.width : bitmap.height;
-      if (source.width !== w || source.height !== h) { source.width = w; source.height = h; }
-      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, w, h);
-      ctx.translate(w / 2, h / 2); ctx.rotate(rotation * Math.PI / 180);
-      ctx.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2); ctx.setTransform(1, 0, 0, 1, 0, 0);
-      await visit(frame, source, w, h); check();
-      done = frame.frameIndex;
-    }
-    break;
-    } catch (e) {
-      if (!(e instanceof DecodeFailure) || signal.aborted || attempt >= DECODE_RETRIES) throw e;
-      decoder.dispose(); decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
-    }
-  } finally { signal.removeEventListener('abort', abort); decoder.dispose(); source.width = 0; }
-  return d.frames.length;
-}
 
 /** People in one region of the picture, cropped at source resolution (as SprintFrameProcessor). */
 function detect(model: MobileCMJPose, source: HTMLCanvasElement, region: Region, frame: { frameIndex: number; pts: number }, w: number, h: number) {

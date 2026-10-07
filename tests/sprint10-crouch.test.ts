@@ -7,6 +7,7 @@ import type { CrouchResult, StepResult } from '../src/sprint10/crouch';
 import { applyEdits, effectsOf, footDown, moments } from '../src/sprint10/crouch-edit';
 import { legLength } from '../src/sprint10/contacts';
 import { PIXEL_SETTINGS, refineByPixels, regionsOf, type RegionPictures } from '../src/sprint10/crouch-pixels';
+import { refineTargets } from '../src/sprint10/recording';
 
 // A synthetic crouch start filmed from the side at 240 fps, 1920x1080, running to the right.
 // Leg length about 240 px; ground at y = 800 px. Set until 0.5 s; the rear foot (left landmarks)
@@ -360,6 +361,22 @@ describe('crouch start: moments set again from the pictures round the feet', () 
     expect(Math.abs(tip - (leave + .5))).toBeLessThan(1);
     PIXEL_SETTINGS.BC_TIP = 0;   // the forefoot alone: earlier, as the heel rises
     try { expect(bcAt()).toBeLessThan(tip - 1); } finally { PIXEL_SETTINGS.BC_TIP = 1; }
+  });
+  it('gives the same values with RTMPose only where the angles are measured', () => {
+    // RTMPose's points: MediaPipe's moved a little, differently in each frame (so any frame used for an angle shows)
+    const refinedOf = (f: CrouchFrame) => f.pose!.map((p, k) => ({ ...p, x: p.x + .004 * Math.sin(f.frame * 1.7 + k), y: p.y + .004 * Math.cos(f.frame * 2.3 + k) }));
+    const targets = refineTargets(auto, frames);
+    const every = frames.map(f => f.pose ? { ...f, refined: refinedOf(f) } : f), some = frames.map(f => f.pose && targets.has(f.frame) ? { ...f, refined: refinedOf(f) } : f);
+    expect(targets.size).toBeLessThan(frames.filter(f => f.pose).length * .6);
+    const opts = { width: W, height: H }, fromEvery = analyzeCrouchStart(every, opts), fromSome = analyzeCrouchStart(some, opts);
+    expect(fromSome).toEqual(fromEvery);
+    // the angles are RTMPose's: at the set, the clearance and each touchdown
+    expect(fromEvery.set!.trunkAngle).not.toBe(auto.set!.trunkAngle);
+    expect(fromEvery.blockClearance!.trunkAngle).not.toBe(auto.blockClearance!.trunkAngle);
+    expect(fromEvery.steps.map(t => t.shankAngle)).not.toEqual(auto.steps.map(t => t.shankAngle));
+    // the moments moved by the pictures (the clearance at the shoe's tip), the angles at them
+    const pics = pictures([225, 205, 40]);
+    expect(refineByPixels(fromSome, pics, regions, some, W, H).result).toEqual(refineByPixels(fromEvery, pics, regions, every, W, H).result);
   });
   it('keeps the moments judged from the pose where the pictures do not tell the shoe from the ground', () => {
     const { result: r, moments } = refineByPixels(auto, pictures([111, 118, 124]), regions, frames, W, H);

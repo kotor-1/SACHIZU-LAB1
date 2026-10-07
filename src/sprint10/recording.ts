@@ -4,7 +4,8 @@ import { MobileCMJPose } from '../cmj/mobile-pose';
 import { trackRotation } from '../cmj/video-orientation';
 import { untilAborted } from '../cmj/session-lifecycle';
 import type { Point, SprintSample } from './analysis';
-import { analyzeCrouchStart, runStart, type CrouchFrame } from './crouch';
+import { analyzeCrouchStart, runStart, SET_SPAN, type CrouchFrame, type CrouchResult } from './crouch';
+import { PIXEL_SETTINGS } from './crouch-pixels';
 import { loadRefiner, type Refiner } from './rtm-refine';
 import type { SprintStart } from './tracker';
 import { SPRINT_POSES, SprintFrameProcessor } from './frame-processor';
@@ -131,6 +132,44 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
   } finally { signal.removeEventListener('abort', abort); decoder.dispose(); model.dispose(); if (watcher !== options.watcher) (watcher as MobileCMJPose | null)?.dispose(); source.width = 0; }
 }
 
+/** Reads the frames in order, decoding and drawing upright only those wanted (also the throws' implement). */
+export async function readFrames(file: File, signal: AbortSignal, wanted: (index: number) => boolean,
+  visit: (frame: { frameIndex: number; pts: number }, source: HTMLCanvasElement, w: number, h: number) => Promise<void>) {
+  const check = () => { if (signal.aborted) throw new DOMException('中止', 'AbortError'); };
+  const d = await untilAborted(demuxMP4(file), signal); check();
+  const rotation = trackRotation((d.videoTrack as typeof d.videoTrack & { matrix?: ArrayLike<number> }).matrix);
+  let decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
+  const source = document.createElement('canvas'), ctx = source.getContext('2d');
+  if (!ctx) throw new Error('映像処理を開始できません。');
+  const abort = () => decoder.dispose();
+  signal.addEventListener('abort', abort, { once: true });
+  const last = d.frames.reduce((m, f) => wanted(f.frameIndex) ? f.frameIndex : m, -1);
+  // A decoder failing partway is made again and read from the start, the frames already visited skipped (DECODE_RETRIES).
+  let done = -1;
+  try {
+    for (let attempt = 0; ; attempt++) try {
+    for (const frame of d.frames) {
+      if (frame.frameIndex > last) break;
+      if (frame.frameIndex <= done || !wanted(frame.frameIndex)) { await decodeStep(decoder.skipExactFrame(frame.frameIndex), signal, frame.frameIndex); check(); continue; }
+      const decoded = await decodeStep(decoder.decodeExactFrame(frame.frameIndex), signal, frame.frameIndex); check();
+      if (decoded.status !== 'SUCCESS' || decoded.actualDecodedFrameIndex !== frame.frameIndex) throw new Error('動画フレームを正しく読み出せません。');
+      const bitmap = decoded.bitmap, w = rotation % 180 ? bitmap.height : bitmap.width, h = rotation % 180 ? bitmap.width : bitmap.height;
+      if (source.width !== w || source.height !== h) { source.width = w; source.height = h; }
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, w, h);
+      ctx.translate(w / 2, h / 2); ctx.rotate(rotation * Math.PI / 180);
+      ctx.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2); ctx.setTransform(1, 0, 0, 1, 0, 0);
+      await visit(frame, source, w, h); check();
+      done = frame.frameIndex;
+    }
+    break;
+    } catch (e) {
+      if (!(e instanceof DecodeFailure) || signal.aborted || attempt >= DECODE_RETRIES) throw e;
+      decoder.dispose(); decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
+    }
+  } finally { signal.removeEventListener('abort', abort); decoder.dispose(); source.width = 0; }
+  return d.frames.length;
+}
+
 /** A crouch start in two stages (the user, 2026-10-06: an iPhone 15 closed the page on a 240 fps video, 120 fps
  * took long and the phone grew hot, an iPhone SE 3 managed only 60 fps; 「精度は落とさずにできる？」). Every frame of
  * a long video had MediaPipe (35 ms a frame) and RTMPose (15-62 ms) - 3,120 frames for 13 s at 240 fps - while the
@@ -139,14 +178,37 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
  * MediaPipe and RTMPose). Two videos cut to begin 0.6-0.9 s before the start (as stage 2 does) against the frames'
  * truth: mean error 1.53 frames, the whole videos 1.43 (max 3.8 / 4.8). Without a run seen, or with no result from
  * the window, the whole video as before. */
-export const SCAN_FPS = 30, SCAN_LEAD = 1, SCAN_TAIL = 3;
-/** A video this short (s) is measured whole at once: the window would be most of it, and the quick look only added
- * time (1.1-2.6 s videos: 13.2 → 14.5 s, 29.4 → 31.3 s). A 12 s one: 133.6 → 42.3 s (Chrome on a Mac). */
-export const SCAN_FROM = 5;
+export const SCAN_FPS = 30, SCAN_LEAD = .6, SCAN_TAIL = 2.2;
+/** A video this short (s) is measured whole at once: the window would be most of it, and the quick look only adds
+ * time (1.1-2.6 s videos: 13.2 → 14.5 s, 29.4 → 31.3 s, with a 4 s window). A 12 s one: 133.6 → 42.3 s (Chrome on a
+ * Mac). The window was narrowed from 1 s before and 3 s after (an iPhone Air was still slow and hot on 3-4 s videos,
+ * 2026-10-07): the run is found ~0.25 s before the movement, so the window begins ~0.85 s before it (videos cut to
+ * begin 0.6-0.9 s before: the same errors), and five steps end within 2 s of it. */
+export const SCAN_FROM = SCAN_LEAD + SCAN_TAIL + .5;
+/** RTMPose is run (when measured with `refineAt: 'moments'`) only where angles are measured (the iPhone Air still slow
+ * and hot, 2026-10-07): the set (its posture is the median of the last SET_SPAN s before the movement, and its frame is
+ * one of them: so SET_SPAN either side), the block clearance (the pictures may move it FAR frames either way, then the
+ * shoe's tip BC_TIP_FAR more; its posture is the median of 2 frames round it) and each touchdown (FAR frames either way).
+ * The timing comes from MediaPipe's poses, so every value is as with RTMPose on every frame; the slow replay shows
+ * MediaPipe's skeleton between the moments, and a moment the user moves further than this has MediaPipe's angles.
+ * RTMPose was 15 ms a frame (Chrome) to 62 ms (WebKit, the iPhone's engine) of ~100. */
+export function refineTargets(r: CrouchResult, frames: readonly CrouchFrame[]): Set<number> {
+  const out = new Set<number>(), S = PIXEL_SETTINGS;
+  if (r.reason) return out;
+  const near: [number, number, number][] = [];   // [frame, frames before, frames after]
+  if (r.blockClearance) near.push([r.blockClearance.frame, S.FAR + 3, S.FAR + S.BC_TIP_FAR + 3]);
+  for (const c of r.contacts) if (c.touchdownFrame != null) near.push([c.touchdownFrame, S.FAR + 2, S.FAR + 2]);
+  for (const f of frames) {
+    if (!f.pose) continue;
+    if (r.set && Math.abs(f.pts - r.set.pts) <= SET_SPAN + 1e-6) out.add(f.frame);
+    else if (near.some(([m, before, after]) => f.frame >= m - before && f.frame <= m + after)) out.add(f.frame);
+  }
+  return out;
+}
 export async function measureCrouchStart(file: File, startX: number, signal: AbortSignal,
   progress: (fraction: number, message: string) => void): Promise<{ frames: CrouchFrame[]; width: number; height: number; refiner: Refiner['backend'] | null; window: [number, number] | null }> {
   const d = await untilAborted(demuxMP4(file), signal), span = d.frames.length ? d.frames.at(-1)!.pts - d.frames[0].pts : 0;
-  if (span <= SCAN_FROM) return { ...await measureCrouch(file, startX, signal, progress), window: null };
+  if (span <= SCAN_FROM) return { ...await measureCrouch(file, startX, signal, progress, undefined, 'moments'), window: null };
   const scan: CrouchFrame[] = [];
   let width = 0, height = 0;
   await measureSprint(file, startX, signal, (f, m) => progress(.3 * f, m === '選手と脚の動きを解析しています。' ? 'スタートの瞬間を探しています。' : m), undefined, 'standing', 10, {
@@ -157,10 +219,10 @@ export async function measureCrouchStart(file: File, startX: number, signal: Abo
   const run = width ? runStart(scan, width, height) : null;
   if (run !== null) {
     const window: [number, number] = [Math.max(0, run - SCAN_LEAD), run + SCAN_TAIL];
-    const found = await measureCrouch(file, startX, signal, (f, m) => progress(.3 + .7 * f, m), window);
+    const found = await measureCrouch(file, startX, signal, (f, m) => progress(.3 + .7 * f, m), window, 'moments');
     if (!analyzeCrouchStart(found.frames, { width: found.width, height: found.height }).reason) return { ...found, window };
   }
-  const whole = await measureCrouch(file, startX, signal, (f, m) => progress(.3 + .7 * f, m));
+  const whole = await measureCrouch(file, startX, signal, (f, m) => progress(.3 + .7 * f, m), undefined, 'moments');
   return { ...whole, window: null };
 }
 
@@ -169,16 +231,35 @@ export async function measureCrouchStart(file: File, startX: number, signal: Abo
  * for the angles and the pictures (see rtm-refine.ts); without RTMPose (the
  * model not loaded) the angles come from MediaPipe and `refiner` is null. */
 export async function measureCrouch(file: File, startX: number, signal: AbortSignal,
-  progress: (fraction: number, message: string) => void, window?: [number, number]): Promise<{ frames: CrouchFrame[]; width: number; height: number; refiner: Refiner['backend'] | null }> {
+  progress: (fraction: number, message: string) => void, window?: [number, number], refineAt: 'every' | 'moments' = 'every'):
+  Promise<{ frames: CrouchFrame[]; width: number; height: number; refiner: Refiner['backend'] | null }> {
   const frames: CrouchFrame[] = [];
   let width = 0, height = 0, refiner: Refiner | null = null;
-  try { refiner = await untilAborted(loadRefiner(signal, text => progress(0, text)), signal); }
-  catch (e) { if (signal.aborted) throw e; refiner = null; }
-  await measureSprint(file, startX, signal, progress, undefined, 'standing', 10, { maxFps: CROUCH_FPS, fromBlocks: true, from: window?.[0], to: window?.[1], onSelected: (frame, selected, w, h) => {
+  const load = async (at: number) => {
+    try { refiner = await untilAborted(loadRefiner(signal, text => progress(at, text)), signal); }
+    catch (e) { if (signal.aborted) throw e; refiner = null; }
+  };
+  const every = refineAt === 'every';
+  if (every) await load(0);
+  await measureSprint(file, startX, signal, every ? progress : (f, m) => progress(.8 * f, m), undefined, 'standing', 10, { maxFps: CROUCH_FPS, fromBlocks: true, from: window?.[0], to: window?.[1], onSelected: (frame, selected, w, h) => {
     width = w; height = h;
     frames.push({ frame: frame.frameIndex, pts: frame.pts, pose: selected.length === 33 ? selected.map(p => ({ x: p.x, y: p.y, visibility: p.visibility })) : null });
-  }, afterSelected: refiner ? async source => {
+  }, afterSelected: every && refiner ? async source => {
     const f = frames.at(-1); if (f?.pose) f.refined = await refiner!.refine(source, f.pose);
   } : undefined });
-  return { frames, width, height, refiner: refiner?.backend ?? null };
+  if (!every) {
+    // RTMPose where the angles are measured only, in one more reading (the same pixels as in the pass; MediaPipe's
+    // model is closed by then, so the two are not held at once).
+    const targets = refineTargets(analyzeCrouchStart(frames, { width, height }), frames);
+    if (targets.size) {
+      await load(.8);
+      const byFrame = new Map(frames.map(f => [f.frame, f])), last = Math.max(...targets);
+      const r = refiner as Refiner | null;
+      if (r) await readFrames(file, signal, i => targets.has(i), async (frame, source) => {
+        const f = byFrame.get(frame.frameIndex); if (f?.pose) f.refined = await r.refine(source, f.pose);
+        progress(.85 + .15 * frame.frameIndex / last, '角度を測るコマを細かく調べています。');
+      });
+    }
+  }
+  return { frames, width, height, refiner: (refiner as Refiner | null)?.backend ?? null };
 }

@@ -52,7 +52,8 @@ export interface CrouchResult {
 const ONSET_LEGS = .06;
 /** The block zone reaches this far (leg lengths) beyond the set toes; a pushing
  * toe may be unseen for up to BLOCK_GAP s. */
-const BLOCK_MARGIN = .15, BLOCK_GAP = .05, FRONT_BEHIND = .12, SET_SPAN = .2, SET_MIN = .1;
+const BLOCK_MARGIN = .15, BLOCK_GAP = .05, FRONT_BEHIND = .12, SET_MIN = .1;
+export const SET_SPAN = .2;
 /** A video may begin long before the set (the athlete walking in and setting the blocks, or someone seen for a
  * moment and lost: the user's 13 s video stopped with 「選手を十分に捉えられませんでした」, 2026-10-06). The set is looked
  * for after the last disturbance before the run: a gap of over GAP_BEFORE s in the followed hips, or the hip moving
