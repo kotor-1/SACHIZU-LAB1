@@ -3,7 +3,9 @@ export const SPRINT10_ANALYSIS_VERSION = 'sprint10-experimental-v10';
 export const SPRINT10_NOTES: readonly string[] = ['歩数は、2本のラインの間に経過した脚の入れ替わり（遊脚が支持脚を追い越す動き）の周期の数です。ライン上の半端な1歩は周期の割合で数えます。接地回数を1つずつ数えた値ではありません。',
   '各歩の距離は骨盤の画面内移動をライン間隔（既知の距離）で比例換算した推定です。真の全身重心・接地位置間の距離ではなく、遠近やカメラの揺れも補正していません。'];
 export interface Point { x: number; y: number; visibility?: number }
-export interface SprintSample { frame: number; pts: number; hipX: number | null; ankleGap: number | null; kneeGap: number | null; legLength: number | null }
+export interface SprintSample { frame: number; pts: number; hipX: number | null; ankleGap: number | null; kneeGap: number | null; legLength: number | null;
+  /** The pelvis height (normalized), for the check's picture only: no value is measured from it. */
+  hipY?: number | null }
 /** One leg-overlap (the swing leg passing the support leg), once per step. */
 export interface Step { frame: number; pts: number }
 export interface StrideInterval {
@@ -11,8 +13,13 @@ export interface StrideInterval {
   fromHipX: number | null; toHipX: number | null; distanceM: number | null; reason: string | null;
 }
 /** extendedSeconds: the crossing itself was not observed and was estimated by
- * extending the pelvis motion this long (flying section only). */
-export interface Crossing { pts: number; before: number; after: number; frame: number; extendedSeconds?: number }
+ * extending the pelvis motion this long (flying section only). movedSeconds: the
+ * user moved it this long from the judged crossing (the check). */
+export interface Crossing { pts: number; before: number; after: number; frame: number; extendedSeconds?: number; movedSeconds?: number }
+/** The gate crossings moved by the user (s), each by the time between the frame they chose and the judged one: the
+ * time within the frame is kept, so the frame judged gives the judged time (the check of the judged moments, the user
+ * 2026-10-08: 「10mは反映して欲しいけど壊れないように進めて」). */
+export type GateShifts = Partial<Record<'start' | 'finish', number>>;
 export interface SprintResult {
   start: Crossing | null; finish: Crossing | null; duration: number | null;
   /** Step cycles elapsed between the two gate crossings, including the
@@ -72,7 +79,7 @@ export function sprintSample(points: Point[], frame: number, pts: number, aspect
   const hips = [23, 24].every(i => valid(points[i]));
   const legs = [23, 24, 25, 26, 27, 28].every(i => valid(points[i]));
   const length = (a: number, b: number) => Math.hypot((points[a].x - points[b].x) * aspect, points[a].y - points[b].y);
-  return { frame, pts, hipX: hips ? (points[23].x + points[24].x) / 2 : null,
+  return { frame, pts, hipX: hips ? (points[23].x + points[24].x) / 2 : null, hipY: hips ? (points[23].y + points[24].y) / 2 : null,
     ankleGap: [27, 28].every(i => valid(points[i])) ? Math.abs(points[27].x - points[28].x) * aspect : null,
     kneeGap: [25, 26].every(i => valid(points[i])) ? Math.abs(points[25].x - points[26].x) * aspect : null,
     legLength: legs ? (length(23, 25) + length(25, 27) + length(24, 26) + length(26, 28)) / 2 : null };
@@ -330,9 +337,10 @@ function withoutSpikes(samples: SprintSample[]): SprintSample[] {
   }
   return spikes.size ? samples.map(s => spikes.has(s) ? { ...s, hipX: null } : s) : samples;
 }
-/** distanceM: the real distance between the two gates (10 m for the standing 10 m; any known section otherwise). */
+/** distanceM: the real distance between the two gates (10 m for the standing 10 m; any known section otherwise).
+ * moved: the crossings the user set in the check (see GateShifts). */
 export function analyzeSprint(samples: SprintSample[], startX: number, finishX: number, distanceM = 10,
-  run: 'standing' | 'flying' = 'standing'): SprintResult {
+  run: 'standing' | 'flying' = 'standing', moved: GateShifts = {}): SprintResult {
   const reasons = GATE_REASONS[run];
   const base: SprintResult = { start: null, finish: null, duration: null, steps: [], count: null, speed: null, cadence: null, stride: null,
     edgeFractions: null, strideIntervals: [], warnings: [], reason: null };
@@ -382,9 +390,15 @@ export function analyzeSprint(samples: SprintSample[], startX: number, finishX: 
     if (!finish.extendedSeconds) finish = fittedCrossing(tracked, finishX, direction, finish);
   }
   if (!start || !finish) return { ...base, reason: startGap ? reasons.startGap : reasons.noStart };
+  // The user's frames: the crossings moved, and everything measured from them again. The leg overlaps are still found
+  // against the judged crossings (their thresholds come from the samples between them): nothing is judged again.
+  const judged = { start, finish };
+  if (moved.start) start = { ...start, pts: start.pts + moved.start, movedSeconds: moved.start };
+  if (moved.finish) finish = { ...finish, pts: finish.pts + moved.finish, movedSeconds: moved.finish };
+  if (!(finish.pts > start.pts)) return { ...base, reason: '線を越えるコマの順番が逆です。「確認」で決めたコマを見直してください。' };
   const duration = finish.pts - start.pts;
-  const laterRuns = finishes.filter(f => f.pts > finish!.pts + 1);
-  const detected = stepCandidates(samples, { startPts: start.pts, finishPts: finish.pts }, gap);
+  const laterRuns = finishes.filter(f => f.pts > judged.finish.pts + 1);
+  const detected = stepCandidates(samples, { startPts: judged.start.pts, finishPts: judged.finish.pts }, gap);
   const observedFrom = start.extendedSeconds ? start.after : start.pts, observedTo = finish.extendedSeconds ? finish.before : finish.pts;
   const interior = samples.filter(s => s.pts >= observedFrom && s.pts <= observedTo);
   const coverage = interior.filter(s => s.ankleGap !== null && s.kneeGap !== null).length / Math.max(1, interior.length);
@@ -413,8 +427,9 @@ export function analyzeSprint(samples: SprintSample[], startX: number, finishX: 
   if (laterRuns.length) warnings.unshift('ゴールを2回以上越えています。最初の走りを解析しました。');
   // Say so whenever a gate time is an estimate rather than an observed crossing.
   const extendedNote = (gate: string, crossing: Crossing, side: string) => `${gate}の線を越える瞬間の骨盤は映っていない（体が画面の端にかかる・隠れる）ため、${side}の動きを${Math.round(crossing.extendedSeconds! * 1000)}ミリ秒延ばして通過時刻を推定しました。`;
-  if (finish.extendedSeconds) warnings.unshift(extendedNote('出口', finish, '直前'));
-  if (start.extendedSeconds) warnings.unshift(extendedNote('入口', start, '直後'));
+  // A crossing the user set is no longer the estimate.
+  if (finish.extendedSeconds && !finish.movedSeconds) warnings.unshift(extendedNote('出口', finish, '直前'));
+  if (start.extendedSeconds && !start.movedSeconds) warnings.unshift(extendedNote('入口', start, '直後'));
   const counted = step?.steps ?? steps, multiples = step?.multiples ?? [];
   return { ...base, start, finish, duration, speed: distanceM / duration, steps: counted, count, edgeFractions: step?.edges ?? null,
     strideIntervals: strideIntervals(samples, counted, startX, finishX, start.pts, finish.pts, distanceM, gap).map((interval, i) => (multiples[i] ?? 1) > 1

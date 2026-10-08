@@ -14,6 +14,7 @@ import { anglePose, type CrouchFrame, type CrouchPoint } from '../sprint10/crouc
 import { contactOf, contactPlants, legLength, plantedToes, plantsOf, toesOf, visible, type Contact } from '../sprint10/contacts';
 import { kneeAngle, shankAngle, thighAngle, trunkAngle } from '../sprint10/angles';
 import type { Mark, Phase } from '../sprint10/crouch-figure';
+import { editContacts, type Edits } from '../sprint10/moment-edits';
 
 export const HURDLE_VERSION = 'hurdle-v1-experimental';
 /** A contact whose ground level is more than GROUND_SPREAD leg lengths above
@@ -49,6 +50,8 @@ export interface HurdleOptions {
   hurdleX: number;
   /** The bar's top and the ground at its foot (0-1 down the picture), and the hurdle's height (m): the ruler. */
   barY?: number; groundY?: number; hurdleHeight?: number;
+  /** The frames the user set for the judged moments (`td{n}`, `to{n}` of contact n; sprint10/moment-edits.ts). */
+  edits?: Edits;
 }
 /** The centre of mass in the flight: a parabola fitted to its height, its top
  * against the hurdle, in time and (with the scale from gravity) in metres. */
@@ -168,6 +171,7 @@ export function analyzeHurdle(frames: readonly CrouchFrame[], options: HurdleOpt
   const onGround = plants.filter(p => ground - p.y < GROUND_SPREAD * leg);
   const firstSeen = seen[0].pts, lastSeen = seen.at(-1)!.pts;
   base.contacts = onGround.map((p, i) => contactOf(p, i + 1, toes, leg, lastSeen, firstSeen));
+  if (options.edits) base.contacts = editContacts(base.contacts, options.edits, frames);
   const ahead = (c: Contact) => (c.x / W - hurdleX) * direction;
   const before = base.contacts.filter(c => ahead(c) < 0).length, landing = base.contacts.findIndex(c => ahead(c) > 0), takeoff = before - 1;
   base.takeoff = takeoff < 0 ? null : takeoff; base.landing = landing < 0 ? null : landing;

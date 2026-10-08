@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
 import { useFirstFrame } from '../sprint10/first-frame';
 import type { Phase } from '../sprint10/crouch-figure';
@@ -10,11 +10,23 @@ import { kmh, LONG_JUMP_GUIDE, longJumpAdvice } from './advice';
 import type { RulerPoints } from './ruler';
 import RulerSetter from './RulerSetter';
 import { useStill } from './still';
+import { legLength } from '../sprint10/contacts';
+import { footDown } from '../sprint10/crouch-edit';
+import { contactMoments, effectsBetween, poseFlags, relatedValues, type ReviewMoment, type ReviewValue } from '../sprint10/moment-edits';
+import { MomentReview } from '../sprint10/MomentReview';
 import '../sprint10/sprint10.css';
 import './longjump.css';
 
-type Tab = 'advice' | 'pose' | 'numbers' | 'replay';
-const TABS: [Tab, string][] = [['advice', 'ポイント'], ['pose', '姿勢'], ['numbers', '数値'], ['replay', 'スロー']];
+type Tab = 'advice' | 'check' | 'pose' | 'numbers' | 'replay';
+const TABS: [Tab, string][] = [['advice', 'ポイント'], ['check', '確認'], ['pose', '姿勢'], ['numbers', '数値'], ['replay', 'スロー']];
+/** The values a moment's frame changes (the check shows them before and after); speeds in m/s with the scale. */
+const valuesOf = (r: LongJumpResult): ReviewValue[] => [
+  { label: '助走速度（最後の2歩）', value: mps(r, r.speed.lastTwoPx), unit: 'm/秒', digits: 2 }, { label: '踏切接地の瞬間の速さ', value: mps(r, r.speed.touchdownPx), unit: 'm/秒', digits: 2 },
+  { label: '離地の鉛直速度', value: mps(r, r.leave?.verticalPx ?? null), unit: 'm/秒', digits: 2 }, { label: '踏切角度', value: r.leave?.angle ?? null, unit: '°', digits: 1 },
+  { label: '踏切の接地時間', value: r.takeoffContact, unit: '秒', digits: 3 },
+  { label: '1歩前の接地時間', value: r.steps[0]?.contact ?? null, unit: '秒', digits: 3 }, { label: '1歩前の後の空中', value: r.steps[0]?.flight ?? null, unit: '秒', digits: 3 },
+  { label: '2歩前の接地時間', value: r.steps[1]?.contact ?? null, unit: '秒', digits: 3 }, { label: '2歩前の後の空中', value: r.steps[1]?.flight ?? null, unit: '秒', digits: 3 },
+  { label: '最後の2歩のリズム', value: r.rhythm, unit: '', digits: 2 }, { label: '踏切接地の脚の角度', value: r.posture.legAngle, unit: '°', digits: 0 }];
 const LEGEND = [['#ffb02e', '体幹（腰→肩）'], ['#b58cff', '踏切脚の膝']] as const;
 const G = LONG_JUMP_GUIDE;
 const HEIGHT_RANGE = [100, 230] as const;
@@ -52,10 +64,31 @@ export default function LongJumpLab() {
   // The takeoff's still (full size) is made only when asked for: an iPhone closed the page around the analysis's end.
   const [rulerOpen, setRulerOpen] = useState(false);
   const distanceNumber = Number(ruler.distanceText), distance = distanceNumber >= DISTANCE.min && distanceNumber <= DISTANCE.max ? distanceNumber : null;
-  const plain: LongJumpResult | null = useMemo(() => measured ? analyzeLongJump(measured.frames, { width: measured.width, height: measured.height, athleteHeight }) : null, [measured, athleteHeight]);
-  const result: LongJumpResult | null = useMemo(() => measured && plain && ruler.use && ruler.points && distance
-    ? analyzeLongJump(measured.frames, { width: measured.width, height: measured.height, athleteHeight, ruler: { points: ruler.points, distance } }) : plain,
-  [measured, plain, athleteHeight, ruler.use, ruler.points, distance]);
+  // The judged moments the user set (frames by moment key), those confirmed, and the one being checked; everything shown
+  // uses the result with them (the user, 2026-10-07: 「他のモードにも同じように自動解析と微調整モード追加しましょう」).
+  const [edits, setEdits] = useState<Record<string, number>>({}), [checked, setChecked] = useState<ReadonlySet<string>>(new Set()), [moment, setMoment] = useState<string | null>(null);
+  useEffect(() => { setEdits({}); setChecked(new Set()); setMoment(null); }, [measured]);
+  const editsOrNone = Object.keys(edits).length ? edits : undefined;
+  const auto: LongJumpResult | null = useMemo(() => measured ? analyzeLongJump(measured.frames, { width: measured.width, height: measured.height, athleteHeight }) : null, [measured, athleteHeight]);
+  const plain: LongJumpResult | null = useMemo(() => measured && auto ? editsOrNone ? analyzeLongJump(measured.frames, { width: measured.width, height: measured.height, athleteHeight, edits: editsOrNone }) : auto : null,
+    [measured, auto, athleteHeight, editsOrNone]);
+  const options = useMemo(() => measured ? { width: measured.width, height: measured.height, athleteHeight,
+    ruler: ruler.use && ruler.points && distance ? { points: ruler.points, distance } : null } : null, [measured, athleteHeight, ruler.use, ruler.points, distance]);
+  const result: LongJumpResult | null = useMemo(() => measured && plain && options?.ruler ? analyzeLongJump(measured.frames, { ...options, edits: editsOrNone }) : plain,
+    [measured, plain, options, editsOrNone]);
+  // The contacts are judged on RTMPose's points where there are any (analysis.ts): the strip's bars and the flags too.
+  const poseFrames = useMemo(() => measured ? measured.frames.map(f => f.refined ? { ...f, pose: f.refined } : f) : [], [measured]);
+  const list: ReviewMoment[] = useMemo(() => !auto || auto.reason || auto.takeoff === null || !measured ? [] : poseFlags(contactMoments(auto.contacts, edits, measured.frames, measured.width, measured.height,
+    ([[2, '2歩前', '2歩前'], [1, '1歩前', '1歩前'], [0, '踏切', '踏切']] as const).flatMap(([k, name, short]) => { const c = auto.contacts[auto.takeoff! - k]; return c ? [{ index: c.index, name, short }] : []; })),
+    poseFrames, measured.width), [auto, edits, measured, poseFrames]);
+  const waiting = list.filter(m => m.flag && !checked.has(m.key)).length, editedCount = Object.keys(edits).length;
+  const leg = useMemo(() => measured ? legLength(poseFrames.filter(f => f.pose), measured.width, measured.height) : 0, [poseFrames, measured]);
+  const preview = useCallback((m: ReviewMoment, frame: number) => {
+    if (!measured || !options || !result) return [];
+    const at = (n: number) => valuesOf(analyzeLongJump(measured.frames, { ...options, edits: { ...edits, [m.key]: n } }));
+    const now = valuesOf(result), then = frame === m.frame ? now : at(frame);
+    return effectsBetween(now, then, relatedValues(now, at(m.frame + 2), at(m.frame - 2)));
+  }, [measured, options, result, edits]);
   const takeoff = plain && !plain.reason && plain.takeoff !== null ? plain.contacts[plain.takeoff] : null;
   const rulerAt = measured && takeoff?.touchdown != null ? insideFrame(takeoff.touchdown + rulerShift, frameInterval(measured.frames)) : null;
   const rulerStill = useStill(url, rulerOpen ? rulerAt : null);
@@ -105,10 +138,20 @@ export default function LongJumpLab() {
     if (top !== undefined && top < bar) window.scrollBy({ top: top - bar });
   }
   function show(p: Phase) { seekTo.current = p.pts; choose('replay'); }
+  /** A moment set (or confirmed as judged), and on to the next one not yet checked. */
+  function setMomentFrame(key: string, frame: number) {
+    const m = list.find(q => q.key === key); if (!m) return;
+    setEdits(e => { const next = { ...e }; if (frame === m.autoFrame) delete next[key]; else next[key] = frame; return next; });
+    setChecked(c => new Set(c).add(key));
+    const i = list.indexOf(m), next = [...list.slice(i + 1), ...list.slice(0, i)].find(q => !checked.has(q.key));
+    setMoment(next ? next.key : key);
+  }
+  function openCheck() { const first = list.find(q => q.flag && !checked.has(q.key)) ?? list.find(q => !checked.has(q.key)); if (first) setMoment(first.key); choose('check'); }
   function save() {
     if (!result) return;
     const blob = new Blob([JSON.stringify({ version: LONG_JUMP_VERSION, file: file?.name, heightCm: athleteHeight ? athleteHeight * 100 : null,
-      ruler: ruler.use && ruler.points ? { distance, points: ruler.points, frameAt: rulerAt } : null, result }, null, 2)], { type: 'application/json' });
+      ruler: ruler.use && ruler.points ? { distance, points: ruler.points, frameAt: rulerAt } : null, result,
+      ...(editedCount ? { edited: { frames: edits, auto } } : {}), checked: [...checked] }, null, 2)], { type: 'application/json' });
     const href = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = href; a.download = 'long-jump-result.json'; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
   }
@@ -154,9 +197,13 @@ export default function LongJumpLab() {
           <div key={label}><span>{label}</span><strong>{value}<small>{value === '—' ? '' : unit}</small></strong>{note && <em>{note}</em>}</div>)}</div>
         <p className="sprint10-note"><strong>速さは動画から推定した目安です。</strong>{scaleText}研究では助走速度が記録と最も強く結びつき（0.1 m/秒速いと約13cm）、離地の鉛直速度も女子で記録と結びつきます。</p>
         {!measured.refiner && <p className="sprint10-note">高精度の骨格モデル（RTMPose）を読み込めなかったため、MediaPipeの骨格を使っています。</p>}
-        <div ref={tabs} className="sprint10-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
-          <button key={id} id={`lj-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`lj-panel-${id}`} onClick={() => choose(id)}>
-            {label}{id === 'advice' && checks > 0 && <span className="sprint10-badge" aria-label={`確かめたい点 ${checks}件`}>{checks}</span>}</button>)}</div>
+        {list.length > 0 && <p className="crouch-check-note"><span>{editedCount ? `手で直したコマを使っています（${editedCount}か所）。` : '接地・離地のコマは自動判定です。ずれていたら1コマ単位で直せます。'}
+          {waiting > 0 && ` 要確認 ${waiting}か所。`}</span>
+          {tab !== 'check' && <button type="button" onClick={openCheck}>確認する</button>}</p>}
+        <div ref={tabs} className="sprint10-tabs crouch-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
+          <button key={id} id={`lj-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`lj-panel-${id}`} onClick={() => id === 'check' ? openCheck() : choose(id)}>
+            {label}{id === 'advice' && checks > 0 && <span className="sprint10-badge" aria-label={`確かめたい点 ${checks}件`}>{checks}</span>}
+            {id === 'check' && waiting > 0 && <span className="sprint10-badge" aria-label={`要確認 ${waiting}か所`}>{waiting}</span>}</button>)}</div>
         <div ref={panels} className="sprint10-panels">
           <div id="lj-panel-advice" role="tabpanel" aria-labelledby="lj-tab-advice" hidden={tab !== 'advice'}>
             <SpeedChart result={result} />
@@ -164,6 +211,14 @@ export default function LongJumpLab() {
               <span aria-hidden="true">{a.level === 'good' ? '✓' : a.level === 'check' ? '!' : 'i'}</span><div><strong>{a.topic}</strong>{a.text}</div></li>)}</ul>}
             <p className="sprint10-hint">リズムと姿勢は記録との結びつきが弱いため、参考として出しています。参考値は研究で報告された値で、選手ごとの目標ではありません（出典は「数値の見方」）。</p>
             {result.notes.map(n => <p className="sprint10-note" key={n}>{n}</p>)}
+          </div>
+          <div id="lj-panel-check" role="tabpanel" aria-labelledby="lj-tab-check" hidden={tab !== 'check'}>
+            <p className="sprint10-hint">自動判定のコマを1つずつ確かめます。ずれていたら◀▶か下のコマで合わせて「このコマに決める」、合っていれば「OK」。数値はすぐ変わります。</p>
+            {tab === 'check' && <MomentReview url={url} frames={measured.frames} width={measured.width} height={measured.height}
+              list={list} edits={edits} checked={checked} at={moment} onAt={setMoment} onSet={setMomentFrame}
+              onRevert={key => setEdits(e => { const next = { ...e }; delete next[key]; return next; })} onRevertAll={() => setEdits({})}
+              onDone={() => choose('numbers')} preview={preview} source={() => '骨格'} doneText="すべての瞬間を確認しました。値は「ポイント」「姿勢」「数値」に反映されています。"
+              down={(m, f) => { const p = poseFrames.find(q => q.frame === f.frame); return p ? footDown(p, m, measured.width, measured.height, leg) : null; }} />}
           </div>
           <div id="lj-panel-pose" role="tabpanel" aria-labelledby="lj-tab-pose" hidden={tab !== 'pose'}>
             <ul className="sprint10-mark-legend" aria-label="線の色">{LEGEND.map(([color, label]) => <li key={label}><i style={{ background: color }} />{label}</li>)}</ul>
@@ -182,6 +237,7 @@ export default function LongJumpLab() {
         <details className="sprint10-more"><summary>数値の見方</summary>
           <p>助走速度は、骨格から求めた重心（de Leva 1996）が、2歩前の接地から踏切の接地までに前へ進んだ距離をその時間で割った値です。「踏切接地の瞬間」は、その瞬間の前後0.0125秒の重心の動きから求めた値です。</p>
           <p>縮尺（1 mが何画素か）は、次の順に使います。①物差し：踏切線（踏切板の白と緑の境目）から砂が始まる所までの距離と、その2本の線が助走路の奥・手前の縁と交わる4点から、地面の平面の写り方を求め、踏切足の位置での縮尺を出します（助走路の手前寄りか奥寄りかで縮尺が最大で±8%変わるため）。②身長：踏切前2歩の胴（肩の中点〜腰の中点、身長の0.288）の長さ。③重力：踏切の後の空中（0.45秒以上）の重心の放物線の曲がり。真横から240コマ/秒で撮った4本で物差し（2 m）と比べると、身長からの縮尺は−9〜+4%、重力からの縮尺は2本とも11%大きく（速さが約1割遅く出る）、物差しで測った選手の胴の長さは4本で0.40〜0.44 m（身長150 cm）でした。光電管などとの比較はしていないため、目安の幅は物差し±5%・身長±10%・重力±15%です。ChromeとSafari系の差は、最後の2歩の速さで2%以内でした。</p>
+          <p>接地・離地のコマは「確認」で1コマ単位で直せ、直すと助走速度・リズム・離地の速さ・姿勢の値がすぐ変わります（保存のJSONには自動の結果も残します）。</p>
           <p>接地は、つま先が地面の高さで止まった瞬間です（左右の脚は骨格の左右ではなく、つま先の位置で判定）。踏切は、長い空中（0.25秒以上）の前の接地です。リズムは、最後の1歩（1歩前の接地→踏切の接地）の時間を、その前の歩の時間で割った値です。踏切接地の脚の角度は、股関節から足首の線と水平がなす角度です。</p>
           <p>離地の速さと踏切角度は、踏切の離地から後の空中の重心から求めます。前への位置を直線に、高さを重力の放物線（曲がりは縮尺に合わせて固定）に当てはめ、離地の瞬間の向きと速さを出します。空中が0.2秒以上映っていることが条件です。曲がりを自由に当てはめると、空中が0.3秒しか映っていない動画で角度が2.4°ずれたため固定しています。ChromeとSafari系の差は、水平速度で約2%、鉛直速度で0.03 m/秒、角度で0.3°以内でした。</p>
           <p>出典：助走速度と記録の関係は太田ら（2010、コーチング学研究24(1)：関西学生、踏切前7〜2 mの速さと記録 r = 0.858（男子）・0.811（女子）、女子（記録4.28〜5.88 m）の速さ8.28±0.37 m/秒）、0.1 m/秒あたり約13 cmはHay（1993、高校生〜エリートの横断データ、Bridgett・Linthorne 2006 の記載）。最後の3歩のリズムはTucker・Bissas（2018、世界室内選手権女子決勝：接地0.105・0.113・0.122秒、空中0.112・0.136・0.075秒、比はこれらの平均から計算）。脚の角度はBridgett・Linthorne（2006：61±3°）、Nemtsevら（2016、女子：59.6±2.8°）。踏切の接地時間はNemtsevら（2016、女子：0.133±0.011秒）。離地の速さと角度はNemtsevら（2016、240コマ/秒の真横の撮影、女子（平均5.50 m）：水平7.06・鉛直2.75 m/秒、角度21.3°、記録との相関 鉛直 r = 0.61・水平 r = 0.64（女子））。踏切角度の最適は人ごとに20.9〜25.4°（Linthorneら 2005）で、目標にする値ではありません。</p>

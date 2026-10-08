@@ -9,12 +9,24 @@ import { analyzeHurdle, HURDLE_HEIGHTS, HURDLE_VERSION, type HurdleResult } from
 import { HURDLE_GUIDE, hurdleAdvice } from './advice';
 import { measureHurdle } from './recording';
 import { ComPathChart, ReferenceTable, TimeTable } from './HurdleCharts';
+import { legLength } from '../sprint10/contacts';
+import { footDown } from '../sprint10/crouch-edit';
+import { contactMoments, effectsBetween, poseFlags, relatedValues, type ReviewMoment, type ReviewValue } from '../sprint10/moment-edits';
+import { MomentReview } from '../sprint10/MomentReview';
 import '../sprint10/sprint10.css';
 
 /** One ◀/▶ (▲/▼) tap moves a line by 0.2% of the frame width (height). */
 const NUDGE = .002;
-type Tab = 'advice' | 'pose' | 'times' | 'replay';
-const TABS: [Tab, string][] = [['advice', 'ポイント'], ['pose', '姿勢'], ['times', '時間'], ['replay', 'スロー']];
+type Tab = 'advice' | 'check' | 'pose' | 'times' | 'replay';
+const TABS: [Tab, string][] = [['advice', 'ポイント'], ['check', '確認'], ['pose', '姿勢'], ['times', '時間'], ['replay', 'スロー']];
+/** The contacts round the hurdle, by role: the check's moments and their names. */
+const ROLES = [['approach', '踏切の1歩前', '1歩前'], ['takeoff', '踏切', '踏切'], ['landing', '着地', '着地'], ['after', '着地の次', '次']] as const;
+/** The values a moment's frame changes (the check shows them before and after). */
+const valuesOf = (r: HurdleResult): ReviewValue[] => [
+  { label: '踏切の1歩前の接地時間', value: r.times.approachContact, unit: '秒', digits: 3 }, { label: '踏切の前の空中', value: r.times.approachFlight, unit: '秒', digits: 3 },
+  { label: '踏切の接地時間', value: r.times.takeoffContact, unit: '秒', digits: 3 }, { label: '空中時間（踏切→着地）', value: r.times.clearance, unit: '秒', digits: 3 },
+  { label: '着地の接地時間', value: r.times.landingContact, unit: '秒', digits: 3 }, { label: '着地の後の空中', value: r.times.afterFlight, unit: '秒', digits: 3 },
+  { label: '重心最高点（ハードルの手前）', value: r.apex?.beforeM == null ? null : r.apex.beforeM * 100, unit: 'cm', digits: 0 }];
 /** The hurdle as set on the video: its line across, its top and foot down the picture (0-1), its height (m). */
 interface HurdleSetting { x: number; barY: number; groundY: number; height: number | null }
 const same = (a: HurdleSetting, b: HurdleSetting) => a.x === b.x && a.barY === b.barY && a.groundY === b.groundY && a.height === b.height;
@@ -41,8 +53,27 @@ export default function HurdleLab() {
   const [used, setUsed] = useState<HurdleSetting | null>(null);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   useEffect(() => () => { owner.current?.abort(); owner.current = null; }, []);
-  const result: HurdleResult | null = useMemo(() => measured && used ? analyzeHurdle(measured.frames, { width: measured.width, height: measured.height,
-    hurdleX: used.x, barY: used.barY, groundY: used.groundY, hurdleHeight: used.height ?? undefined }) : null, [measured, used]);
+  // The judged moments the user set (frames by moment key), those confirmed, and the one being checked; everything shown
+  // uses the result with them (the user, 2026-10-07: 「他のモードにも同じように自動解析と微調整モード追加しましょう」).
+  const [edits, setEdits] = useState<Record<string, number>>({}), [checked, setChecked] = useState<ReadonlySet<string>>(new Set()), [moment, setMoment] = useState<string | null>(null);
+  useEffect(() => { setEdits({}); setChecked(new Set()); setMoment(null); }, [measured, used]);
+  const options = useMemo(() => measured && used ? { width: measured.width, height: measured.height,
+    hurdleX: used.x, barY: used.barY, groundY: used.groundY, hurdleHeight: used.height ?? undefined } : null, [measured, used]);
+  const auto: HurdleResult | null = useMemo(() => measured && options ? analyzeHurdle(measured.frames, options) : null, [measured, options]);
+  const result: HurdleResult | null = useMemo(() => measured && options && auto ? Object.keys(edits).length ? analyzeHurdle(measured.frames, { ...options, edits }) : auto : null, [measured, options, auto, edits]);
+  // The contacts are judged on RTMPose's points where there are any (analysis.ts): the strip's bars and the flags too.
+  const poseFrames = useMemo(() => measured ? measured.frames.map(f => f.refined ? { ...f, pose: f.refined } : f) : [], [measured]);
+  const list: ReviewMoment[] = useMemo(() => !auto || auto.reason || !measured ? [] : poseFlags(contactMoments(auto.contacts, edits, measured.frames, measured.width, measured.height,
+    ROLES.flatMap(([role, name, short]) => auto[role] === null ? [] : [{ index: auto.contacts[auto[role]!].index, name, short }])), poseFrames, measured.width), [auto, edits, measured, poseFrames]);
+  const waiting = list.filter(m => m.flag && !checked.has(m.key)).length, editedCount = Object.keys(edits).length;
+  const leg = useMemo(() => measured ? legLength(poseFrames.filter(f => f.pose), measured.width, measured.height) : 0, [poseFrames, measured]);
+  const preview = useCallback((m: ReviewMoment, frame: number) => {
+    if (!measured || !options || !result) return [];
+    const at = (n: number) => valuesOf(analyzeHurdle(measured.frames, { ...options, edits: { ...edits, [m.key]: n } }));
+    const now = valuesOf(result), then = frame === m.frame ? now : at(frame);
+    // The values that depend on the moment: those a frame on (or back) changes.
+    return effectsBetween(now, then, relatedValues(now, at(m.frame + 2), at(m.frame - 2)));
+  }, [measured, options, result, edits]);
   const advice = useMemo(() => result && !result.reason ? hurdleAdvice(result) : [], [result]);
   const checks = advice.filter(a => a.level === 'check').length;
   const events: ReplayEvent[] = useMemo(() => {
@@ -127,9 +158,19 @@ export default function HurdleLab() {
     if (top !== undefined && top < bar) window.scrollBy({ top: top - bar });
   }
   function show(p: Phase) { seekTo.current = p.pts; choose('replay'); }
+  /** A moment set (or confirmed as judged), and on to the next one not yet checked. */
+  function setMomentFrame(key: string, frame: number) {
+    const m = list.find(q => q.key === key); if (!m) return;
+    setEdits(e => { const next = { ...e }; if (frame === m.autoFrame) delete next[key]; else next[key] = frame; return next; });
+    setChecked(c => new Set(c).add(key));
+    const i = list.indexOf(m), next = [...list.slice(i + 1), ...list.slice(0, i)].find(q => !checked.has(q.key));
+    setMoment(next ? next.key : key);
+  }
+  function openCheck() { const first = list.find(q => q.flag && !checked.has(q.key)) ?? list.find(q => !checked.has(q.key)); if (first) setMoment(first.key); choose('check'); }
   function save() {
     if (!result) return;
-    const blob = new Blob([JSON.stringify({ version: HURDLE_VERSION, file: file?.name, setting: used, result }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ version: HURDLE_VERSION, file: file?.name, setting: used, result,
+      ...(editedCount ? { edited: { frames: edits, auto } } : {}), checked: [...checked] }, null, 2)], { type: 'application/json' });
     const href = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = href; a.download = 'hurdle-result.json'; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
   }
@@ -200,10 +241,14 @@ export default function HurdleLab() {
           <div><span>空中時間（踏切→着地）</span><strong>{t?.clearance == null ? '—' : t.clearance.toFixed(3)}<small>秒</small></strong></div>
           <div><span>踏切の接地時間</span><strong>{t?.takeoffContact == null ? '—' : t.takeoffContact.toFixed(3)}<small>秒</small></strong></div>
           <div><span>踏切：着地（距離の割合）</span><strong>{ratio === null ? '—' : `${Math.round(ratio * 100)}:${100 - Math.round(ratio * 100)}`}</strong></div></div>
+        {list.length > 0 && <p className="crouch-check-note"><span>{editedCount ? `手で直したコマを使っています（${editedCount}か所）。` : '接地・離地のコマは自動判定です。ずれていたら1コマ単位で直せます。'}
+          {waiting > 0 && ` 要確認 ${waiting}か所。`}</span>
+          {tab !== 'check' && <button type="button" onClick={openCheck}>確認する</button>}</p>}
         {measured && !measured.refiner && <p className="sprint10-note">高精度の骨格モデル（RTMPose）を読み込めなかったため、接地・離地の判定、角度・重心と骨格の表示はMediaPipeの骨格を使っています。</p>}
-        <div ref={tabs} className="sprint10-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
-          <button key={id} id={`hurdle-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`hurdle-panel-${id}`} onClick={() => choose(id)}>
-            {label}{id === 'advice' && checks > 0 && <span className="sprint10-badge" aria-label={`確かめたい点 ${checks}件`}>{checks}</span>}</button>)}</div>
+        <div ref={tabs} className="sprint10-tabs crouch-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
+          <button key={id} id={`hurdle-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`hurdle-panel-${id}`} onClick={() => id === 'check' ? openCheck() : choose(id)}>
+            {label}{id === 'advice' && checks > 0 && <span className="sprint10-badge" aria-label={`確かめたい点 ${checks}件`}>{checks}</span>}
+            {id === 'check' && waiting > 0 && <span className="sprint10-badge" aria-label={`要確認 ${waiting}か所`}>{waiting}</span>}</button>)}</div>
         <div ref={panels} className="sprint10-panels">
           <div id="hurdle-panel-advice" role="tabpanel" aria-labelledby="hurdle-tab-advice" hidden={tab !== 'advice'}>
             {measured && <ComPathChart result={result} width={measured.width} height={measured.height} />}
@@ -211,6 +256,14 @@ export default function HurdleLab() {
               <span aria-hidden="true">{a.level === 'good' ? '✓' : a.level === 'check' ? '!' : 'i'}</span><div><strong>{a.topic}</strong>{a.text}</div></li>)}</ul>}
             <p className="sprint10-hint">参考値は研究で報告されたトップ選手の値で、選手ごとの目標ではありません（出典は「数値の見方」）。</p>
             {result.notes.map(n => <p className="sprint10-note" key={n}>{n}</p>)}
+          </div>
+          <div id="hurdle-panel-check" role="tabpanel" aria-labelledby="hurdle-tab-check" hidden={tab !== 'check'}>
+            <p className="sprint10-hint">自動判定のコマを1つずつ確かめます。ずれていたら◀▶か下のコマで合わせて「このコマに決める」、合っていれば「OK」。数値はすぐ変わります。</p>
+            {tab === 'check' && measured && <MomentReview url={url} frames={measured.frames} width={measured.width} height={measured.height}
+              list={list} edits={edits} checked={checked} at={moment} onAt={setMoment} onSet={setMomentFrame}
+              onRevert={key => setEdits(e => { const next = { ...e }; delete next[key]; return next; })} onRevertAll={() => setEdits({})}
+              onDone={() => choose('times')} preview={preview} source={() => '骨格'} doneText="すべての瞬間を確認しました。値は「ポイント」「姿勢」「時間」に反映されています。"
+              down={(m, f) => { const p = poseFrames.find(q => q.frame === f.frame); return p ? footDown(p, m, measured.width, measured.height, leg) : null; }} />}
           </div>
           <div id="hurdle-panel-pose" role="tabpanel" aria-labelledby="hurdle-tab-pose" hidden={tab !== 'pose'}>
             <ul className="sprint10-mark-legend" aria-label="線の色">{LEGEND.map(([color, label]) => <li key={label}><i style={{ background: color }} />{label}</li>)}</ul>
@@ -230,6 +283,7 @@ export default function HurdleLab() {
           </div>
         </div>
         <details className="sprint10-more"><summary>数値の見方</summary>
+          <p>接地・離地のコマは「確認」で1コマ単位で直せ、直すと時間・重心最高点・姿勢の値がすぐ変わります（保存のJSONには自動の結果も残します）。</p>
           <p>接地・離地は、つま先が床の高さまで下りた時・床から離れた時を骨格の動きから判定しています。真横から1秒240コマで撮った5人の踏切・着地（10回）では、映像で見た瞬間との差は接地で最大0.015秒、離地で最大0.010秒、接地時間で最大0.008秒、空中時間で最大0.010秒でした（ChromeとSafari系のブラウザで同じ）。</p>
           <p>重心は、骨格の各部位の位置と体重に占める割合（de Leva 1996）から求めています。空中の重心は放物線を描くため、踏切の離地から着地までの重心の高さに放物線を当てはめて最高点を決めます。最高点の位置は、計算に使うコマの範囲を変えても5人で±3cm以内でした。抜き脚が体の横に開く場面などで骨格が崩れたコマは除いています。</p>
           <p>オプトジャンプとの比較（4人、3台目）：空中時間・接地時間は0.01秒前後で一致し、踏切：着地の割合は3人で一致しました。踏切距離は7〜11cm長く出ました（カメラが少し下を向いていてハードルが2〜4%低く写り、横の距離が4〜5%長くなったため）。そのため、踏切距離・着地距離とバーの上の高さは参考記録としています。重心最高点の位置は距離が短く、このずれは1〜3cmです。</p>

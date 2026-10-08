@@ -117,3 +117,14 @@ describe('the first runner in the survey', () => {
     expect(firstRunner(samples, 1)).toBeNull();
   });
 });
+
+describe('high jump: moments set by hand', () => {
+  it('takes the user\'s frames for the takeoff, and the times, rhythm and the lift follow', () => {
+    const auto = analyzeHighJump(frames(), { width: W, height: H, uprights: UPRIGHTS, barHeight: BAR }), T = auto.contacts[auto.takeoff!];
+    const r = analyzeHighJump(frames(), { width: W, height: H, uprights: UPRIGHTS, barHeight: BAR, edits: { [`td${T.index}`]: T.touchdownFrame! - 2, [`to${T.index}`]: T.toeOffFrame! + 1 } });
+    expect(r.times.takeoffContact! - auto.times.takeoffContact!).toBeCloseTo(3 / 240, 9);
+    expect(r.times.lastStep! - auto.times.lastStep!).toBeCloseTo(-2 / 240, 9);
+    expect(r.rhythm).not.toBe(auto.rhythm);
+    expect(r.lift).not.toBeNull();
+  });
+});

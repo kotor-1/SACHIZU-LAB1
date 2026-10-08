@@ -13,6 +13,7 @@
 import { centreOfMass } from '../hurdling/analysis';
 import { anglePose, type CrouchFrame, type CrouchPoint } from '../sprint10/crouch';
 import { contactOf, contactPlants, legLength, median, plantedToes, plantsOf, toesOf, type Contact } from '../sprint10/contacts';
+import { editContacts, type Edits } from '../sprint10/moment-edits';
 import { kneeAngle, thighAngle, trunkAngle } from '../sprint10/angles';
 import type { Mark, Phase } from '../sprint10/crouch-figure';
 import { calibrate, vec, type Calibration, type UprightPoints, type Vec } from './camera';
@@ -44,6 +45,8 @@ export interface HighJumpOptions {
   barHeight: number;
   /** Focal length (pixels); by default the iPhone's 1x video (camera.ts). */
   focal?: number;
+  /** The frames the user set for the judged moments (`td{n}`, `to{n}` of contact n; sprint10/moment-edits.ts). */
+  edits?: Edits;
 }
 export interface Lift {
   /** Upward speed of the centre of mass at the toe-off (m/s), its height then (m), the rise it gives (m) and the peak (m), and the peak above the bar (m). */
@@ -119,6 +122,7 @@ export function analyzeHighJump(frames: readonly CrouchFrame[], options: HighJum
   const ground = Math.max(...places.map(p => p.y));
   base.contacts = contactPlants(places.filter(p => ground - p.y < GROUND_SPREAD * leg), leg, direction)
     .map((p, i) => contactOf(p, i + 1, toes, leg, seen.at(-1)!.pts, seen[0].pts));
+  if (options.edits) base.contacts = editContacts(base.contacts, options.edits, frames);
   if (!base.contacts.length) return fail('踏切の接地を見つけられませんでした。踏切の3歩前から上昇まで、足元が映るように撮影してください。');
   const n = base.contacts.length;
   base.takeoff = n - 1; base.penult = n > 1 ? n - 2 : null; base.before = n > 2 ? n - 3 : null;

@@ -1,6 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
-import { analyzeSprint, SPRINT10_ANALYSIS_VERSION, SPRINT10_NOTES, type SprintSample } from './analysis';
+import { analyzeSprint, continuityLimit, SPRINT10_ANALYSIS_VERSION, SPRINT10_NOTES, type SprintResult, type SprintSample } from './analysis';
+import type { CrouchFrame } from './crouch';
+import { gateMoments, gateShifts, legPixels, pelvisAt, type GateKey } from './gate-check';
+import { effectsBetween, relatedValues, type ReviewMoment, type ReviewValue } from './moment-edits';
+import { MomentReview } from './MomentReview';
 import { measureSprint } from './recording';
 import { useFirstFrame } from './first-frame';
 import PlayerBar from './PlayerBar';
@@ -23,6 +27,13 @@ const MODES: { id: SprintStart | 'crouch'; label: string; hint: string }[] = [
 /** A mode's name, allowed to break only after クラウチング when a phone's narrow button wraps it. */
 const wrapped = (label: string) => label.split(/(?<=クラウチング)/).flatMap((part, i) => i ? [<wbr key={i} />, part] : [part]);
 const DEFAULT_GATES: Record<SprintStart, [number, number]> = { standing: [.12, .88], flying: [.2, .8] };
+/** The gates' lines as on the player (sprint10.css), drawn again in the check. */
+const GATE_COLORS: Record<GateKey, string> = { start: '#68ffbf', finish: '#ffc460' };
+/** The values the gate crossings change (the check shows them before and after), as in the result's tiles. */
+const valuesOf = (r: SprintResult | null, section: string): ReviewValue[] => [
+  { label: `${section}通過時間`, value: r?.duration ?? null, unit: '秒', digits: 3 }, { label: '平均速度', value: r?.speed ?? null, unit: 'm/s', digits: 2 },
+  { label: '推定歩数', value: r?.count ?? null, unit: '歩', digits: 1 }, { label: '推定ピッチ', value: r?.cadence ?? null, unit: '歩/秒', digits: 2 },
+  { label: '平均歩幅', value: r?.stride ?? null, unit: 'm', digits: 2 }];
 /** One ◀/▶ tap moves a line by 0.2% of the frame width. */
 const NUDGE = .002;
 
@@ -43,7 +54,32 @@ export default function Sprint10Lab() {
   const [review, setReview] = useState('');
   // A chosen video's lines can be placed on its first frame before it is played.
   const still = useFirstFrame(url), ready = loaded || !!still;
-  const result = useMemo(() => samples && confirmed && distanceM > 0 ? analyzeSprint(samples, start, finish, distanceM, mode) : null, [samples, start, finish, confirmed, distanceM, mode]);
+  // The check of the gate crossings (as the other events' contacts): every frame of the video and the picture's size,
+  // the frames the user set (by gate), those confirmed, the one being checked, and whether the check is open.
+  const [timeline, setTimeline] = useState<{ frames: CrouchFrame[]; width: number; height: number } | null>(null);
+  const [edits, setEdits] = useState<Record<string, number>>({}), [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
+  const [moment, setMoment] = useState<string | null>(null), [checking, setChecking] = useState(false);
+  const checkPanel = useRef<HTMLDivElement>(null);
+  useEffect(() => { setEdits({}); setChecked(new Set()); setMoment(null); setChecking(false); }, [samples]);
+  useEffect(() => { if (checking) checkPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, [checking]);
+  const auto = useMemo(() => samples && confirmed && distanceM > 0 ? analyzeSprint(samples, start, finish, distanceM, mode) : null, [samples, start, finish, confirmed, distanceM, mode]);
+  const list = useMemo(() => auto && samples && timeline ? gateMoments(auto, edits, timeline.frames, samples, { start, finish }, GATE_LABEL, GATE_COLORS) : [],
+    [auto, edits, timeline, samples, start, finish, GATE_LABEL]);
+  const shifts = useMemo(() => timeline ? gateShifts(list, timeline.frames) : {}, [list, timeline]);
+  // Everything shown and saved comes from the crossings as set.
+  const result = useMemo(() => auto && samples && Object.keys(shifts).length ? analyzeSprint(samples, start, finish, distanceM, mode, shifts) : auto,
+    [auto, samples, shifts, start, finish, distanceM, mode]);
+  const editedCount = Object.keys(shifts).length, waiting = list.filter(m => m.flag && !checked.has(m.key)).length;
+  const gap = useMemo(() => samples ? continuityLimit(samples) : 0, [samples]);
+  const ptsOf = useMemo(() => new Map(timeline?.frames.map(f => [f.frame, f.pts]) ?? []), [timeline]);
+  const preview = useCallback((m: ReviewMoment, frame: number) => {
+    if (!samples || !timeline || !result) return [];
+    const now = valuesOf(result, sectionLabel);
+    const at = (n: number) => { const pts = ptsOf.get(n); if (pts === undefined) return now;
+      const moved = gateShifts(list.map(q => q.key === m.key ? { ...q, frame: n, pts } : q), timeline.frames);
+      return valuesOf(analyzeSprint(samples, start, finish, distanceM, mode, moved), sectionLabel); };
+    return effectsBetween(now, frame === m.frame ? now : at(frame), relatedValues(now, at(m.frame + 2), at(m.frame - 2)));
+  }, [samples, timeline, result, list, ptsOf, start, finish, distanceM, mode, sectionLabel]);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   useEffect(() => () => { owner.current?.abort(); owner.current = null; }, []);
   // Bring the numbers into view once, when a new analysis finishes.
@@ -56,7 +92,7 @@ export default function Sprint10Lab() {
   }
   function changeFile(next: File | null) {
     cancel(); setFile(next); setUrl(next ? URL.createObjectURL(next) : ''); setReady(false);
-    setSamples(null); setConfirmed(false); setMessage(''); setProgress(0); setReview('');
+    setSamples(null); setTimeline(null); setConfirmed(false); setMessage(''); setProgress(0); setReview('');
   }
   function changeMode(next: SprintStart | 'crouch') {
     if (busy) return;
@@ -82,16 +118,36 @@ export default function Sprint10Lab() {
   async function analyze() {
     if (!file || !confirmed || busy) return;
     const control = new AbortController(); owner.current = control;
-    video.current?.pause(); setBusy(true); setSamples(null); setProgress(0); setReview(''); setMessage('解析を準備しています。');
+    video.current?.pause(); setBusy(true); setSamples(null); setTimeline(null); setProgress(0); setReview(''); setMessage('解析を準備しています。');
     try {
+      let frames: CrouchFrame[] = [], width = 0, height = 0;
       const data = await measureSprint(file, start, control.signal, (value, text) => {
         if (owner.current === control) { setProgress(value); setMessage(text); }
-      }, finish, mode, distanceM);
-      if (owner.current === control && !control.signal.aborted) { showResult.current = true; setSamples(data); }
+      }, finish, mode, distanceM, {
+        onTimeline: all => { frames = [...all].sort((a, b) => a.pts - b.pts).map(f => ({ frame: f.frameIndex, pts: f.pts, pose: null })); },
+        onSelected: (_frame, _selected, w, h) => { width = w; height = h; },
+      });
+      if (owner.current === control && !control.signal.aborted) {
+        showResult.current = true; setTimeline(frames.length && width ? { frames, width, height } : null); setSamples(data);
+      }
     } catch (error) {
       if (owner.current === control && !control.signal.aborted) setMessage(error instanceof Error ? error.message : String(error));
     } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
   }
+  /** A crossing set (or confirmed as judged), and on to the other one if not yet checked. */
+  function setMomentFrame(key: string, frame: number) {
+    const m = list.find(q => q.key === key); if (!m) return;
+    setEdits(e => { const next = { ...e }; if (frame === m.autoFrame) delete next[key]; else next[key] = frame; return next; });
+    setChecked(c => new Set(c).add(key));
+    const i = list.indexOf(m), next = [...list.slice(i + 1), ...list.slice(0, i)].find(q => !checked.has(q.key));
+    setMoment(next ? next.key : key);
+  }
+  function openCheck() {
+    const first = list.find(q => q.flag && !checked.has(q.key)) ?? list.find(q => !checked.has(q.key));
+    if (first) setMoment(first.key);
+    setChecking(true);
+  }
+  function closeCheck() { setChecking(false); resultCard.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   function seek(pts: number, label: string) {
     if (video.current) {
       video.current.pause(); video.current.currentTime = pts; setReview(`${label} · ${pts.toFixed(3)}秒`);
@@ -103,7 +159,8 @@ export default function Sprint10Lab() {
       mode, section: mode === 'flying' ? { startM: sectionStartM, lengthM: sectionLengthM } : null,
       gates: { start, finish }, timeBasis: 'SOURCE_PRESENTATION_TIME', crossingBasis: 'PELVIS_MIDPOINT',
       stepBasis: 'LEG_OVERLAP_CYCLES_BETWEEN_GATES_WITH_FRACTIONAL_EDGES', strideBasis: 'PELVIS_DISPLACEMENT_BETWEEN_OVERLAPS',
-      calibration: 'TWO_GATE_LINEAR_SCALE_NOT_PERSPECTIVE_CORRECTED', result, samples }, null, 2)], { type: 'application/json' });
+      calibration: 'TWO_GATE_LINEAR_SCALE_NOT_PERSPECTIVE_CORRECTED', result,
+      ...(editedCount ? { edited: { frames: edits, shiftsSeconds: shifts, auto } } : {}), checked: [...checked], samples }, null, 2)], { type: 'application/json' });
     const link = document.createElement('a'), objectURL = URL.createObjectURL(blob); link.href = objectURL;
     link.download = mode === 'flying' ? `sprint-section-${sectionStartM}-${sectionStartM + sectionLengthM}m-result.json` : 'sprint10-result.json';
     link.click(); setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
@@ -173,9 +230,24 @@ export default function Sprint10Lab() {
       {result.reason && <p role="alert" className="sprint10-note">{result.reason}</p>}
       <div className="sprint10-metrics">{[[`${sectionLabel}通過時間`, display(result.duration, 3), '秒'], ['平均速度', display(result.speed), 'm/s'],
         ['推定歩数', display(result.count, 1), '歩'], ['推定ピッチ', display(result.cadence), '歩/秒'], ['平均歩幅', display(result.stride), 'm']].map(([label, value, unit]) => <div key={label}><span>{label}</span><strong>{value}</strong><small>{unit}</small></div>)}</div>
+      {list.length > 0 && <p className="crouch-check-note"><span>{editedCount ? `手で直したコマを使っています（${editedCount}か所）。` : '線を越えるコマは自動判定です。ずれていたら1コマ単位で直せます。'}
+        {waiting > 0 && ` 要確認 ${waiting}か所。`}</span>
+        <button type="button" aria-expanded={checking} onClick={() => checking ? closeCheck() : openCheck()}>{checking ? '閉じる' : '確認する'}</button></p>}
+      {checking && timeline && samples && url && list.length > 0 && <div ref={checkPanel} className="sprint10-gate-review">
+        <p className="sprint10-hint">骨盤が線を越えるコマを確かめます。ずれていたら◀▶か下のコマで合わせて「このコマに決める」、合っていれば「OK」。数値はすぐ変わります。</p>
+        <MomentReview url={url} frames={timeline.frames} width={timeline.width} height={timeline.height} list={list} edits={edits} checked={checked}
+          at={moment} onAt={setMoment} onSet={setMomentFrame}
+          onRevert={key => setEdits(e => { const next = { ...e }; delete next[key]; return next; })} onRevertAll={() => setEdits({})}
+          onDone={closeCheck} preview={preview} source={() => '骨格'} leg={legPixels(samples, timeline.height)}
+          point={(_m, frame) => { const pts = ptsOf.get(frame), p = pts === undefined ? null : pelvisAt(samples, pts, gap); return p && p.y !== null ? { x: p.x, y: p.y } : null; }}
+          down={(m, f) => { const p = pelvisAt(samples, f.pts, gap); return p && m.focus ? (p.x - m.focus.x) * Math.sign(finish - start) > 0 : null; }}
+          doneText="2本の線の通過を確認しました。値は上の数値と保存に反映されています。" doneLabel="数値を見る" />
+      </div>}
+      {!checking && <>
       {specific.map(w => <p className="sprint10-note" key={w}>{w}</p>)}
       <details className="sprint10-more"><summary>数値の見方</summary>
         <p>タイムは骨盤中心のライン通過間隔です。合図からのスタートタイム・全身の重心の測定ではありません。</p>
+        <p>「確認」で線を越えるコマを直すと、直したコマの分だけ通過の時刻をずらして計算し直します（コマの間の細かい時刻と、脚の入れ替わりは自動の判定のままです）。</p>
         {SPRINT10_NOTES.map(w => <p key={w}>{w}</p>)}</details>
       <details className="sprint10-more"><summary>1歩ごとの詳細を見る</summary><StrideResults intervals={result.strideIntervals} seek={seek} /></details>
       <details className="sprint10-more"><summary>検出位置を動画で確認</summary>
@@ -186,6 +258,7 @@ export default function Sprint10Lab() {
           {result.finish && <button onClick={() => seek(result.finish!.pts, GATE_LABEL.finish)}>{GATE_LABEL.finish} {result.finish.pts.toFixed(3)}秒</button>}
         </div><p>ボタンでその時刻へ移動します。遊脚が支持脚を追い越す瞬間で、接地のコマではありません。</p></details>
       <button onClick={save}>結果と判定データを保存（JSON）</button>
+      </>}
     </section>}
     </>}
     <footer>解析v10 · 動画はこの端末内で処理します。全フレームの解析時間は端末性能により変わります。2本のラインだけで遠近やカメラの揺れを補正することはできません。</footer>

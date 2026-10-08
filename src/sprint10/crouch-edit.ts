@@ -106,7 +106,7 @@ export function moments(auto: CrouchResult, edits: Edits, result: CrouchResult, 
 /** Whether the foot is down in a frame, as the automatic judgment sees it: for a touchdown or toe-off, a toe near the
  * place within the band of its ground level (GROUND_BAND for a touchdown, LIFT_BAND for a toe-off); for the block, a toe
  * still near the front block. null when no toe is seen there. */
-export function footDown(f: CrouchFrame, m: Moment, W: number, H: number, leg: number): boolean | null {
+export function footDown(f: CrouchFrame, m: Pick<Moment, 'focus' | 'ground'> & { kind: string }, W: number, H: number, leg: number): boolean | null {
   if (!f.pose || !m.focus) return null;
   const toe = nearestToe(f.pose, m.focus.x, W);
   if (!toe || !visible(toe, .3)) return null;

@@ -111,3 +111,16 @@ describe('long jump, the end of the run-up', () => {
     expect(r.reason).toMatch(/踏切/);
   });
 });
+
+describe('long jump: moments set by hand', () => {
+  it('takes the user\'s frames for the takeoff, and the times, rhythm and speeds follow', () => {
+    const auto = run(1.54, 1.75), T = auto.contacts[auto.takeoff!], P = auto.contacts[auto.takeoff! - 1];
+    const edits = { [`td${T.index}`]: T.touchdownFrame! + 2, [`to${P.index}`]: P.toeOffFrame! - 1 };
+    const r = analyzeLongJump(frames(1.54), { width: W, height: H, athleteHeight: 1.75, edits });
+    expect(r.takeoffContact! - auto.takeoffContact!).toBeCloseTo(-2 / 240, 9);
+    expect(r.steps[0].stepTime! - auto.steps[0].stepTime!).toBeCloseTo(2 / 240, 9);
+    expect(r.steps[0].flight! - auto.steps[0].flight!).toBeCloseTo(3 / 240, 9);
+    expect(r.rhythm).not.toBe(auto.rhythm);
+    expect(r.contacts.map(c => c.x)).toEqual(auto.contacts.map(c => c.x));
+  });
+});

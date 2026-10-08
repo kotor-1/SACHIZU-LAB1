@@ -135,6 +135,21 @@ describe('hurdle clearance (side view)', () => {
   });
 });
 
+describe('hurdle: moments set by hand', () => {
+  it('takes the user\'s frames for a contact, and the times, the peak and the pictures follow', () => {
+    const auto = run(), T = auto.contacts[auto.takeoff!], L = auto.contacts[auto.landing!];
+    const edits = { [`to${T.index}`]: T.toeOffFrame! + 3, [`td${L.index}`]: L.touchdownFrame! - 2 };
+    const r = analyzeHurdle(frames(), { width: W, height: H, hurdleX: 960 / W, edits });
+    expect(r.times.takeoffContact! - auto.times.takeoffContact!).toBeCloseTo(3 / 240, 9);
+    expect(r.times.clearance! - auto.times.clearance!).toBeCloseTo(-5 / 240, 9);
+    expect(r.times.landingContact! - auto.times.landingContact!).toBeCloseTo(2 / 240, 9);
+    expect(r.moments.find(m => m.key === 'takeoff-to')!.frame).toBe(T.toeOffFrame! + 3);
+    expect(r.apex).not.toBeNull();
+    // nothing else moves
+    expect(r.times.approachContact).toBe(auto.times.approachContact); expect(r.contacts.map(c => c.x)).toEqual(auto.contacts.map(c => c.x));
+  });
+});
+
 describe('hurdle running direction', () => {
   it('follows the person who runs, not those standing', () => {
     const samples = Array.from({ length: 10 }, (_, i) => ({ pts: i * .06, people: [{ x: .9 - .05 * i, y: .6 }, { x: .3, y: .62 }, { x: .5 + .001 * i, y: .3 }] }));

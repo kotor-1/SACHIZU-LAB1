@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
 import { useFirstFrame } from '../sprint10/first-frame';
 import PlayerBar from '../sprint10/PlayerBar';
@@ -6,17 +6,20 @@ import type { Phase } from '../sprint10/crouch-figure';
 import type { CrouchFrame } from '../sprint10/crouch';
 import { measureCrouch } from '../sprint10/recording';
 import { CrouchReplay, frameInterval, insideFrame, PhaseFigures, type FigureOverlay, type ReplayEvent } from '../sprint10/CrouchViews';
-import { nearestPoseFrame } from '../cmj/pose-drawing';
-import { analyzeThrow, releaseMeasures, throwNames, THROW_VERSION, type Hand, type ShotStyle, type ThrowEvent, type ThrowResult } from './analysis';
+import { analyzeThrow, releaseMeasures, throwNames, THROW_VERSION, type Hand, type ShotStyle, type ThrowEvent, type ThrowOptions, type ThrowResult } from './analysis';
 import { kmh, SPREAD, THROW_GUIDE, throwAdvice } from './advice';
 import { flightAt, javelinAttitude, searchFlight, type FlightPath } from './implement';
 import { measureImplement, type ImplementFrames } from './recording';
+import { legLength, median } from '../sprint10/contacts';
+import { footDown } from '../sprint10/crouch-edit';
+import { contactMoments, effectsBetween, poseFlags, relatedValues, type Edits, type ReviewMoment, type ReviewValue } from '../sprint10/moment-edits';
+import { MomentReview } from '../sprint10/MomentReview';
 import '../sprint10/sprint10.css';
 
 /** One ◀/▶ tap moves the line by 0.2% of the frame width. */
 const NUDGE = .002;
-type Tab = 'advice' | 'pose' | 'numbers' | 'release' | 'replay';
-const TABS: [Tab, string][] = [['advice', 'ポイント'], ['pose', '姿勢'], ['numbers', '数値'], ['release', 'リリース'], ['replay', 'スロー']];
+type Tab = 'advice' | 'check' | 'pose' | 'numbers' | 'release' | 'replay';
+const TABS: [Tab, string][] = [['advice', 'ポイント'], ['check', '確認'], ['pose', '姿勢'], ['numbers', '数値'], ['release', 'リリース'], ['replay', 'スロー']];
 /** Without the athlete's height the implement is searched for at this one (the angles do not depend on it). */
 const DEFAULT_HEIGHT = 1.65;
 /** The height asked for (cm). */
@@ -25,6 +28,24 @@ const LEGEND = { jav: [['#ffb02e', '体幹（腰→肩）'], ['#ff6fd8', 'ブロ
 const G = THROW_GUIDE;
 const fixed = (v: number | null | undefined, digits = 3) => v == null ? '—' : v.toFixed(digits);
 const round = (v: number | null | undefined) => v == null ? '—' : String(Math.round(v));
+/** The analysis with the user's frames (`release`, and the contacts' `td{n}`, `to{n}`). */
+const withEdits = (o: ThrowOptions, edits: Edits): ThrowOptions => ({ ...o, releaseFrame: edits.release ?? null, edits });
+/** The values a moment's frame changes (the check shows them before and after): the times and the angles at the moments.
+ * The trunk is from vertical, forward positive. The release's speed and angle come from the implement's flight, searched
+ * for again once the release is set (about a second), so they are not among them. */
+function valuesOf(r: ThrowResult): ReviewValue[] {
+  const v = (label: string, value: number | null, unit: string, digits: number): ReviewValue => ({ label, value, unit, digits });
+  const k = r.frontKnee, t = r.times, n = throwNames(r);
+  if (r.event === 'jav') return [v('ブロック接地→リリース', t.delivery, '秒', 3), v('ブロック膝（接地）', k.atStart, '°', 0),
+    v('ブロック膝（最も曲がった時）', k.least, '°', 0), v('ブロック膝（リリース）', k.atRelease, '°', 0), v('上体（ブロック接地・前へ＋）', r.trunk.atStart, '°', 0),
+    v('上体（リリース・前へ＋）', r.trunk.atRelease, '°', 0), v('ブロックでの減速', r.com.atStart && r.com.atRelease !== null ? (1 - r.com.atRelease / r.com.atStart) * 100 : null, '%', 0)];
+  const glide = r.style === 'glide', at = glide ? `${n.frontFoot}の接地` : '開始';
+  return [...(glide ? [v('グライド', t.glide, '秒', 3), v(`${n.rearFoot}→${n.frontFoot}（移行）`, t.rearToFront, '秒', 3)] : []), v('突き出し', t.delivery, '秒', 3),
+    ...(glide ? [v(`後ろ膝（${n.rearFoot}の接地）`, r.rearKnee.atRear, '°', 0), v(`上体（${n.rearFoot}の接地・前へ＋）`, r.trunk.atRear, '°', 0)] : []),
+    v(`後ろ膝（${at}）`, r.rearKnee.atStart, '°', 0), v(`前膝（${at}）`, k.atStart, '°', 0), v(`上体（${at}・前へ＋）`, r.trunk.atStart, '°', 0),
+    v('足幅（身長に対して）', r.stancePx !== null && r.bodyPx ? r.stancePx / r.bodyPx * 100 : null, '%', 0),
+    v('前膝（リリース）', k.atRelease, '°', 0), v('後ろ膝（リリース）', r.rearKnee.atRelease, '°', 0), v('上体（リリース・前へ＋）', r.trunk.atRelease, '°', 0)];
+}
 
 /** Throws filmed from the side: ジャベリックスロー / javelin, or the shot put
  * (glide or standing; the user, 2026-10-05: 「グライドもしくは助走なし投げのみ」).
@@ -41,8 +62,6 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
   const [line, setLine] = useState(.5), [message, setMessage] = useState('');
   const [hand, setHand] = useState<Hand | null>(null), [style, setStyle] = useState<ShotStyle | null>(null);
   const [measured, setMeasured] = useState<{ frames: CrouchFrame[]; width: number; height: number; refiner: 'webgpu' | 'wasm' | null } | null>(null);
-  // The release frame chosen by the user in the replay; null: the one found.
-  const [releaseFrame, setReleaseFrame] = useState<number | null>(null);
   // The athlete's height (cm, optional): the scale for the release speed and the metres.
   const [heightText, setHeightText] = useState('');
   const heightNumber = Number(heightText), heightM = heightText && heightNumber >= HEIGHT_RANGE[0] && heightNumber <= HEIGHT_RANGE[1] ? heightNumber / 100 : null;
@@ -51,10 +70,19 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
   const [flight, setFlight] = useState<{ path: FlightPath | null; attitude: number | null; scale: number } | null>(null);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   useEffect(() => () => { owner.current?.abort(); owner.current = null; }, []);
-  useEffect(() => { setReleaseFrame(null); }, [measured, hand]);
-  const result: ThrowResult | null = useMemo(() => measured && hand ? analyzeThrow(measured.frames, { width: measured.width, height: measured.height,
-    event, hand, style: style ?? undefined, releaseFrame }) : null, [measured, event, hand, style, releaseFrame]);
-  // The flight is searched for after drawing (about a second of work).
+  // The moments the user set (frames by key: `release`, and `td{n}`, `to{n}` for the contacts), those confirmed and the
+  // one being checked; everything shown uses the result with them (the user, 2026-10-07: 「他のモードにも同じように
+  // 自動解析と微調整モード追加しましょう」).
+  const [edits, setEdits] = useState<Record<string, number>>({}), [checked, setChecked] = useState<ReadonlySet<string>>(new Set()), [moment, setMoment] = useState<string | null>(null);
+  useEffect(() => { setEdits({}); setChecked(new Set()); setMoment(null); }, [measured, hand, style]);
+  const options: ThrowOptions | null = useMemo(() => measured && hand ? { width: measured.width, height: measured.height, event, hand, style: style ?? undefined } : null,
+    [measured, event, hand, style]);
+  const auto: ThrowResult | null = useMemo(() => measured && options ? analyzeThrow(measured.frames, options) : null, [measured, options]);
+  const result: ThrowResult | null = useMemo(() => measured && options && auto ? Object.keys(edits).length ? analyzeThrow(measured.frames, withEdits(options, edits)) : auto : null,
+    [measured, options, auto, edits]);
+  // The flight is searched for after drawing (about a second of work), again only when the release moves: a contact set
+  // in the check leaves it as it is.
+  const releaseKey = result && !result.reason && result.release ? `${result.hand}:${result.release.frame}` : '';
   useEffect(() => {
     setFlight(null);
     if (!result || result.reason || !implement || !result.release || !result.releaseHand || !result.bodyPx) return;
@@ -66,7 +94,7 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
       if (!off) setFlight({ path, attitude, scale });
     }, 30);
     return () => { off = true; clearTimeout(timer); };
-  }, [result, implement, heightM, event]);
+  }, [releaseKey, implement, heightM, event]);   // eslint-disable-line react-hooks/exhaustive-deps
   const release = useMemo(() => result && !result.reason && flight ? releaseMeasures(result, flight.path, flight.attitude, heightM) : null, [result, flight, heightM]);
   const advice = useMemo(() => result && !result.reason ? throwAdvice(result, release, heightM) : [], [result, release, heightM]);
   const checks = advice.filter(a => a.level === 'check').length;
@@ -84,6 +112,39 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
     if (result.release) out.push({ label: 'リリース', short: 'リリース', pts: result.release.pts });
     return out.sort((a, b) => a.pts - b.pts);
   }, [result, event, names.rearFoot, names.rearDown, names.rearShort, names.frontDown, names.frontShort, names.power]);
+  // The moments to check: the contacts the times start or end at (the glide's start leaving, the rear foot's and the
+  // front foot's touchdowns) and the release, on RTMPose's points where there are any (analysis.ts).
+  const poseFrames = useMemo(() => measured ? measured.frames.map(f => f.refined ? { ...f, pose: f.refined } : f) : [], [measured]);
+  const list: ReviewMoment[] = useMemo(() => {
+    if (!auto || auto.reason || !measured || !auto.releaseFound) return [];
+    const W = measured.width, H = measured.height;
+    const one = (i: number | null, kind: 'touchdown' | 'toeOff', label: string, short: string) => i === null ? [] : contactMoments(auto.contacts, edits, measured.frames, W, H,
+      [{ index: auto.contacts[i].index, name: '', short: '' }]).filter(m => m.kind === kind).map(m => ({ ...m, label, short }));
+    const contacts = poseFlags([...(auto.style === 'glide' ? [...one(auto.start, 'toeOff', `グライドの開始（${names.rearFoot}が離れる）`, 'グライド開始'),
+      ...one(auto.rear, 'touchdown', names.rearDown, names.rearShort)] : []), ...(auto.style === 'standing' ? [] : one(auto.front, 'touchdown', names.frontDown, names.frontShort))],
+    poseFrames, W);
+    // The release: the throwing wrist faint round it, or the pose missing, makes it worth a look.
+    const found = auto.releaseFound, set = measured.frames.find(f => f.frame === (edits.release ?? found.frame)) ?? measured.frames.find(f => f.frame === found.frame)!;
+    const near = measured.frames.filter(f => Math.abs(f.frame - found.frame) <= 3), wrist = auto.hand === 'right' ? 16 : 15;
+    const seen = near.flatMap(f => f.pose ? [f.pose[wrist]?.visibility ?? 0] : []);
+    const flag = near.filter(f => !f.pose).length >= 2 ? '骨格が取れていないコマがあります。映像で確かめてください。'
+      : seen.length && median(seen) < .5 ? '投げる手がはっきり映っていません（暗い・ぶれている）。映像で確かめてください。' : null;
+    return [...contacts, { key: 'release', kind: 'release' as const, step: null, label: 'リリース（手から離れる瞬間）', short: 'リリース', frame: set.frame, pts: set.pts,
+      autoFrame: found.frame, focus: auto.releaseHand ? { x: auto.releaseHand.x / W, y: auto.releaseHand.y / H } : null, ground: null, flag }].sort((a, b) => a.autoFrame - b.autoFrame);
+  }, [auto, edits, measured, poseFrames, names.rearFoot, names.rearDown, names.rearShort, names.frontDown, names.frontShort]);
+  const waiting = list.filter(m => m.flag && !checked.has(m.key)).length, editedCount = Object.keys(edits).length;
+  const leg = useMemo(() => measured ? legLength(poseFrames.filter(f => f.pose), measured.width, measured.height) : 0, [poseFrames, measured]);
+  /** The frame with a pose nearest a frame: the release is taken only where the hand is seen. */
+  const posed = useCallback((frame: number) => {
+    const all = measured?.frames.filter(f => f.pose) ?? [];
+    return all.reduce<number | null>((b, f) => b === null || Math.abs(f.frame - frame) < Math.abs(b - frame) ? f.frame : b, null) ?? frame;
+  }, [measured]);
+  const preview = useCallback((m: ReviewMoment, frame: number) => {
+    if (!measured || !options || !result) return [];
+    const at = (n: number) => valuesOf(analyzeThrow(measured.frames, withEdits(options, { ...edits, [m.key]: m.key === 'release' ? posed(n) : n })));
+    const now = valuesOf(result), then = frame === m.frame ? now : at(frame);
+    return effectsBetween(now, then, relatedValues(now, at(m.frame + 2), at(m.frame - 2)));
+  }, [measured, options, result, edits, posed]);
   const [tab, setTab] = useState<Tab>('advice'), tabs = useRef<HTMLDivElement>(null), panels = useRef<HTMLDivElement>(null);
   const seekTo = useRef<number | null>(null);
   useEffect(() => { setTab('advice'); if (measured) resultCard.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }); }, [measured]);
@@ -133,16 +194,23 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
     if (top !== undefined && top < bar) window.scrollBy({ top: top - bar });
   }
   function show(p: Phase) { seekTo.current = p.pts; choose('replay'); }
-  /** The frame on screen in the replay becomes the release (the user sees the implement leave the hand). */
-  function releaseHere() {
-    const v = replay.current; if (!v || !measured) return;
-    const f = nearestPoseFrame(measured.frames.filter(q => q.pose), v.currentTime - .5 * frameInterval(measured.frames));
-    if (f) setReleaseFrame(f.frame === result?.releaseFound?.frame ? null : f.frame);
+  /** A moment set (or confirmed as judged), and on to the next one not yet checked. */
+  function setMomentFrame(key: string, frame: number) {
+    const m = list.find(q => q.key === key); if (!m) return;
+    const to = key === 'release' ? posed(frame) : frame;
+    setEdits(e => { const next = { ...e }; if (to === m.autoFrame) delete next[key]; else next[key] = to; return next; });
+    setChecked(c => new Set(c).add(key));
+    const i = list.indexOf(m), next = [...list.slice(i + 1), ...list.slice(0, i)].find(q => !checked.has(q.key));
+    setMoment(next ? next.key : key);
+  }
+  function openCheck(key?: string) {
+    const first = (key ? list.find(q => q.key === key) : undefined) ?? list.find(q => q.flag && !checked.has(q.key)) ?? list.find(q => !checked.has(q.key));
+    if (first) setMoment(first.key); choose('check');
   }
   function save() {
     if (!result) return;
-    const blob = new Blob([JSON.stringify({ version: THROW_VERSION, file: file?.name, line, hand, style, heightCm: heightM ? heightM * 100 : null, releaseFrame, result,
-      release, flight: flight?.path ?? null }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ version: THROW_VERSION, file: file?.name, line, hand, style, heightCm: heightM ? heightM * 100 : null, releaseFrame: edits.release ?? null, result,
+      release, flight: flight?.path ?? null, ...(editedCount ? { edited: { frames: edits, auto } } : {}), checked: [...checked] }, null, 2)], { type: 'application/json' });
     const href = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = href; a.download = `${event === 'jav' ? 'javelin' : 'shot-put'}-result.json`; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
   }
@@ -235,16 +303,31 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
         <div className="sprint10-metrics sprint10-summary">{tiles.map(([label, value, unit, note]) =>
           <div key={label}><span>{label}</span><strong>{value}<small>{value === '—' ? '' : unit}</small></strong>{note && <em>{note}</em>}</div>)}</div>
         {!measured.refiner && <p className="sprint10-note">高精度の骨格モデル（RTMPose）を読み込めなかったため、角度と骨格の表示はMediaPipeの骨格を使っています。</p>}
-        {result.releaseSetByUser && <p className="sprint10-hint">リリースは、スロー再生で選んだコマ（{result.release!.pts.toFixed(3)}秒）を使っています。</p>}
+        {list.length > 0 && <p className="crouch-check-note"><span>{editedCount ? `手で直したコマを使っています（${editedCount}か所）。`
+          : `${list.length > 1 ? '接地とリリース' : 'リリース'}のコマは自動判定です。ずれていたら1コマ単位で直せます。`}{waiting > 0 && ` 要確認 ${waiting}か所。`}</span>
+          {tab !== 'check' && <button type="button" onClick={() => openCheck()}>確認する</button>}</p>}
         <div ref={tabs} className="sprint10-tabs throw-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
-          <button key={id} id={`throw-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`throw-panel-${id}`} onClick={() => choose(id)}>
-            {label}{id === 'advice' && checks > 0 && <span className="sprint10-badge" aria-label={`確かめたい点 ${checks}件`}>{checks}</span>}</button>)}</div>
+          <button key={id} id={`throw-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`throw-panel-${id}`} onClick={() => id === 'check' ? openCheck() : choose(id)}>
+            {label}{id === 'advice' && checks > 0 && <span className="sprint10-badge" aria-label={`確かめたい点 ${checks}件`}>{checks}</span>}
+            {id === 'check' && waiting > 0 && <span className="sprint10-badge" aria-label={`要確認 ${waiting}か所`}>{waiting}</span>}</button>)}</div>
         <div ref={panels} className="sprint10-panels">
           <div id="throw-panel-advice" role="tabpanel" aria-labelledby="throw-tab-advice" hidden={tab !== 'advice'}>
             {advice.length > 0 && <ul className="sprint10-advice" aria-label="見方のポイント">{advice.map(a => <li key={a.topic + a.text} className={a.level}>
               <span aria-hidden="true">{a.level === 'good' ? '✓' : a.level === 'check' ? '!' : 'i'}</span><div><strong>{a.topic}</strong>{a.text}</div></li>)}</ul>}
             <p className="sprint10-hint">参考値は研究で報告されたトップ選手の値で、選手ごとの目標ではありません（出典は「数値の見方」）。</p>
             {result.notes.map(n => <p className="sprint10-note" key={n}>{n}</p>)}
+          </div>
+          <div id="throw-panel-check" role="tabpanel" aria-labelledby="throw-tab-check" hidden={tab !== 'check'}>
+            <p className="sprint10-hint">自動判定のコマを1つずつ確かめます。ずれていたら◀▶か下のコマで合わせて「このコマに決める」、合っていれば「OK」。時間と角度はすぐ変わり、リリースの速さと角度は決めた後に計算し直します（「リリース」）。上体は前へ傾くとプラスです。</p>
+            {tab === 'check' && <MomentReview url={url} frames={measured.frames} width={measured.width} height={measured.height}
+              list={list} edits={edits} checked={checked} at={moment} onAt={setMoment} onSet={setMomentFrame}
+              onRevert={key => setEdits(e => { const next = { ...e }; delete next[key]; return next; })} onRevertAll={() => setEdits({})}
+              onDone={() => choose('release')} doneLabel="リリースの値を見る" preview={preview} doneText="すべての瞬間を確認しました。値は「ポイント」「姿勢」「数値」「リリース」に反映されています。"
+              source={m => m.kind === 'release' ? '投げる手が最も高いコマ' : '骨格'}
+              note={m => m.kind !== 'release' || !implement ? null : !flight ? <p className="sprint10-hint" role="status">決めたリリースのコマで、用具の飛び方を調べています…</p>
+                : release?.angle == null ? <p className="sprint10-note">決めたリリースのコマからは、投げた直後の用具を見つけられませんでした。用具が手から離れた最初のコマか確かめてください。</p>
+                : <p className="sprint10-hint throw-release-now">決めたコマでのリリース：{release.speed === null ? '' : `速度 約${kmh(release.speed)} km/h・`}角度 {Math.round(release.angle)}°{release.speed === null ? '（速度は身長を入れると出ます）' : ''}</p>}
+              down={(m, f) => { if (m.kind === 'release') return null; const p = poseFrames.find(q => q.frame === f.frame); return p ? footDown(p, m, measured.width, measured.height, leg) : null; }} />}
           </div>
           <div id="throw-panel-pose" role="tabpanel" aria-labelledby="throw-tab-pose" hidden={tab !== 'pose'}>
             <ul className="sprint10-mark-legend" aria-label="線の色">{LEGEND[event].map(([color, label]) => <li key={label}><i style={{ background: color }} />{label}</li>)}</ul>
@@ -267,13 +350,13 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
           <div id="throw-panel-replay" role="tabpanel" aria-labelledby="throw-tab-replay" hidden={tab !== 'replay'} className="sprint10-replay">
             <CrouchReplay url={url} video={replay} frames={measured.frames} phases={result.moments} events={events} />
             <div className="throw-release-fix">
-              <button type="button" onClick={releaseHere}>表示中のコマをリリースにする</button>
-              {result.releaseSetByUser && <button type="button" onClick={() => setReleaseFrame(null)}>自動の判定に戻す</button>}
+              <button type="button" onClick={() => openCheck('release')}>リリースのコマを直す</button>
             </div>
-            <p className="sprint10-hint">リリースは投げる手が最も高くなったコマとして自動で決めています（実際と2〜3コマずれることがあります）。{jav ? 'やり' : '砲丸'}が手から離れたコマで止めて「表示中のコマをリリースにする」を押すと、そのコマで計算し直します。1/8は実際の8分の1の速さです。</p>
+            <p className="sprint10-hint">リリースは投げる手が最も高くなったコマとして自動で決めています（実際と2〜3コマずれることがあります）。「リリースのコマを直す」で、{jav ? 'やり' : '砲丸'}が手から離れたコマに1コマ単位で合わせると、そのコマで計算し直します。1/8は実際の8分の1の速さです。</p>
           </div>
         </div>
         <details className="sprint10-more"><summary>数値の見方</summary>
+          <p>接地とリリースのコマは「確認」で1コマ単位で直せ、直すと時間と角度がすぐ変わり、リリースの速さと角度は用具の飛び方から計算し直します（保存のJSONには自動の結果も残します）。</p>
           <p>角度は真横から見た2次元の角度です。膝は伸び切った状態が180°、上体（腰→肩）は鉛直からの傾きです。ブロック脚・前脚・後ろ脚は、骨格の左右ではなく、リリースのときに地面に着いている一番前の足（前足）の場所から決めています。</p>
           <p>接地は、つま先が地面の高さで止まった瞬間を骨格の動きから判定しています。リリースは、選んだ側の手首が最も高くなった瞬間です。真横から1秒120〜240コマで撮った7本（ジャベリックスロー・やり投げ4本、砲丸投グライド3本）をChromeとSafari系のブラウザで解析し、映像で見た瞬間と比べると、前足の接地は0〜3コマ遅く、砲丸投の後ろ足は離地が0〜1コマ早く・接地が0〜3コマ早く、リリースは2コマ早い〜3コマ遅いでした（120コマ/秒で1コマ＝0.008秒）。そのため時間は±0.03秒ほど、膝の角度は、膝が速く動く瞬間（リリースなど）ではコマが1〜2ずれると数度変わります。やり投げの後ろ足（最後の1歩）は、着いた後も足が滑り、止まる瞬間が0.1秒ほど遅れたため出していません。</p>
           {jav ? <p>参考値の出典：ブロック脚の膝はCamposら（2004、1999年世界選手権男子決勝7人：接地158〜178°・最も曲がった時137〜163°・リリース137〜173°）とBennett・Walker・Bissas（2018、2017年世界選手権決勝：リリース 男子162±22°・女子169±17°）。ブロック脚の接地からリリースまでの時間はBennettら（2018：男子0.129±0.013秒・女子0.141±0.012秒）、Camposら（2004：0.11〜0.14秒）、瀧川ら（2020、日本選手権女子決勝：0.132±0.023秒）。接地での上体の後傾はBennettら（2018：男子14±3°・女子16±4°）、田内ら（2012：約15°）。いずれもやり投げの値で、ジャベリックスローの研究値は見つかりませんでした。</p>
@@ -343,7 +426,11 @@ function ReleasePanel({ result: r, release: rel, searching, found, heightM }: { 
   const jav = r.event === 'jav', J = G.javRelease, S = G.shotReleaseFull;
   if (!found) return <p className="sprint10-note">リリースの前後の映像を読めなかったため、用具の飛び方を調べていません。</p>;
   if (searching) return <p role="status">用具の飛び方を調べています…</p>;
-  if (!rel || rel.angle === null) return <p className="sprint10-note">投げた直後の用具を見つけられませんでした。用具が手から離れた後も0.05秒（120コマ/秒で6コマ）以上映るよう、選手の上と前に余白をとって撮影してください。</p>;
+  // A release set by hand where the implement is still in the hand (or long gone) gives no flight: in the 7 test videos
+  // the flight was found from the release seen in the picture, but not from 2-3 frames before it in a shot put.
+  if (!rel || rel.angle === null) return <p className="sprint10-note">{r.releaseSetByUser
+    ? '直したリリースのコマからは、投げた直後の用具を見つけられませんでした。用具が手から離れた最初のコマになっているか、「確認」で確かめてください（自動の判定に戻すこともできます）。'
+    : '投げた直後の用具を見つけられませんでした。用具が手から離れた後も0.05秒（120コマ/秒で6コマ）以上映るよう、選手の上と前に余白をとって撮影してください。'}</p>;
   const tiles: [string, string, string, string][] = [
     ['リリース速度（目安）', rel.speed === null ? '—' : `約${kmh(rel.speed)}`, 'km/h', rel.speed === null ? '身長を入れると出ます'
       : `目安の幅 ${kmh(rel.speed * (1 - SPREAD))}〜${kmh(rel.speed * (1 + SPREAD))} km/h・参考 ${jav ? `男子${kmh(J.speed.men)}・女子${kmh(J.speed.women)} km/h（やり投げ）` : `女子${kmh(S.speed)} km/h`}`],

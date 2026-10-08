@@ -165,3 +165,23 @@ describe('throws (side view)', () => {
     expect(run(frames, { event: 'shot', style: 'standing' }).reason).toMatch(/向き/);
   });
 });
+
+describe('throws: moments set by hand', () => {
+  it('takes the user\'s frames for the contacts, and the times and the angles there follow', () => {
+    const { frames } = build(GLIDE), auto = run(frames, { event: 'shot', style: 'glide' });
+    const F = auto.contacts[auto.front!], S = auto.contacts[auto.start!];
+    const r = run(frames, { event: 'shot', style: 'glide', edits: { [`td${F.index}`]: F.touchdownFrame! + 2, [`to${S.index}`]: S.toeOffFrame! - 1 } });
+    expect([r.front, r.rear, r.start]).toEqual([auto.front, auto.rear, auto.start]);
+    expect(r.deliveryStart!.frame).toBe(F.touchdownFrame! + 2);
+    expect(r.times.delivery! - auto.times.delivery!).toBeCloseTo(-2 / FPS, 9);
+    expect(r.times.rearToFront! - auto.times.rearToFront!).toBeCloseTo(2 / FPS, 9);
+    expect(r.times.glide! - auto.times.glide!).toBeCloseTo(1 / FPS, 9);
+    expect(r.frontKnee.atStart).not.toBe(auto.frontKnee.atStart);
+  });
+  it('the release and the contacts set together', () => {
+    const { frames } = build(JAV), auto = run(frames, { event: 'jav' }), F = auto.contacts[auto.front!];
+    const r = run(frames, { event: 'jav', releaseFrame: auto.release!.frame + 2, edits: { [`td${F.index}`]: F.touchdownFrame! - 1 } });
+    expect(r.releaseSetByUser).toBe(true);
+    expect(r.times.delivery! - auto.times.delivery!).toBeCloseTo(3 / FPS, 9);
+  });
+});

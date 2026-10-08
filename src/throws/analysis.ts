@@ -18,6 +18,7 @@
  * Angles from RTMPose (`refined`) where present, as the hurdle. */
 import { anglePose, type CrouchFrame, type CrouchPoint } from '../sprint10/crouch';
 import { legLength, median, plantedToes, plantsOf, quantile, toesOf, visible, CONTACT_MIN, GROUND_BAND, LIFT_BAND, PLANT_JOIN, PLANT_RADIUS, type Contact, type Plant, type Toe } from '../sprint10/contacts';
+import { editContacts, type Edits } from '../sprint10/moment-edits';
 import { trunkAngle } from '../sprint10/angles';
 import type { Mark, Phase } from '../sprint10/crouch-figure';
 import { centreOfMass } from '../hurdling/analysis';
@@ -86,6 +87,8 @@ export interface ThrowOptions {
   style?: ShotStyle;
   /** The release frame set by the user; else found. */
   releaseFrame?: number | null;
+  /** The frames the user set for the contacts (`td{n}`, `to{n}` of contact n; sprint10/moment-edits.ts). */
+  edits?: Edits;
 }
 export interface Moment { frame: number; pts: number }
 export interface ThrowTimes {
@@ -242,6 +245,7 @@ export function analyzeThrow(frames: readonly CrouchFrame[], options: ThrowOptio
   const found = plants.map(p => ({ p, c: contactOf(p, toes, leg, lastSeen, firstSeen) })).sort((a, b) => (a.c.touchdown ?? a.p.from) - (b.c.touchdown ?? b.p.from));
   plants.splice(0, plants.length, ...found.map(f => f.p));
   base.contacts = found.map((f, i) => ({ ...f.c, index: i + 1 }));
+  if (options.edits) base.contacts = editContacts(base.contacts, options.edits, frames);
   const ahead = (i: number) => base.contacts[i].x * direction;
   const begins = (i: number) => base.contacts[i].touchdown ?? plants[i].from;
   // Front: the foremost contact begun before the release and on the ground until about then.

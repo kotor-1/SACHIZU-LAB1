@@ -10,13 +10,26 @@ import { HIGH_JUMP_GUIDE, highJumpAdvice } from './advice';
 import { measureHighJump } from './recording';
 import type { UprightPoints } from './camera';
 import { LiftChart, RhythmTable } from './HighJumpCharts';
+import { legLength } from '../sprint10/contacts';
+import { footDown } from '../sprint10/crouch-edit';
+import { contactMoments, effectsBetween, poseFlags, relatedValues, type ReviewMoment, type ReviewValue } from '../sprint10/moment-edits';
+import { MomentReview } from '../sprint10/MomentReview';
 import '../sprint10/sprint10.css';
 import './highjump.css';
 
 /** One ▲▼◀▶ tap moves the chosen point by 0.1% of the picture. */
 const NUDGE = .001;
-type Tab = 'advice' | 'pose' | 'times' | 'replay';
-const TABS: [Tab, string][] = [['advice', 'ポイント'], ['pose', '姿勢'], ['times', 'リズム'], ['replay', 'スロー']];
+type Tab = 'advice' | 'check' | 'pose' | 'times' | 'replay';
+const TABS: [Tab, string][] = [['advice', 'ポイント'], ['check', '確認'], ['pose', '姿勢'], ['times', 'リズム'], ['replay', 'スロー']];
+/** The contacts before the bar, by role: the check's moments and their names. */
+const ROLES = [['before', '踏切の2歩前', '2歩前'], ['penult', '踏切の1歩前', '1歩前'], ['takeoff', '踏切', '踏切']] as const;
+/** The values a moment's frame changes (the check shows them before and after). */
+const valuesOf = (r: HighJumpResult): ReviewValue[] => [
+  { label: '上向きの速さ（離地）', value: r.lift?.speed ?? null, unit: 'm/s', digits: 2 }, { label: '空中で上がった高さ', value: r.lift ? r.lift.h2 * 100 : null, unit: 'cm', digits: 0 },
+  { label: '踏切の接地時間', value: r.times.takeoffContact, unit: '秒', digits: 3 }, { label: '最後の1歩（接地→接地）', value: r.times.lastStep, unit: '秒', digits: 3 },
+  { label: 'その前の1歩（接地→接地）', value: r.times.stepBefore, unit: '秒', digits: 3 }, { label: '最後の2歩のリズム', value: r.rhythm, unit: '', digits: 2 },
+  { label: '1歩前の接地時間', value: r.times.penultContact, unit: '秒', digits: 3 }, { label: '踏切前の空中', value: r.times.lastFlight, unit: '秒', digits: 3 },
+  { label: '2歩前の接地時間', value: r.times.beforeContact, unit: '秒', digits: 3 }, { label: '踏切接地の後傾', value: r.posture.lean, unit: '°', digits: 0 }];
 type Handle = 'leftBar' | 'leftFoot' | 'rightBar' | 'rightFoot';
 const HANDLES: [Handle, string, string][] = [['leftBar', '左の支柱：バー', '左バー'], ['leftFoot', '左の支柱：根元', '左根元'], ['rightBar', '右の支柱：バー', '右バー'], ['rightFoot', '右の支柱：根元', '右根元']];
 interface Setting { points: Record<Handle, { x: number; y: number }>; barCm: number | null }
@@ -44,8 +57,25 @@ export default function HighJumpLab() {
   const [used, setUsed] = useState<Setting | null>(null);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   useEffect(() => () => { owner.current?.abort(); owner.current = null; }, []);
-  const result: HighJumpResult | null = useMemo(() => measured && used && used.barCm ? analyzeHighJump(measured.frames,
-    { width: measured.width, height: measured.height, uprights: uprights(used), barHeight: used.barCm / 100 }) : null, [measured, used]);
+  // The judged moments the user set (frames by moment key), those confirmed, and the one being checked; everything shown
+  // uses the result with them (the user, 2026-10-07: 「他のモードにも同じように自動解析と微調整モード追加しましょう」).
+  const [edits, setEdits] = useState<Record<string, number>>({}), [checked, setChecked] = useState<ReadonlySet<string>>(new Set()), [moment, setMoment] = useState<string | null>(null);
+  useEffect(() => { setEdits({}); setChecked(new Set()); setMoment(null); }, [measured, used]);
+  const options = useMemo(() => measured && used && used.barCm ? { width: measured.width, height: measured.height, uprights: uprights(used), barHeight: used.barCm / 100 } : null, [measured, used]);
+  const auto: HighJumpResult | null = useMemo(() => measured && options ? analyzeHighJump(measured.frames, options) : null, [measured, options]);
+  const result: HighJumpResult | null = useMemo(() => measured && options && auto ? Object.keys(edits).length ? analyzeHighJump(measured.frames, { ...options, edits }) : auto : null, [measured, options, auto, edits]);
+  // The contacts are judged on RTMPose's points where there are any (analysis.ts): the strip's bars and the flags too.
+  const poseFrames = useMemo(() => measured ? measured.frames.map(f => f.refined ? { ...f, pose: f.refined } : f) : [], [measured]);
+  const list: ReviewMoment[] = useMemo(() => !auto || auto.reason || !measured ? [] : poseFlags(contactMoments(auto.contacts, edits, measured.frames, measured.width, measured.height,
+    ROLES.flatMap(([role, name, short]) => auto[role] === null ? [] : [{ index: auto.contacts[auto[role]!].index, name, short }])), poseFrames, measured.width), [auto, edits, measured, poseFrames]);
+  const waiting = list.filter(m => m.flag && !checked.has(m.key)).length, editedCount = Object.keys(edits).length;
+  const leg = useMemo(() => measured ? legLength(poseFrames.filter(f => f.pose), measured.width, measured.height) : 0, [poseFrames, measured]);
+  const preview = useCallback((m: ReviewMoment, frame: number) => {
+    if (!measured || !options || !result) return [];
+    const at = (n: number) => valuesOf(analyzeHighJump(measured.frames, { ...options, edits: { ...edits, [m.key]: n } }));
+    const now = valuesOf(result), then = frame === m.frame ? now : at(frame);
+    return effectsBetween(now, then, relatedValues(now, at(m.frame + 2), at(m.frame - 2)));
+  }, [measured, options, result, edits]);
   const advice = useMemo(() => result && !result.reason ? highJumpAdvice(result) : [], [result]);
   const checks = advice.filter(a => a.level === 'check').length;
   const events: ReplayEvent[] = useMemo(() => {
@@ -123,9 +153,19 @@ export default function HighJumpLab() {
     if (top !== undefined && top < bar) window.scrollBy({ top: top - bar });
   }
   function show(p: Phase) { seekTo.current = p.pts; choose('replay'); }
+  /** A moment set (or confirmed as judged), and on to the next one not yet checked. */
+  function setMomentFrame(key: string, frame: number) {
+    const m = list.find(q => q.key === key); if (!m) return;
+    setEdits(e => { const next = { ...e }; if (frame === m.autoFrame) delete next[key]; else next[key] = frame; return next; });
+    setChecked(c => new Set(c).add(key));
+    const i = list.indexOf(m), next = [...list.slice(i + 1), ...list.slice(0, i)].find(q => !checked.has(q.key));
+    setMoment(next ? next.key : key);
+  }
+  function openCheck() { const first = list.find(q => q.flag && !checked.has(q.key)) ?? list.find(q => !checked.has(q.key)); if (first) setMoment(first.key); choose('check'); }
   function save() {
     if (!result) return;
-    const blob = new Blob([JSON.stringify({ version: HIGH_JUMP_VERSION, file: file?.name, setting: used, result }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ version: HIGH_JUMP_VERSION, file: file?.name, setting: used, result,
+      ...(editedCount ? { edited: { frames: edits, auto } } : {}), checked: [...checked] }, null, 2)], { type: 'application/json' });
     const href = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = href; a.download = 'highjump-result.json'; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
   }
@@ -191,9 +231,13 @@ export default function HighJumpLab() {
           <div><span>最後の2歩（接地→接地）</span><strong>{t?.stepBefore != null && t.lastStep != null ? <>{t.stepBefore.toFixed(2)}<small>→</small>{t.lastStep.toFixed(2)}</> : '—'}<small>秒</small></strong></div>
           <div><span>踏切接地の後傾</span><strong>{result.posture.lean == null ? '—' : Math.round(result.posture.lean)}<small>°</small></strong></div></div>
         {measured && !measured.refiner && <p className="sprint10-note">高精度の骨格モデル（RTMPose）を読み込めなかったため、MediaPipeの骨格を使っています。</p>}
-        <div ref={tabs} className="sprint10-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
-          <button key={id} id={`highjump-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`highjump-panel-${id}`} onClick={() => choose(id)}>
-            {label}{id === 'advice' && checks > 0 && <span className="sprint10-badge" aria-label={`確かめたい点 ${checks}件`}>{checks}</span>}</button>)}</div>
+        {list.length > 0 && <p className="crouch-check-note"><span>{editedCount ? `手で直したコマを使っています（${editedCount}か所）。` : '接地・離地のコマは自動判定です。ずれていたら1コマ単位で直せます。'}
+          {waiting > 0 && ` 要確認 ${waiting}か所。`}</span>
+          {tab !== 'check' && <button type="button" onClick={openCheck}>確認する</button>}</p>}
+        <div ref={tabs} className="sprint10-tabs crouch-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
+          <button key={id} id={`highjump-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`highjump-panel-${id}`} onClick={() => id === 'check' ? openCheck() : choose(id)}>
+            {label}{id === 'advice' && checks > 0 && <span className="sprint10-badge" aria-label={`確かめたい点 ${checks}件`}>{checks}</span>}
+            {id === 'check' && waiting > 0 && <span className="sprint10-badge" aria-label={`要確認 ${waiting}か所`}>{waiting}</span>}</button>)}</div>
         <div ref={panels} className="sprint10-panels">
           <div id="highjump-panel-advice" role="tabpanel" aria-labelledby="highjump-tab-advice" hidden={tab !== 'advice'}>
             <LiftChart result={result} barHeight={used.barCm / 100} />
@@ -201,6 +245,14 @@ export default function HighJumpLab() {
               <span aria-hidden="true">{a.level === 'good' ? '✓' : a.level === 'check' ? '!' : 'i'}</span><div><strong>{a.topic}</strong>{a.text}</div></li>)}</ul>}
             <p className="sprint10-hint">参考値は研究で報告された値で、選手ごとの目標ではありません（出典は「数値の見方」）。</p>
             {result.notes.map(n => <p className="sprint10-note" key={n}>{n}</p>)}
+          </div>
+          <div id="highjump-panel-check" role="tabpanel" aria-labelledby="highjump-tab-check" hidden={tab !== 'check'}>
+            <p className="sprint10-hint">自動判定のコマを1つずつ確かめます。ずれていたら◀▶か下のコマで合わせて「このコマに決める」、合っていれば「OK」。数値はすぐ変わります。</p>
+            {tab === 'check' && measured && <MomentReview url={url} frames={measured.frames} width={measured.width} height={measured.height}
+              list={list} edits={edits} checked={checked} at={moment} onAt={setMoment} onSet={setMomentFrame}
+              onRevert={key => setEdits(e => { const next = { ...e }; delete next[key]; return next; })} onRevertAll={() => setEdits({})}
+              onDone={() => choose('times')} preview={preview} source={() => '骨格'} doneText="すべての瞬間を確認しました。値は「ポイント」「姿勢」「リズム」に反映されています。"
+              down={(m, f) => { const p = poseFrames.find(q => q.frame === f.frame); return p ? footDown(p, m, measured.width, measured.height, leg) : null; }} />}
           </div>
           <div id="highjump-panel-pose" role="tabpanel" aria-labelledby="highjump-tab-pose" hidden={tab !== 'pose'}>
             <ul className="sprint10-mark-legend" aria-label="線の色">{LEGEND.map(([color, label]) => <li key={label}><i style={{ background: color }} />{label}</li>)}</ul>
@@ -219,6 +271,7 @@ export default function HighJumpLab() {
           </div>
         </div>
         <details className="sprint10-more"><summary>数値の見方</summary>
+          <p>接地・離地のコマは「確認」で1コマ単位で直せ、直すと上向きの速さ・上がった高さ・リズム・後傾の値がすぐ変わります（保存のJSONには自動の結果も残します）。</p>
           <p>上向きの速さは、離地の直後0.1秒の重心の高さに、重力（9.81m/s²）で減速する放物線を当てはめて求めます。空中で上がった高さは速さから（速さ²÷2÷9.81）、重心の最高点は離地時の重心の高さに上がった高さを足した値です。重心は骨格の各部位の位置と体重に占める割合（de Leva 1996）から求めます。</p>
           <p>物差し：スマホの焦点距離（iPhoneの通常の画角、35mm換算27mm）と、左右の支柱の根元・バーの位置の4点、バーの高さから、カメラの高さ・向き・位置を計算します。そのうえで、踏切足が地面に着いた場所と、1歩前の足の場所を結ぶ向きを跳躍の面として、重心の高さをメートルに直します。カメラが斜めでも、選手のいる距離で高さを測れます。{cam && ` 今回：カメラの高さ ${cam.height.toFixed(2)}m・踏切から ${cam.distance == null ? '—' : cam.distance.toFixed(1)}m、最後の1歩を見る角度 ${cam.view == null ? '—' : Math.round(cam.view)}°（90°が真横）、支柱の間隔 ${cam.spacing.toFixed(2)}m。`}</p>
           <p>確かめ方：計算した支柱の間隔が規格（約4m）に近ければ、バーの高さと点の位置が合っています（{SPACING[0]}〜{SPACING[1]}mの外では注意を表示）。はるき・つばきの動画（バー120cm）では4.13・4.20mでした。精度の見込みは上向きの速さ±0.1〜0.15m/s、上がった高さ±3〜4cmです。踏切の離地の判定が0.01秒ずれると、上向きの速さは約0.1m/s、上がった高さは約3cm変わります（最高点の高さは変わりません）。フォースプレートなどの真の値との比較はしていません。</p>

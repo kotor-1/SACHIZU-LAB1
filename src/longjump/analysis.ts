@@ -27,6 +27,7 @@
 import { centreOfMass } from '../hurdling/analysis';
 import { anglePose, type CrouchFrame, type CrouchPoint } from '../sprint10/crouch';
 import { contactOf, contactPlants, legLength, median, plantedToes, plantsOf, TOE, visible, type Contact, type Toe } from '../sprint10/contacts';
+import { editContacts, type Edits } from '../sprint10/moment-edits';
 import { kneeAngle, trunkAngle } from '../sprint10/angles';
 import type { Mark, Phase } from '../sprint10/crouch-figure';
 import { rulerScale, type RulerPoints, type RulerScale } from './ruler';
@@ -68,6 +69,8 @@ export interface LongJumpOptions {
   athleteHeight?: number | null;
   /** The ruler on the ground: its four points and its length (m). */
   ruler?: { points: RulerPoints; distance: number } | null;
+  /** The frames the user set for the judged moments (`td{n}`, `to{n}` of contact n; sprint10/moment-edits.ts). */
+  edits?: Edits;
 }
 /** One step before the takeoff: its contact, the flight after it, and the centre of mass's mean forward speed
  * from its touchdown to the next (px/s; m/s with the scale). */
@@ -154,6 +157,7 @@ export function analyzeLongJump(frames: readonly CrouchFrame[], options: LongJum
   const plants = contactPlants(raw.filter(p => ground - p.y < ABOVE_GROUND * leg), leg, direction);
   const firstSeen = seen[0].pts, lastSeen = seen.at(-1)!.pts;
   base.contacts = plants.map((p, i) => contactOf(p, i + 1, toes, leg, lastSeen, firstSeen));
+  if (options.edits) base.contacts = editContacts(base.contacts, options.edits, frames);
   const C = base.contacts;
   // The takeoff: the contact followed by the long flight.
   const take = C.findIndex((c, i) => c.toeOff !== null && ((C[i + 1]?.touchdown ?? lastSeen) - c.toeOff) >= TAKEOFF_FLIGHT);

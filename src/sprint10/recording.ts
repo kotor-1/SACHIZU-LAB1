@@ -54,6 +54,9 @@ interface FrameOptions {
   /** Only the frames from `from` to `to` (s) are analysed; the ones before are decoded and passed over (a decode is
    * under 1 ms a frame, a pose 35 ms and more). */
   from?: number; to?: number;
+  /** Every frame of the video (index, time), told once before any is read: the 10 m's check steps through them all,
+   * also those not analysed (a 240 fps video is analysed at 120). */
+  onTimeline?: (frames: readonly { frameIndex: number; pts: number }[]) => void;
 }
 export async function measureSprint(file: File, startX: number, signal: AbortSignal,
   progress: (fraction: number, message: string) => void, finishX?: number, start: SprintStart = 'standing', distanceM = 10,
@@ -66,6 +69,7 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
   const d = await untilAborted(demuxMP4(file), signal); check();
   if (!d.frames.length || d.frames.length > 3600 || d.frames.at(-1)!.pts - d.frames[0].pts > 30)
     throw new Error('1走分・30秒以内・3600フレーム以内の動画を選んでください。');
+  options.onTimeline?.(d.frames.map(f => ({ frameIndex: f.frameIndex, pts: f.pts })));
   const rotation = trackRotation((d.videoTrack as typeof d.videoTrack & { matrix?: ArrayLike<number> }).matrix);
   let decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
   // Up to four people per frame: with two, two people jogging behind the track
