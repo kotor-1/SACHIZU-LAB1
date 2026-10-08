@@ -14,7 +14,7 @@ export default defineConfig({
       for (const name of ['pose_landmarker_lite.task', 'pose_landmarker_full.task', 'pose_landmarker_heavy.task', 'README.md']) {
         this.emitFile({ type: 'asset', fileName: `models/cmj/${name}`, source: readFileSync(resolve(import.meta.dirname, 'public/models/cmj', name)) });
       }
-      for (const name of ['rtmpose-m-halpe26-256x192.onnx', 'rtmpose-l-halpe26-384x288.onnx', 'rtmpose-l-halpe26-384x288.f16.bin', 'README.md']) {
+      for (const name of ['rtmpose-m-halpe26-256x192.onnx', 'rtmpose-l-halpe26-384x288.onnx', 'rtmpose-l-halpe26-384x288.f16.bin', 'rtmpose-m-halpe26-384x288.onnx', 'README.md']) {
         this.emitFile({ type: 'asset', fileName: `models/rtmpose/${name}`, source: readFileSync(resolve(import.meta.dirname, 'public/models/rtmpose', name)) });
       }
       this.emitFile({ type: 'asset', fileName: 'licenses/onnxruntime-web.txt', source: readFileSync(resolve(import.meta.dirname, 'public-app/licenses/onnxruntime-web.txt')) });

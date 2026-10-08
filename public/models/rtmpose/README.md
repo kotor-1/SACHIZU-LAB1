@@ -8,6 +8,9 @@ Source: [OpenMMLab MMPose, RTMPose](https://github.com/open-mmlab/mmpose/tree/ma
 | rtmpose-m-halpe26-256x192.onnx | Crouch start: angles and the skeleton shown (26 keypoints, input 192x256) | 26f3a19e61304a600dfb82d1001d41d24343b89fc70a33ffc84657e0b0bf2ecf |
 | rtmpose-l-halpe26-384x288.onnx | Posture check: the graph of RTMPose-l (26 keypoints, input 288x384), its float weights moved out | 7b7fb0efc8f986b9549b4c96b8223f3d6f93b113a0b519294cfb210e82da97ea |
 | rtmpose-l-halpe26-384x288.f16.bin | Posture check: those weights as float16, widened back to float32 in the browser | d0ddc25f794e951bd85f2e03eeeb84cbbf95646ec69e66a49ff228d0510f32de |
+| rtmpose-m-halpe26-384x288.onnx | Posture check, when RTMPose-l cannot be made on a device: RTMPose-m at the same input (288x384), unmodified | f04d739dcebb43cce86e589ca65f0934959bf42b787b89f4abaa7111baf38a70 |
+
+The posture check's fallback RTMPose-m 384x288 is the unmodified `end2end.onnx` of `https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-m_simcc-body7_pt-body7-halpe26_700e-384x288-89e6428b_20230605.zip`; it is downloaded only when RTMPose-l cannot be made on the device.
 
 The posture check's RTMPose-l comes from the same release:
 `https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-l_simcc-body7_pt-body7-halpe26_700e-384x288-734182ce_20230605.zip` (`end2end.onnx`, SHA-256 8c55b463b44072d68c890e495f670163ced979c4049ed2c599a7f0077670879c, 112.9 MB).

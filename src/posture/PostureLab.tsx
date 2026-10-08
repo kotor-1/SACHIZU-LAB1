@@ -11,9 +11,10 @@ import { loadPhoto, phoneTilt, photoFinder, readPhoto, type Shot } from './still
 import '../sprint10/sprint10.css';
 import './posture.css';
 
-export const POSTURE_VERSION = 'posture-v2 (2026-10-08)';
+export const POSTURE_VERSION = 'posture-v2.1 (2026-10-08)';
 type Tab = 'points' | View;
 const LEVEL_WORDS = ['目安の範囲', 'やや', '大きめ'] as const;
+const MODEL_NAMES = { l: 'RTMPose-l 384×288', m: 'RTMPose-m 384×288' } as const;
 /** A photo's phone tilt worth a word (degrees): leaning sideways turns every measure by as much; looking down far bends the
  * verticals away from the middle of the picture. */
 const LEAN_NOTE = 1, LOOK_NOTE = 10;
@@ -30,6 +31,8 @@ export default function PostureLab() {
   const [tilts, setTilts] = useState<Partial<Record<View, number>>>({});
   const [working, setWorking] = useState<Partial<Record<View, boolean>>>({}), [errors, setErrors] = useState<Partial<Record<View, string>>>({});
   const [status, setStatus] = useState(''), [tab, setTab] = useState<Tab>('points'), [leveling, setLeveling] = useState(false);
+  // The model the keypoints come from on this device, and how it runs (shown, and saved with the results).
+  const [made, setMade] = useState<Pick<PostureModel, 'size' | 'backend'> | null>(null);
   // The camera: which way, the views to take, the voice; running while `capture` is set.
   const [facing, setFacing] = useState<'user' | 'environment'>('environment'), [voiceOn, setVoiceOn] = useState(true);
   const [chosen, setChosen] = useState<View[]>([...VIEWS]), [capture, setCapture] = useState<{ views: View[]; motion: boolean } | null>(null);
@@ -41,6 +44,7 @@ export default function PostureLab() {
   useEffect(() => { voice.current.on = voiceOn; }, [voiceOn]);
 
   const model = () => loads.current.model ??= loadPostureModel(new AbortController().signal, setStatus)
+    .then(m => { setMade({ size: m.size, backend: m.backend }); return m; })
     .catch(e => { loads.current.model = undefined; throw e; }).finally(() => setStatus(''));
   const finder = () => loads.current.finder ??= photoFinder(new AbortController().signal, setStatus)
     .catch(e => { loads.current.finder = undefined; throw e; });
@@ -92,7 +96,7 @@ export default function PostureLab() {
     else document.getElementById(`posture-photo-${view}`)?.click();
   }
   function save() {
-    const data = { version: POSTURE_VERSION, savedAt: new Date().toISOString(), findings, nearEdge: near,
+    const data = { version: POSTURE_VERSION, savedAt: new Date().toISOString(), model: made && `${MODEL_NAMES[made.size]} (${made.backend})`, findings, nearEdge: near,
       views: Object.fromEntries(taken.map(v => [v, { source: shots[v]!.source, name: shots[v]!.name, takenAt: shots[v]!.takenAt, frames: shots[v]!.frames,
         roll: shots[v]!.roll, pitch: shots[v]!.pitch, tilt: tilts[v] ?? 0, width: shots[v]!.picture.width, height: shots[v]!.picture.height,
         facing: results[v]!.facing, measures: results[v]!.measures, warnings: results[v]!.warnings, keypoints: shots[v]!.points }])) };
@@ -157,6 +161,7 @@ export default function PostureLab() {
           <p>境目との差が読み取りの誤差（±{nearOf('shoulderTilt')}°、横の頭の位置は±{nearOf('headForward')}°）より小さく、撮り直すと判定が変わることがあるため、ポイントには入れていません。</p>
           <ul>{near.map(f => <li key={f.key}>{nearText(f)}<small className="posture-where">{f.views.map(v => VIEW_NAMES[v]).join('・')}</small></li>)}</ul></div>}
         {warned.map(([w, views]) => <p key={w} className="sprint10-note">{views.map(v => VIEW_NAMES[v]).join('・')}：{w}</p>)}
+        {made?.size === 'm' && <p className="sprint10-note">この端末では大きい骨格モデルを使えなかったため、軽いモデル（{MODEL_NAMES.m}）で読み取りました。値は少し粗くなります（頭の傾きで1°ほど）。</p>}
         {unknownTilt && <p className="sprint10-note">撮影のときスマホの傾きを確かめられませんでした。背景の柱や壁の縦線が傾いて見えたら、各向きの「写真の傾きを直す」で合わせてください。</p>}
         {roll !== null && <p className="sprint10-hint">撮影のときのスマホの傾き：{Math.abs(roll).toFixed(1)}°（{LEVEL}°以内で撮っています）</p>}
         <details className="sprint10-more"><summary>この結果の見方</summary><ul className="posture-reading">{READING.map(r => <li key={r}>{r}</li>)}</ul></details>
@@ -195,7 +200,7 @@ export default function PostureLab() {
       </details>
       <button type="button" onClick={save}>結果を保存（JSON）</button>
     </section>}
-    <footer>{POSTURE_VERSION} · 写真・映像はこの端末内で処理し、送信しません。</footer>
+    <footer>{POSTURE_VERSION}{made && ` · ${MODEL_NAMES[made.size]} / ${made.backend}`} · 写真・映像はこの端末内で処理し、送信しません。</footer>
   </main>;
 }
 

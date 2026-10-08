@@ -10,16 +10,25 @@ import { cropAround, decode, headCrop, IH, IW, meanOf, resized, withHead, type C
 import { areaInput, widen } from './model-input';
 
 export const POSTURE_MODEL = 'rtmpose-l-halpe26-384x288';
+/** When the large model cannot be made on a device: RTMPose-m at the same input (288x384), one plain float32 file
+ * (56 MB). The reading is the same, a little coarser: on the user's front photo it read the head's tilt 0.7–1.2° off the
+ * glasses' line, where the large one was within 0.6°. The user's iPhone could make the large one neither on WebGPU nor
+ * on WebAssembly (2026-10-08; why is not known yet, so the page tells which way failed). */
+export const LIGHT_MODEL = 'rtmpose-m-halpe26-384x288';
 /** Checked before use (public/models/rtmpose/README.md). */
 const SHA256 = {
   graph: '7b7fb0efc8f986b9549b4c96b8223f3d6f93b113a0b519294cfb210e82da97ea',
   weights: 'd0ddc25f794e951bd85f2e03eeeb84cbbf95646ec69e66a49ff228d0510f32de',
+  light: 'f04d739dcebb43cce86e589ca65f0934959bf42b787b89f4abaa7111baf38a70',
 };
 const ORT_WASM = new URL('../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm', import.meta.url).href;
 
 export type Picture = HTMLCanvasElement | ImageBitmap;
+export type Backend = 'webgpu' | 'wasm';
 export interface PostureModel {
-  backend: 'webgpu' | 'wasm';
+  backend: Backend;
+  /** 'l': RTMPose-l, the posture check's model; 'm': RTMPose-m, when the large one could not be made on the device. */
+  size: 'l' | 'm';
   /** The keypoints in a window of the picture (pixels); `mirrored`: the window drawn mirrored (read back unmirrored). */
   read(picture: Picture, crop: Crop, mirrored: boolean): Promise<Keypoint[]>;
 }
@@ -40,29 +49,61 @@ async function weightsOf(url: string, signal: AbortSignal, say: (text: string) =
   return weights;
 }
 
-let opening: Promise<{ session: ort.InferenceSession; backend: PostureModel['backend'] }> | null = null;
-/** The model's session, opened once a page (WebGPU when the browser has it, else WebAssembly). */
-function open(signal: AbortSignal, status: (text: string) => void) {
-  opening ??= (async () => {
-    const say = (text: string) => status(text.replace('姿勢モデル', '姿勢解析の骨格モデル'));
-    const base = `${import.meta.env.BASE_URL}models/rtmpose/${POSTURE_MODEL}`;
-    const graph = await downloadModel(`${base}.onnx`, signal, say);
+const DIR = `${import.meta.env.BASE_URL}models/rtmpose/`;
+// 'basic': the fullest level rebuilds the weights in a CPU layout, which took the page 0.2 GB more while the session was
+// made (0.74 GB, not 0.54, in WebKit) for 5% faster runs; and the weights are not packed a second time.
+const SESSION = { graphOptimizationLevel: 'basic', extra: { session: { disable_prepacking: '1' } } } as const;
+const said = (e: unknown) => (e instanceof Error ? `${e.name}: ${e.message}` : String(e)).replace(/\s+/g, ' ').slice(0, 140);
+/** An iPhone or iPad (iPadOS says it is a Mac with a touch screen). */
+const appleMobile = () => typeof navigator !== 'undefined'
+  && (/iP(hone|ad|od)/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
+type Made = { session: ort.InferenceSession; backend: Backend; size: 'l' | 'm' };
+
+/** The large model on each way in turn; null when none made it (each reason added to `failed`). Its weights are let go
+ * before this returns, so a fallback does not start with them still held. */
+async function large(ways: readonly Backend[], failed: string[], signal: AbortSignal, say: (text: string) => void, status: (text: string) => void): Promise<Made | null> {
+  let weights: Uint8Array | null = null;
+  try {
+    const graph = await downloadModel(`${DIR}${POSTURE_MODEL}.onnx`, signal, say);
     if (await hex(graph) !== SHA256.graph) throw new Error(BROKEN);
-    const weights = await weightsOf(`${base}.f16.bin`, signal, say);
+    const w = weights = await weightsOf(`${DIR}${POSTURE_MODEL}.f16.bin`, signal, say);
     status('姿勢解析の骨格モデルを準備しています…');
+    for (const ep of ways) {
+      try {
+        const session = await ort.InferenceSession.create(graph, { executionProviders: [ep], ...SESSION,
+          externalData: [{ path: `${POSTURE_MODEL}.data`, data: w }] });
+        return { session, backend: ep, size: 'l' };
+      } catch (e) { failed.push(`l/${ep} ${said(e)}`); }
+    }
+  } catch (e) { if (signal.aborted) throw e; failed.push(`l ${said(e)}`); }
+  finally { if (weights) letGo(weights); }   // a session made holds its own copy
+  return null;
+}
+
+let opening: Promise<Made> | null = null;
+/** The model's session, opened once a page: the large model, else the light one; WebGPU first where it is fast and
+ * proven (computers, Android), WebAssembly first on an iPhone or iPad (the way WebKit made the model in every test).
+ * `?posture-model=m` goes straight to the light one. */
+function open(signal: AbortSignal, status: (text: string) => void) {
+  opening ??= (async (): Promise<Made> => {
+    const say = (text: string) => status(text.replace('姿勢モデル', '姿勢解析の骨格モデル'));
     ort.env.wasm.wasmPaths = { wasm: ORT_WASM }; ort.env.wasm.numThreads = 1;
     const gpu = typeof navigator !== 'undefined' && !!(navigator as Navigator & { gpu?: unknown }).gpu;
-    for (const ep of (gpu ? ['webgpu', 'wasm'] : ['wasm']) as PostureModel['backend'][]) {
-      try {
-        // 'basic': the fullest level rebuilds the weights in a CPU layout, which took the page 0.2 GB more while the session
-        // was made (0.74 GB, not 0.54, in WebKit) for 5% faster runs; and the weights are not packed a second time.
-        const session = await ort.InferenceSession.create(graph, { executionProviders: [ep], graphOptimizationLevel: 'basic',
-          extra: { session: { disable_prepacking: '1' } }, externalData: [{ path: `${POSTURE_MODEL}.data`, data: weights }] });
-        letGo(weights);   // the session holds its own copy
-        return { session, backend: ep };
-      } catch { /* the next */ }
+    const ways: Backend[] = !gpu ? ['wasm'] : appleMobile() ? ['wasm', 'webgpu'] : ['webgpu', 'wasm'], failed: string[] = [];
+    if (new URLSearchParams(location.search).get('posture-model') !== 'm') {
+      const made = await large(ways, failed, signal, say, status);
+      if (made) return made;
+      status('この端末では大きい骨格モデルを使えないため、軽いモデルを準備しています…');
     }
-    throw new Error('姿勢解析の骨格モデルを開始できませんでした。');
+    try {
+      const light = await downloadModel(`${DIR}${LIGHT_MODEL}.onnx`, signal, say);
+      if (await hex(light) !== SHA256.light) throw new Error(BROKEN);
+      for (const ep of ways) {
+        try { return { session: await ort.InferenceSession.create(light, { executionProviders: [ep], ...SESSION }), backend: ep, size: 'm' }; }
+        catch (e) { failed.push(`m/${ep} ${said(e)}`); }
+      }
+    } catch (e) { if (signal.aborted) throw e; failed.push(`m ${said(e)}`); }
+    throw new Error(`姿勢解析の骨格モデルを開始できませんでした（${failed.join(' / ')}）。`);
   })().catch(e => { opening = null; throw e; });
   return opening;
 }
@@ -85,8 +126,8 @@ function pixelsOf(picture: Picture): ImageData {
 }
 
 export async function loadPostureModel(signal: AbortSignal, status: (text: string) => void): Promise<PostureModel> {
-  const { session, backend } = await open(signal, status), input = new Float32Array(3 * IW * IH);
-  return { backend, async read(picture, c, mirrored) {
+  const { session, backend, size } = await open(signal, status), input = new Float32Array(3 * IW * IH);
+  return { backend, size, async read(picture, c, mirrored) {
     const p = pixelsOf(picture);
     areaInput(p.data, p.width, p.height, c, mirrored, input);
     const out = await session.run({ input: new ort.Tensor('float32', input, [1, 3, IH, IW]) });
