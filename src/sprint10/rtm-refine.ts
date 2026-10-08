@@ -14,7 +14,9 @@ export const RTM_MODEL = 'rtmpose-m-halpe26-256x192.onnx';
 /** Checked before use (public/models/rtmpose/README.md). */
 export const RTM_MODEL_SHA256 = '26f3a19e61304a600dfb82d1001d41d24343b89fc70a33ffc84657e0b0bf2ecf';
 const ORT_WASM = new URL('../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm', import.meta.url).href;
-const IW = 192, IH = 256, MEAN = [123.675, 116.28, 103.53], STD = [58.395, 57.12, 57.375];
+/** The model's input: 192 x 256 pixels, each channel (RGB) less its mean, over its spread (ImageNet's). */
+export const PIXEL_MEAN = [123.675, 116.28, 103.53], PIXEL_STD = [58.395, 57.12, 57.375];
+const IW = 192, IH = 256, MEAN = PIXEL_MEAN, STD = PIXEL_STD;
 /** Halpe26 keypoints in MediaPipe's 33 indices (toes: the big toes). */
 const FROM_HALPE: Record<number, number> = { 0: 0, 11: 5, 12: 6, 13: 7, 14: 8, 15: 9, 16: 10, 23: 11, 24: 12, 25: 13, 26: 14, 27: 15, 28: 16, 29: 24, 30: 25, 31: 20, 32: 21 };
 
@@ -55,7 +57,13 @@ export function loadRefiner(signal: AbortSignal, status: (text: string) => void)
   loading ??= create(signal, status).catch(e => { loading = null; throw e; });
   return loading;
 }
-async function create(signal: AbortSignal, status: (text: string) => void): Promise<Refiner> {
+let opening: Promise<{ model: ort.InferenceSession; backend: Refiner['backend'] }> | null = null;
+/** The model's session, opened once a page: the refiner's, and the posture check's (src/posture/rtm.ts). */
+export function openRtmPose(signal: AbortSignal, status: (text: string) => void) {
+  opening ??= open(signal, status).catch(e => { opening = null; throw e; });
+  return opening;
+}
+async function open(signal: AbortSignal, status: (text: string) => void) {
   const bytes = await downloadModel(`${import.meta.env.BASE_URL}models/rtmpose/${RTM_MODEL}`, signal, text => status(text.replace('姿勢モデル', '高精度の骨格モデル')));
   const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('');
   if (digest !== RTM_MODEL_SHA256) throw new Error('高精度の骨格モデルのファイルが正しくありません。');
@@ -67,7 +75,10 @@ async function create(signal: AbortSignal, status: (text: string) => void): Prom
     try { session = await ort.InferenceSession.create(bytes, { executionProviders: [ep], graphOptimizationLevel: 'all' }); backend = ep; break; } catch { /* the next */ }
   }
   if (!session) throw new Error('高精度の骨格モデルを開始できませんでした。');
-  const model = session, crop = document.createElement('canvas');
+  return { model: session, backend };
+}
+async function create(signal: AbortSignal, status: (text: string) => void): Promise<Refiner> {
+  const { model, backend } = await openRtmPose(signal, status), crop = document.createElement('canvas');
   crop.width = IW; crop.height = IH;
   const ctx = crop.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('映像処理を開始できません。');

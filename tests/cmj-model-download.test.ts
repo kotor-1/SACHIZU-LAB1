@@ -8,6 +8,16 @@ describe('model download', () => {
     expect(await downloadModel('/model', new AbortController().signal, status)).toEqual(new Uint8Array([1, 2, 3]));
     expect(status.mock.calls.at(-1)?.[0]).toContain('MB');
   });
+  it('writes a model of known size straight into one buffer, and copes with a size that was wrong', async () => {
+    const body = (...parts: number[][]) => new ReadableStream({ start(c) { for (const p of parts) c.enqueue(new Uint8Array(p)); c.close(); } });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body([1, 2], [3, 4, 5], [6]), { headers: { 'content-length': '6' } })));
+    const exact = await downloadModel('/model', new AbortController().signal, vi.fn());
+    expect(exact).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6])); expect(exact.buffer.byteLength).toBe(6);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body([1, 2], [3, 4, 5], [6, 7]), { headers: { 'content-length': '6' } })));
+    expect(await downloadModel('/model', new AbortController().signal, vi.fn())).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6, 7]));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body([1, 2], [3]), { headers: { 'content-length': '6' } })));
+    expect(await downloadModel('/model', new AbortController().signal, vi.fn())).toEqual(new Uint8Array([1, 2, 3]));
+  });
   it('reports an HTTP failure without trying to use an HTML page as a model', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('missing', { status: 404 })));
     await expect(downloadModel('/model', new AbortController().signal, vi.fn())).rejects.toThrow('HTTP 404');

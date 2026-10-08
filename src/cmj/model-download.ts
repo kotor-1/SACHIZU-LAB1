@@ -16,15 +16,20 @@ export async function downloadModel(url: string, signal: AbortSignal, status: (t
     const expected = encoding && encoding !== 'identity' ? 0 : Number(response.headers.get('content-length'));
     if (!response.body) return new Uint8Array(await response.arrayBuffer());
     const reader = response.body.getReader(), chunks: Uint8Array[] = [];
-    let size = 0;
+    // With its size known the model is written straight into one buffer: joining chunks at the end held it twice, which
+    // a phone's memory feels for a 56 MB model.
+    let size = 0, whole: Uint8Array<ArrayBuffer> | null = expected > 0 ? new Uint8Array(expected) : null;
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        chunks.push(value); size += value.length; reset();
+        if (whole && size + value.length <= whole.length) whole.set(value, size);
+        else { if (whole) { chunks.push(whole.subarray(0, size)); whole = null; } chunks.push(value); }
+        size += value.length; reset();
         status(`姿勢モデルをダウンロード中 ${(size / 1048576).toFixed(1)} MB${expected > 0 ? ` / ${(expected / 1048576).toFixed(1)} MB` : ''}。初回は時間がかかります。`);
       }
     } finally { reader.releaseLock(); }
+    if (whole) return size === whole.length ? whole : whole.slice(0, size);
     const bytes = new Uint8Array(size); let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
     return bytes;
