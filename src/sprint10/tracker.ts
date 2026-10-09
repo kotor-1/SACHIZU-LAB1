@@ -88,7 +88,7 @@ const SPAN_FRAMES = 2.5;
 /** Body points that must lie inside the frame for a flying-start observation:
  * shoulders, hips, knees and ankles. A runner cut by the frame edge has a
  * pelvis estimate that jumps between frames and skews the trajectory. */
-const BODY_POINTS = [11, 12, 23, 24, 25, 26, 27, 28];
+export const BODY_POINTS = [11, 12, 23, 24, 25, 26, 27, 28];
 /** Two detections whose pelves are this close are one person detected twice
  * (overlapping detections, more frequent with four people per frame); the
  * second one starts no provisional track of its own. */
@@ -130,6 +130,9 @@ function candidatesNear(poses: Candidate[], centre: number, radius: number, y: n
     .sort((a, b) => Math.abs(a.x - centre) - Math.abs(b.x - centre));
 }
 const duplicate = (a: Candidate, b: Candidate) => Math.abs(a.x - b.x) < DUPLICATE_X && Math.abs(a.y - b.y) < DUPLICATE_Y;
+/** Two poses of one person detected twice (pelves as close as `duplicate`'s). */
+export const samePerson = (a: Point[], b: Point[]) => Math.abs((a[23].x + a[24].x - b[23].x - b[24].x) / 2) < DUPLICATE_X
+  && Math.abs((a[23].y + a[24].y - b[23].y - b[24].y) / 2) < DUPLICATE_Y;
 const ambiguous = (poses: Candidate[], centre: number) => poses.length > 1
   && Math.abs(poses[1].x - centre) - Math.abs(poses[0].x - centre) < .03;
 /** Flying start: the pelvis height in the picture tells people at different

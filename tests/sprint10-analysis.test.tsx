@@ -100,10 +100,17 @@ describe('10m sprint experiment', () => {
     const exit = analyzeSprint(hidden(2.46, 3.1), .2, .8, 10, 'flying');      // the body leaves the picture before the exit
     expect(exit.reason).toBeNull();
     expect(exit.finish!.pts).toBeCloseTo(2.5, 6); expect(exit.warnings[0]).toContain('出口の線を越える瞬間の骨盤は映っていない');
-    // Never further than 0.1 s, never outside the video, never for a standing start.
+    // Never further than 0.1 s, never for a standing start.
     expect(analyzeSprint(hidden(.35, .65), .2, .8, 10, 'flying').duration).toBeNull();
     expect(analyzeSprint(hidden(2.38, 3.1), .2, .8, 10, 'flying').duration).toBeNull();
-    expect(analyzeSprint(synthetic().filter(s => s.pts > .52), .2, .8, 10, 'flying').duration).toBeNull();
+    // A clip cut short (the user, 2026-10-09: 「最初から人が写っていてもちゃんと解析しろ」): it starts 20 ms after
+    // the runner crossed the entry, or ends 20 ms before the exit. Measured; 0.15 s is not.
+    const late = analyzeSprint(synthetic().filter(s => s.pts > .52), .2, .8, 10, 'flying');
+    expect(late.reason).toBeNull(); expect(late.start!.pts).toBeCloseTo(.5, 6); expect(late.duration).toBeCloseTo(2, 6);
+    const early = analyzeSprint(synthetic().filter(s => s.pts < 2.48), .2, .8, 10, 'flying');
+    expect(early.reason).toBeNull(); expect(early.finish!.pts).toBeCloseTo(2.5, 6);
+    expect(analyzeSprint(synthetic().filter(s => s.pts > .65), .2, .8, 10, 'flying').duration).toBeNull();
+    expect(analyzeSprint(synthetic().filter(s => s.pts < 2.35), .2, .8, 10, 'flying').duration).toBeNull();
     expect(analyzeSprint(hidden(.45, .55), .2, .8).reason).toContain('スタートラインを越える瞬間');
     // An unseen span at the gate is not counted as a tracking dropout of the legs.
     expect(entry.count).toBeCloseTo(analyzeSprint(synthetic(), .2, .8, 10, 'flying').count!, 1);

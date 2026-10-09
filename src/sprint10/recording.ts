@@ -43,6 +43,8 @@ interface FrameOptions {
   maxFps?: number;
   /** A crouch start (see SprintFrameProcessor). */
   fromBlocks?: boolean;
+  /** Flying start: until the runner is followed, its crop is also searched in tiles (tilesOf, frame-processor.ts). */
+  tiles?: boolean;
   /** Each analysed frame's selected athlete (normalized landmarks; empty when not found) and picture size. */
   onSelected?: (frame: { frameIndex: number; pts: number }, selected: Point[], width: number, height: number) => void;
   /** Awaited after onSelected, with the frame still on `source`. */
@@ -86,7 +88,7 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
   };
   const source = document.createElement('canvas'), ctx = source.getContext('2d');
   if (!ctx) throw new Error('映像処理を開始できません。');
-  const processor = new SprintFrameProcessor(source, model, watching, startX, finishX, start, distanceM, options.fromBlocks);
+  const processor = new SprintFrameProcessor(source, model, watching, startX, finishX, start, distanceM, options.fromBlocks, options.tiles);
   const abort = () => decoder.dispose();
   signal.addEventListener('abort', abort, { once: true });
   let lastYield = performance.now(), lastUpdate = -Infinity;

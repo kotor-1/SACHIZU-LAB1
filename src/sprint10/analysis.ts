@@ -194,9 +194,13 @@ const GATE_REASONS = {
  * body is cut by the frame edge, when no pose is usable. The crossing is then
  * estimated by extending the straight-line pelvis motion of the nearest 0.25 s
  * observed (one step cycle, which averages out the speed change within a
- * stride), by at most 0.1 s, and only inside the video. On a constant-speed
- * sprint (240 fps, gates across the picture) extensions of 0.05 s were 2-3 ms
- * off at the median (max 10 ms) and of 0.1 s 3-5 ms (max 21 ms). */
+ * stride), by at most 0.1 s. On a constant-speed sprint (240 fps, gates
+ * across the picture) extensions of 0.05 s were 2-3 ms off at the median (max
+ * 10 ms) and of 0.1 s 3-5 ms (max 21 ms). The crossing may lie just before the
+ * video's first frame or after its last: clips are cut short so that phones can
+ * analyse them, and the runner may already be at the entry when one starts (the
+ * user, 2026-10-09: 「最初から人が写っていてもちゃんと解析しろ」; IMG_0416, the
+ * pelvis 0.004 image widths past the entry marker in the first frame). */
 const EXTEND_FIT_SECONDS = .25;
 const EXTEND_MAX_SECONDS = .1;
 /** The pelvis must be moving toward the finish at least this fast (image widths/s). */
@@ -246,8 +250,7 @@ function fittedCrossing(tracked: SprintSample[], gate: number, direction: number
   }
   return { ...crossing, pts };
 }
-function extendedCrossing(segment: SprintSample[], gate: number, direction: number, side: 'entry' | 'exit', video: [number, number],
-  continuous: Continuity): Crossing | null {
+function extendedCrossing(segment: SprintSample[], gate: number, direction: number, side: 'entry' | 'exit', continuous: Continuity): Crossing | null {
   // The contiguous observations (no gap over the continuity limit) nearest the gate, up to 0.25 s.
   const ordered = side === 'entry' ? segment : [...segment].reverse(), near = [ordered[0]];
   for (const s of ordered.slice(1)) {
@@ -263,7 +266,7 @@ function extendedCrossing(segment: SprintSample[], gate: number, direction: numb
   const pts = line.mt + (gate - line.mx) / line.speed, extended = Math.abs(nearest.pts - pts);
   // Entry: the gate lies behind the first observation; exit: ahead of the last one.
   const beyond = (nearest.hipX! - gate) * direction * (side === 'entry' ? 1 : -1);
-  if (!(beyond > 0) || exceedsTime(extended, EXTEND_MAX_SECONDS) || pts < video[0] || pts > video[1]) return null;
+  if (!(beyond > 0) || exceedsTime(extended, EXTEND_MAX_SECONDS)) return null;
   return side === 'entry'
     ? { pts, before: pts, after: nearest.pts, frame: nearest.frame, extendedSeconds: extended }
     : { pts, before: nearest.pts, after: pts, frame: nearest.frame, extendedSeconds: extended };
@@ -352,14 +355,13 @@ export function analyzeSprint(samples: SprintSample[], startX: number, finishX: 
   // Gate crossings of a flying section ignore one-frame pose errors (the legs are still counted from every sample).
   const gateSamples = run === 'flying' ? withoutSpikes(samples) : samples;
   const tracked = gateSamples.filter(s => s.hipX !== null);
-  const video: [number, number] = [samples[0].pts, samples.at(-1)!.pts];
   const gap = continuityLimit(gateSamples), continuous = continuityOf(gateSamples, gap);
   const finishes = crossings(gateSamples, finishX, direction, continuous);
   if (!finishes.length && run === 'flying') {
     // The exit was not seen being crossed: extend the last observations before it.
     let lastBehind = tracked.length - 1;
     while (lastBehind >= 0 && (tracked[lastBehind].hipX! - finishX) * direction > 0) lastBehind--;
-    const exit = lastBehind < 0 ? null : extendedCrossing(tracked.slice(0, lastBehind + 1), finishX, direction, 'exit', video, continuous);
+    const exit = lastBehind < 0 ? null : extendedCrossing(tracked.slice(0, lastBehind + 1), finishX, direction, 'exit', continuous);
     if (exit) finishes.push(exit);
   }
   if (!finishes.length) return { ...base, reason: reasons.noFinish };
@@ -376,7 +378,7 @@ export function analyzeSprint(samples: SprintSample[], startX: number, finishX: 
     if (i < 0 || !continuous(a, b)) {
       // Flying section: the entry crossing itself was not seen (the body was cut
       // by the frame edge, or hidden): extend the first observations after it.
-      const entry = run === 'flying' ? extendedCrossing(before.slice(i + 1), startX, direction, 'entry', video, continuous) : null;
+      const entry = run === 'flying' ? extendedCrossing(before.slice(i + 1), startX, direction, 'entry', continuous) : null;
       if (entry) { start = entry; finish = candidate; break; }
       if (i >= 0) startGap = true;
       continue;

@@ -121,12 +121,22 @@ export default function Sprint10Lab() {
     video.current?.pause(); setBusy(true); setSamples(null); setTimeline(null); setProgress(0); setReview(''); setMessage('解析を準備しています。');
     try {
       let frames: CrouchFrame[] = [], width = 0, height = 0;
-      const data = await measureSprint(file, start, control.signal, (value, text) => {
-        if (owner.current === control) { setProgress(value); setMessage(text); }
+      const run = (tiles: boolean) => measureSprint(file, start, control.signal, (value, text) => {
+        if (owner.current === control) { setProgress(value); setMessage(tiles ? `選手を探し直しています。${text}` : text); }
       }, finish, mode, distanceM, {
+        tiles,
         onTimeline: all => { frames = [...all].sort((a, b) => a.pts - b.pts).map(f => ({ frame: f.frameIndex, pts: f.pts, pose: null })); },
         onSelected: (_frame, _selected, w, h) => { width = w; height = h; },
       });
+      let data = await run(false);
+      // A flying section not measured: looked at again with the search in tiles (frame-processor.ts tilesOf; the user's
+      // 240 fps clips, 2026-10-09: a runner a sixth of the picture high, there from the first frame, was never found).
+      // Only then: always on, it changed sections measured before (the runner taken up from a tile in a frame the crop
+      // missed: 3 of 152 validation clips no longer measured), and looked at the empty run-in in tiles (+51% pose calls).
+      if (mode === 'flying' && !control.signal.aborted && analyzeSprint(data, start, finish, distanceM, mode).reason) {
+        const again = await run(true);
+        if (!analyzeSprint(again, start, finish, distanceM, mode).reason) data = again;
+      }
       if (owner.current === control && !control.signal.aborted) {
         showResult.current = true; setTimeline(frames.length && width ? { frames, width, height } : null); setSamples(data);
       }

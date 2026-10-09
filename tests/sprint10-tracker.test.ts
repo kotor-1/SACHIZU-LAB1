@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Point } from '../src/sprint10/analysis';
 import { SprintTracker } from '../src/sprint10/tracker';
+import { fromTiles, tilesOf } from '../src/sprint10/frame-processor';
 
 const pose = (x: number, y = .65): Point[] => Array.from({ length: 33 }, () => ({ x, y, visibility: .95 }));
 const reflect = (points: Point[]) => points.map(p => ({ ...p, x: 1 - p.x }));
@@ -608,5 +609,31 @@ describe('at a live camera frame rate', () => {
     const tracker = new SprintTracker(.12, .76, 'standing');
     const chosen = recorded.filter(([t, x]) => tracker.choose([pose(x, .55)], t).length).map(([t]) => t);
     for (const t of [1.011, 1.037, 1.075, 1.103, 1.142]) expect(chosen).toContain(t);
+  });
+});
+
+describe('10m flying start: the search in tiles until someone is followed', () => {
+  it('splits a tall crop into two about-square tiles, top and bottom, and leaves a square one alone', () => {
+    // Landscape 1920x1080, the 0.36-wide crop at full height (the user's 240 fps clips, 2026-10-09).
+    const [top, bottom] = tilesOf({ x: .1, y: 0, w: .36, h: 1 }, 1920, 1080);
+    expect(top.x).toBe(.1); expect(top.w).toBe(.36); expect(top.y).toBe(0); expect(top.h).toBeCloseTo(.64, 9);
+    expect(bottom.y).toBeCloseTo(.36, 9); expect(bottom.y + bottom.h).toBeCloseTo(1, 9);
+    // Narrowed to the runner's band, the crop is about square already.
+    expect(tilesOf({ x: .1, y: .3, w: .36, h: .45 }, 1920, 1080)).toEqual([]);
+    // Portrait: two tiles of 0.6 of the height (half the crop's, still taller than wide).
+    const portrait = tilesOf({ x: 0, y: 0, w: .36, h: 1 }, 1080, 1920);
+    expect(portrait.map(r => [r.y, r.h].map(v => +v.toFixed(9)))).toEqual([[0, .6], [.4, .6]]);
+  });
+  it('keeps a tile pose unless the tile cuts the body or the person was already detected', () => {
+    // A body from y0 to y1 (its landmarks spread evenly; shoulders to ankles 0.34-0.88 of that span).
+    const body = (x: number, y0: number, y1: number): Point[] => Array.from({ length: 33 }, (_, i) => ({ x, y: y0 + (y1 - y0) * i / 32, visibility: .9 }));
+    const [top, bottom] = tilesOf({ x: 0, y: 0, w: .36, h: 1 }, 1920, 1080);
+    const runner = body(.2, .45, .7);   // its ankles at 0.67, past the top tile's bottom (0.64)
+    expect(fromTiles([{ poses: [runner], tile: top }], [])).toEqual([]);
+    expect(fromTiles([{ poses: [runner], tile: bottom }], [])).toEqual([runner]);
+    // Inside both tiles: added once. Already found in the crop: not added. Someone else: added.
+    const small = body(.25, .45, .6), again = body(.252, .45, .6), other = body(.3, .4, .55);
+    expect(fromTiles([{ poses: [small], tile: top }, { poses: [again], tile: bottom }], [])).toEqual([small]);
+    expect(fromTiles([{ poses: [small, other], tile: top }], [again])).toEqual([other]);
   });
 });
