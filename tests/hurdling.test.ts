@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { analyzeHurdle, centreOfMass } from '../src/hurdling/analysis';
 import { hurdleAdvice } from '../src/hurdling/advice';
-import { surveyDirection } from '../src/hurdling/recording';
+import { surveyDirection, surveyEntry } from '../src/hurdling/recording';
 import type { CrouchFrame, CrouchPoint } from '../src/sprint10/crouch';
 
 // A synthetic hurdle clearance filmed from the side at 240 fps, 1920x1080, running
@@ -156,6 +156,15 @@ describe('hurdle running direction', () => {
     expect(surveyDirection(samples)).toBe(-1);
     expect(surveyDirection(samples.map(s => ({ ...s, people: s.people.map(p => ({ ...p, x: 1 - p.x })) })))).toBe(1);
     expect(surveyDirection(samples.map(s => ({ ...s, people: s.people.slice(1) })))).toBe(0);
+  });
+  it('finds where the runner was first seen, also when already inside the picture', () => {
+    // the runner (and a person jogging the other way) seen from the start, a person standing; the user's IMG_0368
+    const samples = Array.from({ length: 10 }, (_, i) => ({ pts: i * .06, people: [{ x: .3, y: .62 }, { x: .85 - .05 * i, y: .6 }, { x: .2 + .02 * i, y: .55 }] }));
+    expect(surveyEntry(samples, -1)).toBeCloseTo(.85, 9);
+    expect(surveyEntry(samples.map(s => ({ ...s, people: s.people.map(p => ({ ...p, x: 1 - p.x })) })), 1)).toBeCloseTo(.15, 9);
+    // seen only from the third sample on (coming in at the edge)
+    expect(surveyEntry(samples.map((s, i) => ({ ...s, people: i < 2 ? s.people.slice(0, 1) : s.people })), -1)).toBeCloseTo(.75, 9);
+    expect(surveyEntry(samples.map(s => ({ ...s, people: s.people.slice(0, 1) })), -1)).toBeNull();
   });
 });
 

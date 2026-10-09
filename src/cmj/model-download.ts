@@ -1,5 +1,42 @@
+/** Models kept on the device after a checked download (Cache Storage). The site lets a browser keep its files for 10
+ * minutes only (GitHub Pages, max-age=600), so a phone could download the 9-56 MB models again for each analysis: the
+ * public hurdle screen took 136 s for a 1.35 s video in a fresh WebKit, 24 s with the models at hand (2026-10-08, the
+ * user: 「解析に結構時間かかった」). Kept only when the bytes match the model's SHA-256, and a kept copy is used only while
+ * it still does (a changed model is downloaded again). Where storage is missing or full, every analysis downloads. */
+const KEEP = 'sachizu-models-v1';
+const hexOf = async (bytes: Uint8Array<ArrayBuffer>) =>
+  Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('');
+async function kept(url: string, sha256: string): Promise<Uint8Array<ArrayBuffer> | null> {
+  try {
+    if (typeof caches === 'undefined') return null;
+    const store = await caches.open(KEEP), hit = await store.match(url);
+    if (!hit) return null;
+    const bytes = new Uint8Array(await hit.arrayBuffer());
+    if (await hexOf(bytes) === sha256) return bytes;
+    await store.delete(url);
+  } catch { /* not allowed here (a private window): downloaded */ }
+  return null;
+}
+async function keep(url: string, bytes: Uint8Array<ArrayBuffer>, sha256: string) {
+  try {
+    if (typeof caches !== 'undefined' && await hexOf(bytes) === sha256) await (await caches.open(KEEP)).put(url, new Response(bytes));
+  } catch { /* storage full or not allowed: downloaded again next time */ }
+}
+
+/** The model's bytes: the copy kept on the device when `sha256` is given and it matches, else downloaded (and kept). */
+export async function downloadModel(url: string, signal: AbortSignal, status: (text: string) => void, sha256?: string): Promise<Uint8Array<ArrayBuffer>> {
+  if (sha256) {
+    const bytes = await kept(url, sha256);
+    if (signal.aborted) throw new DOMException('中止', 'AbortError');
+    if (bytes) { status('端末に保存した姿勢モデルを読み込みました。'); return bytes; }
+  }
+  const bytes = await fetchModel(url, signal, status);
+  if (sha256) await keep(url, bytes, sha256);
+  return bytes;
+}
+
 /** Progress is measured from downloaded bytes, never a fake time-based bar. */
-export async function downloadModel(url: string, signal: AbortSignal, status: (text: string) => void): Promise<Uint8Array<ArrayBuffer>> {
+async function fetchModel(url: string, signal: AbortSignal, status: (text: string) => void): Promise<Uint8Array<ArrayBuffer>> {
   const control = new AbortController();
   const abort = () => control.abort();
   let stalled = false, timer: ReturnType<typeof setTimeout>;

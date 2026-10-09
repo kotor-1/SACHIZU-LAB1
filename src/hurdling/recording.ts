@@ -36,6 +36,11 @@ const PATH_FIT_SECONDS = .1, PATH_TOLERANCE = .08;
 const BODY_POINTS = [11, 12, 23, 24, 25, 26, 27, 28];
 const EDGE_MARGIN = .01;
 const pelvis = (p: Pt[]) => ({ x: (p[23].x + p[24].x) / 2, y: (p[23].y + p[24].y) / 2 });
+/** Pass 2 waits for the runner at the run-in edge of the picture. A runner already well inside it when the video
+ * starts (a clip cut short before the hurdle) never comes in there and nobody was followed (recorded, the user's
+ * IMG_0368, first seen 0.15 image widths in, 2026-10-08). Then the runner is followed again from a line this far
+ * ahead of where the survey first saw it. */
+const ENTRY_AHEAD = .03;
 
 /** People in one region of the picture, cropped at source resolution (as SprintFrameProcessor). */
 function detect(model: MobileCMJPose, source: HTMLCanvasElement, region: Region, frame: { frameIndex: number; pts: number }, w: number, h: number) {
@@ -60,6 +65,17 @@ export function surveyDirection(samples: { pts: number; people: { x: number; y: 
     }
   }
   return Math.abs(votes) < RUN_SPEED[0] ? 0 : Math.sign(votes);
+}
+
+/** Where the runner was first seen in the survey (pelvis x; the one furthest back when several moved), or null. */
+export function surveyEntry(samples: { pts: number; people: { x: number; y: number }[] }[], direction: number) {
+  for (let i = 1; i < samples.length; i++) {
+    const dt = samples[i].pts - samples[i - 1].pts; if (!(dt > 0)) continue;
+    const runners = samples[i - 1].people.filter(a => samples[i].people.some(b => Math.abs(b.y - a.y) < .05
+      && (b.x - a.x) / dt * direction >= RUN_SPEED[0] && (b.x - a.x) / dt * direction <= RUN_SPEED[1]));
+    if (runners.length) return runners.reduce((a, b) => (b.x - a.x) * direction < 0 ? b : a).x;
+  }
+  return null;
 }
 
 /** Three readings of the video, as before the iPhone's trouble, but the models in memory changed: the hurdle's pass
@@ -94,12 +110,19 @@ export async function measureHurdle(file: File, signal: AbortSignal, progress: (
     direction = surveyDirection(samples);
     if (!direction) throw new Error('走っている選手を見つけられませんでした。選手が画面を横切る動画を使ってください。');
 
-    // 2. Follow the runner coming in (the tracker is let go at the end of the pass).
-    await stage('選手の追跡', () => measureSprint(file, direction > 0 ? .03 : .97, signal, (f, m) => progress(.1 + .6 * f, m), direction > 0 ? .97 : .03, 'flying', 10, {
+    // 2. Follow the runner coming in (the tracker is let go at the end of the pass); a runner already inside the
+    // picture is followed again from where the survey first saw it.
+    const follow = (startX: number) => stage('選手の追跡', () => measureSprint(file, startX, signal, (f, m) => progress(.1 + .6 * f, m), direction > 0 ? .97 : .03, 'flying', 10, {
       maxFps: CROUCH_FPS, watcher,
       onSelected: (frame, selected, w, h) => { width = w; height = h;
         frames.push({ frame: frame.frameIndex, pts: frame.pts, pose: selected.length === 33 ? selected.map(p => ({ x: p.x, y: p.y, visibility: p.visibility })) : null }); },
     }));
+    const edge = direction > 0 ? .03 : .97, entry = surveyEntry(samples, direction);
+    await follow(edge);
+    if (!frames.some(f => f.pose) && entry !== null && (entry - edge) * direction > ENTRY_AHEAD) {
+      frames.length = 0;
+      await follow(entry + direction * ENTRY_AHEAD);
+    }
 
     // 3. RTMPose; then one reading: before the athlete was decided, along the path led back (the watcher), and every
     // followed frame refined.

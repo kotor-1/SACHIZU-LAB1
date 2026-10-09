@@ -3,9 +3,11 @@ import type { CrouchPoint, CrouchResult } from './crouch';
 
 /** One angle drawn on the picture: the trunk (hip to shoulder) or a shank
  * (ankle to knee) against the vertical, a thigh (hip to knee) against the
- * downward vertical, or a knee (hip, knee, ankle). */
+ * downward vertical, or a knee (hip, knee, ankle); for the squat and RDL also a
+ * hip (shoulder, hip, knee), a thigh against the level ('level', from the knee) and the trunk against a lifted leg
+ * ('line': the shoulders' middle, the hip, the ankle). */
 export type Mark = { kind: 'trunk'; label: string; value: number }
-  | { kind: 'shank' | 'knee' | 'thigh'; side: 0 | 1; label: string; value: number };
+  | { kind: 'shank' | 'knee' | 'thigh' | 'hip' | 'level' | 'line'; side: 0 | 1; label: string; value: number };
 /** A moment whose angles are reported, with the frame shown for it. */
 export interface Phase { key: string; label: string; frame: number; pts: number; marks: Mark[]; /** Name on its button, when shorter than the label. */ short?: string }
 
@@ -34,8 +36,9 @@ export function crouchPhases(result: CrouchResult): Phase[] {
 }
 
 export const markText = (m: Mark) => `${m.label} ${Math.round(m.value)}°`;
-/** Trunk orange, shank cyan, thigh green, front (lead) knee pink, rear (takeoff) knee violet. */
-export const markColor = (m: Mark) => m.kind === 'trunk' ? '#ffb02e' : m.kind === 'shank' ? '#3ad7ff' : m.kind === 'thigh' ? '#7dff6b'
+/** Trunk orange, shank cyan, thigh green, front (lead) knee pink, rear (takeoff) knee violet, hip yellow. */
+export const markColor = (m: Mark) => m.kind === 'trunk' ? '#ffb02e' : m.kind === 'shank' ? '#3ad7ff' : m.kind === 'thigh' || m.kind === 'level' ? '#7dff6b'
+  : m.kind === 'hip' ? '#fff35c' : m.kind === 'line' ? '#ff8a3d'
   : m.label === '後膝' || m.label.startsWith('踏切') ? '#b58cff' : '#ff6fd8';
 const seen = (p?: CrouchPoint) => !!p && Number.isFinite(p.x) && Number.isFinite(p.y) && (p.visibility ?? 1) >= .3;
 
@@ -75,15 +78,19 @@ export function drawCrouchFigure(ctx: CanvasRenderingContext2D, pose: CrouchPoin
     // Vertex, the measured segment(s) and the reference (the vertical, or the thigh).
     const [vertex, end, other] = m.kind === 'trunk' ? [mid(23, 24), mid(11, 12), null]
       : m.kind === 'shank' ? [at(27 + m.side), at(25 + m.side), null] : m.kind === 'thigh' ? [at(23 + m.side), at(25 + m.side), null]
+      : m.kind === 'level' ? [at(25 + m.side), at(23 + m.side), null] : m.kind === 'hip' ? [at(23 + m.side), at(11 + m.side), at(25 + m.side)]
+      : m.kind === 'line' ? [at(23 + m.side), mid(11, 12), at(27 + m.side)]
       : [at(25 + m.side), at(27 + m.side), at(23 + m.side)];
-    if (!vertex || !end || (m.kind === 'knee' && !other)) continue;
+    const joint = m.kind === 'knee' || m.kind === 'hip' || m.kind === 'line';
+    if (!vertex || !end || (joint && !other)) continue;
     const length = Math.hypot(end.x - vertex.x, end.y - vertex.y);
-    const reference = other ?? { x: vertex.x, y: vertex.y + (m.kind === 'thigh' ? length : -length) };
+    const reference = other ?? (m.kind === 'level' ? { x: vertex.x + Math.sign(end.x - vertex.x || 1) * length, y: vertex.y }
+      : { x: vertex.x, y: vertex.y + (m.kind === 'thigh' ? length : -length) });
     ctx.strokeStyle = color; ctx.lineWidth = unit * .7;
     ctx.beginPath(); ctx.moveTo(vertex.x, vertex.y); ctx.lineTo(end.x, end.y);
     if (other) { ctx.moveTo(vertex.x, vertex.y); ctx.lineTo(other.x, other.y); }
     ctx.stroke();
-    if (m.kind !== 'knee') {   // the vertical, dashed
+    if (!joint) {   // the vertical (or the level), dashed
       ctx.setLineDash([unit * .8, unit * .6]); ctx.lineWidth = unit * .35;
       ctx.beginPath(); ctx.moveTo(vertex.x, vertex.y); ctx.lineTo(reference.x, reference.y); ctx.stroke(); ctx.setLineDash([]);
     }
@@ -106,7 +113,7 @@ export function drawCrouchFigure(ctx: CanvasRenderingContext2D, pose: CrouchPoin
         return { x: Math.max(2, Math.min(cw - bw - 2, x)), y: Math.max(2, Math.min(ch - bh - 2, y)), w: bw, h: bh };
       };
       const inside = box(1, radius + unit * 1.4), outside = box(-1, unit * 1.6);
-      const choices = m.kind === 'knee' ? [outside, inside] : [inside, outside];
+      const choices = joint ? [outside, inside] : [inside, outside];
       const chosen = choices.find(free) ?? { ...choices[0], y: Math.min(ch - bh - 2, Math.max(...placed.map(o => o.y + o.h)) + 2) };
       placed.push(chosen);
       const { x, y } = chosen;

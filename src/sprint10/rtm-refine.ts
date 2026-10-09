@@ -64,7 +64,7 @@ export function openRtmPose(signal: AbortSignal, status: (text: string) => void)
   return opening;
 }
 async function open(signal: AbortSignal, status: (text: string) => void) {
-  const bytes = await downloadModel(`${import.meta.env.BASE_URL}models/rtmpose/${RTM_MODEL}`, signal, text => status(text.replace('姿勢モデル', '高精度の骨格モデル')));
+  const bytes = await downloadModel(`${import.meta.env.BASE_URL}models/rtmpose/${RTM_MODEL}`, signal, text => status(text.replace('姿勢モデル', '高精度の骨格モデル')), RTM_MODEL_SHA256);
   const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('');
   if (digest !== RTM_MODEL_SHA256) throw new Error('高精度の骨格モデルのファイルが正しくありません。');
   status('高精度の骨格モデルを準備しています…');
