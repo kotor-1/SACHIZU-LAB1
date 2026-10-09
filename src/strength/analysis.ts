@@ -32,18 +32,47 @@ function both(pose: readonly CrouchPoint[], left: number, W: number, H: number):
   return sa ? { x: a.x * W, y: a.y * H } : sb ? { x: b.x * W, y: b.y * H } : null;
 }
 const one = (pose: readonly CrouchPoint[], i: number, W: number, H: number): P | null => seen(pose[i]) ? { x: pose[i].x * W, y: pose[i].y * H } : null;
+/** MediaPipe's left/right pairs (eyes, ears, mouth, then shoulders to toes). */
+export const PAIRS = [[1, 4], [2, 5], [3, 6], [7, 8], [9, 10], ...Array.from({ length: 11 }, (_, k) => [11 + 2 * k, 12 + 2 * k])];
+/** On both legs, the body of the nearer side. From the side the knees and feet of a stance a shoulder width apart do not
+ * overlap, and their middles floated between the near and the far shoe (the user's squat screenshots, 2026-10-09:
+ * 「スケルトンズレてるじゃん」). The nearer leg lies lower in the picture (below the camera at the waist, the nearer of two
+ * points lies lower), told from the knees and the feet together, so a joint the model names the other way in one frame
+ * does not decide it. Every point is taken from that side: the shoulder, hip, knee and ankle of one side lie in one
+ * plane and keep their angles in the picture, while the middle hip with the near knee steepened the thigh by up to 20°
+ * (the test videos). Legs about level (overlapping) are averaged, as before; the near side's share grows with the
+ * height between the legs up to NEAR_GAP of the picture's height, so the points never jump from one side to the other.
+ * Both landmark sides get the point. */
+const NEAR_GAP = .02;
+export function nearPose(pose: readonly CrouchPoint[]): CrouchPoint[] {
+  let gap = 0, n = 0;
+  for (const i of [25, 27, 29, 31]) if (seen(pose[i]) && seen(pose[i + 1])) { gap += pose[i].y - pose[i + 1].y; n++; }
+  const near = n && gap < 0 ? 1 : 0, w = n ? .5 + .5 * Math.min(1, Math.abs(gap / n) / NEAR_GAP) : .5, out = pose.map(p => ({ ...p }));
+  for (const [l, r] of PAIRS) {
+    const a = pose[near ? r : l], b = pose[near ? l : r];
+    if (!a || !b) continue;
+    const q = seen(a) && seen(b) ? { x: a.x * w + b.x * (1 - w), y: a.y * w + b.y * (1 - w), visibility: Math.min(a.visibility ?? 1, b.visibility ?? 1) }
+      : seen(a) ? { ...a } : seen(b) ? { ...b } : null;
+    if (q) { out[l] = q; out[r] = { ...q }; }
+  }
+  return out;
+}
 /** The standing leg (0 left, 1 right in the model's names): the lower ankle, or the one seen. */
 export function stanceSide(pose: readonly CrouchPoint[]): 0 | 1 | null {
   const a = seen(pose[27]), b = seen(pose[28]);
   return a && b ? pose[27].y >= pose[28].y ? 0 : 1 : a ? 0 : b ? 1 : null;
 }
-/** The body's points in one frame (pixels): both sides averaged, or on one leg (`single`) the standing leg's, with the
- * lifted leg's knee and ankle as `free`. */
+/** The body's points in one frame (pixels): on both legs the nearer side's (`nearPose`), on one leg (`single`) the
+ * shoulders and hips at the middle of both sides and the standing leg's knee and foot, with the lifted leg's knee and
+ * ankle as `free`. */
 export function bodyOf(pose: readonly CrouchPoint[] | null | undefined, W: number, H: number, fallback?: readonly CrouchPoint[] | null, single = false) {
   if (!pose) return null;
+  if (!single) {
+    const q = nearPose(pose), f = fallback ? nearPose(fallback) : null, at = (i: number) => both(q, i, W, H) ?? (f ? both(f, i, W, H) : null);
+    return { ear: at(7), shoulder: at(11), wrist: at(15), hip: at(23), knee: at(25), ankle: at(27), heel: at(29), toe: at(31), free: null };
+  }
   const at = (i: number) => both(pose, i, W, H) ?? (fallback ? both(fallback, i, W, H) : null);
   const upper = { ear: at(7), shoulder: at(11), wrist: at(15), hip: at(23) };
-  if (!single) return { ...upper, knee: at(25), ankle: at(27), heel: at(29), toe: at(31), free: null };
   const s = stanceSide(pose);
   if (s === null) return { ...upper, knee: null, ankle: null, heel: null, toe: null, free: null };
   const leg = (k: 0 | 1) => ({ knee: one(pose, 25 + k, W, H), ankle: one(pose, 27 + k, W, H) });
@@ -130,6 +159,8 @@ export interface Rep {
   /** Back at rest or the next rep begun (live: told once settled). */
   settled: boolean;
 }
+/** A frame of a recorded set; `fine`: its pose read again with RTMPose-l (fine.ts), the angles' frames. */
+export type StrengthFrame = CrouchFrame & { fine?: boolean };
 export interface StrengthResult {
   exercise: Exercise; version: string;
   /** +1: the athlete faces right in the picture. */
@@ -287,14 +318,20 @@ export function analyzeStrength(frames: readonly CrouchFrame[], o: StrengthOptio
   // The usual level is the reps' median (the least one let a single point-flip "rep" from far above drop every rep: a
   // camera test).
   const stand = median(timed.map(r => r.level)), span = median(timed.map(r => r.depth - r.level));
+  const range = (a: number, b: number) => Array.from({ length: Math.max(0, b - a) }, (_, k) => a + k);
+  const finest = (at: number[]) => at.filter(i => (frames[i] as StrengthFrame).fine).map(i => postures[i]);
   const found = timed.filter(r => r.level - stand <= LOW_START * span);
   const reps: Rep[] = found.map((r, n) => {
     // Standing: the frames at rest since the rep before.
     const rest = r.level + REST * (r.depth - r.level), from = n ? found[n - 1].e : 0;
-    const still = postures.slice(from, r.s + 1).filter((_, i) => g[from + i] !== null && g[from + i]! <= rest);
-    const top = standing(still.length ? restingPosture(still, postures[r.s]) : postures[r.s]);
+    const stillAt = range(from, r.s + 1).filter(i => g[i] !== null && g[i]! <= rest), still = stillAt.map(i => postures[i]);
+    // The angles from the frames read with RTMPose-l (fine.ts) where there are any; the heel against all the standing
+    // frames (its rise is followed through the rep on RTMPose-m's frames).
+    const all = still.length ? restingPosture(still, postures[r.s]) : postures[r.s], fine = finest(stillAt);
+    const top = standing({ ...(fine.length ? restingPosture(fine, postures[r.s]) : all), foot: all.foot });
     // The bottom: each angle's median over BOTTOM_FRAMES on either side (a frame's points jitter a degree or two).
-    const low = restingPosture(postures.slice(Math.max(r.s, r.b - BOTTOM_FRAMES), Math.min(r.e, r.b + BOTTOM_FRAMES) + 1), postures[r.b]);
+    const bottomAt = range(Math.max(r.s, r.b - BOTTOM_FRAMES), Math.min(r.e, r.b + BOTTOM_FRAMES) + 1), fineLow = finest(bottomAt);
+    const low = restingPosture(fineLow.length ? fineLow : bottomAt.map(i => postures[i]), postures[r.b]);
     // Peaks in the rep over a running median of three frames (one frame's jitter is no rise).
     const inRep = postures.slice(r.s, r.e + 1);
     const rises = median3(inRep.map(p => p.foot === null || top.foot === null ? null : p.foot - top.foot));

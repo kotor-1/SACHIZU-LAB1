@@ -1,13 +1,10 @@
 /** The squat / RDL on pictures: the measured lines drawn with the shared figure (src/sprint10/crouch-figure.ts). */
 import type { CrouchFrame, CrouchPoint } from '../sprint10/crouch';
 import type { Mark, Phase } from '../sprint10/crouch-figure';
-import { framePosture, stanceSide, type Exercise, type Posture, type Rep, type StrengthResult } from './analysis';
+import { framePosture, nearPose, PAIRS, stanceSide, type Exercise, type Posture, type Rep, type StrengthResult } from './analysis';
 
-/** MediaPipe's left/right pairs (eyes, ears, mouth, then shoulders to toes). */
-const PAIRS = [[1, 4], [2, 5], [3, 6], [7, 8], [9, 10], ...Array.from({ length: 11 }, (_, k) => [11 + 2 * k, 12 + 2 * k])];
 const seen = (p?: CrouchPoint) => !!p && Number.isFinite(p.x) && Number.isFinite(p.y) && (p.visibility ?? 1) >= .3;
-/** A pose with each left and right point put at their middle (the analysis measures the middle; from the side the
- * two legs overlap): the drawn lines are then the measured ones, on landmark side 0. */
+/** A pose with each left and right point put at their middle (on one leg, the shoulders and hips as the analysis takes them). */
 export function merged(pose: readonly CrouchPoint[] | null | undefined): CrouchPoint[] | null {
   if (!pose) return null;
   const out = pose.map(p => ({ ...p }));
@@ -28,9 +25,10 @@ export function legsApart(pose: readonly CrouchPoint[] | null | undefined): Crou
   for (let i = 25; i <= 31; i += 2) { out[i] = { ...pose[i + s] }; out[i + 1] = { ...pose[i + 1 - s] }; }
   return out;
 }
-/** The frames with the poses as the analysis measures them, for the pictures and the replay. */
+/** The frames with the poses as the analysis measures them (both legs: the nearer side's, `nearPose`), for the pictures
+ * and the replay: the drawn lines are then the measured ones. */
 export const sideOn = (frames: readonly CrouchFrame[], exercise: Exercise = 'squat'): CrouchFrame[] => {
-  const shape = exercise === 'slrdl' ? legsApart : merged;
+  const shape = exercise === 'slrdl' ? legsApart : (p: readonly CrouchPoint[] | null | undefined) => p ? nearPose(p) : null;
   return frames.map(f => ({ ...f, pose: shape(f.pose), refined: f.refined === undefined ? undefined : shape(f.refined) }));
 };
 

@@ -71,6 +71,26 @@ describe('squat and RDL form', () => {
       r.reps.forEach((rep, i) => { for (const k of ['knee', 'hip', 'trunk', 'shank', 'thigh'] as const) expect(rep.low[k]!).toBeCloseTo(right.reps[i].low[k]!, 0); });
     }
   });
+  it('measures the nearer leg when the feet stand apart (the far foot higher in the picture), and draws it', async () => {
+    // The far leg's knee and foot 0.06 higher and a little back, labelled right, or left in every third frame.
+    const apart = (u: number, n: number) => {
+      const p = body(35 * u, 95 * u, 40 * u), far = n % 3 === 0 ? 0 : 1;
+      for (const i of [25, 27, 29, 31]) {
+        const q = p[i + far];
+        p[i + far] = { ...q, x: q.x - .02, y: q.y - .06 };
+        if (far === 0) [p[i], p[i + 1]] = [p[i + 1], p[i]];
+      }
+      return p;
+    };
+    const plain = analyzeStrength(reps(squat, [1.5, 1.5]), { ...O, exercise: 'squat' });
+    const r = analyzeStrength(reps(apart, [1.5, 1.5]), { ...O, exercise: 'squat' });
+    expect(r.reps).toHaveLength(2);
+    r.reps.forEach((rep, i) => { for (const k of ['knee', 'hip', 'trunk', 'shank', 'thigh'] as const) expect(rep.low[k]!).toBeCloseTo(plain.reps[i].low[k]!, 0); });
+    // The picture's knee and ankle are the near ones (on both landmark sides).
+    const { sideOn } = await import('../src/strength/figure');
+    const shown = sideOn([{ frame: 0, pts: 0, pose: apart(1, 1) }], 'squat')[0].pose!, near = body(35, 95, 40);
+    for (const i of [25, 26, 27, 28]) { expect(shown[i].y).toBeCloseTo(near[i].y, 6); }
+  });
   it('tells the heel rising and how much slower the bar came up', () => {
     const r = analyzeStrength(reps(u => body(35 * u, 95 * u, 40 * u, { heel: 12 * u }), [1, 1, 1.25]), { ...O, exercise: 'squat' });
     expect(r.reps).toHaveLength(3);
@@ -217,6 +237,15 @@ describe('single-leg RDL', () => {
 });
 
 describe('the exercise chosen', () => {
+  it('tells why the camera did not start, in Japanese, with what to do', async () => {
+    const { cameraTrouble } = await import('../src/strength/StrengthLab');
+    const err = (name: string) => Object.assign(new Error('The request is not allowed by the user agent'), { name });
+    expect(cameraTrouble(err('NotAllowedError'))).toContain('Webサイトの設定');
+    expect(cameraTrouble(new DOMException('x', 'NotAllowedError'))).toContain('許可');
+    expect(cameraTrouble(err('NotReadableError'))).toContain('ほかのアプリ');
+    expect(cameraTrouble(err('OverconstrainedError'))).toContain('見つかりません');
+    expect(cameraTrouble(new Error('骨格モデルを開始できませんでした。'))).toBe('骨格モデルを開始できませんでした。');
+  });
   it('asks again when a squat is analysed as an RDL, and an RDL as a squat', async () => {
     const { strengthAdvice } = await import('../src/strength/advice');
     const squatAsRdl = analyzeStrength(reps(u => body(35 * u, 95 * u, 40 * u), [1.5, 1.5]), { ...O, exercise: 'slrdl' });

@@ -13,9 +13,9 @@ const TABLES = [['form', '姿勢'], ['tempo', 'テンポ']] as const;
 
 /** The result on the phone (the user, 2026-10-05: 「縦長で使いにくい」): a few numbers, then tabs; one table and one
  * graph at a time. Pictures and the slow replay need the video (not the camera without its recording). */
-export default function StrengthResults({ result, frames, width, height, url, refiner, camera, onSave }: {
+export default function StrengthResults({ result, frames, width, height, url, refiner, fine, camera, onSave }: {
   result: StrengthResult; frames: readonly CrouchFrame[]; width: number; height: number; url: string | null;
-  refiner: 'webgpu' | 'wasm' | null; camera: boolean; onSave: () => void }) {
+  refiner: 'webgpu' | 'wasm' | null; fine: boolean; camera: boolean; onSave: () => void }) {
   void width; void height;
   const card = useRef<HTMLElement>(null), tabsRef = useRef<HTMLDivElement>(null), panels = useRef<HTMLDivElement>(null), replay = useRef<HTMLVideoElement>(null);
   const [tab, setTab] = useState<Tab>('advice'), [table, setTable] = useState<typeof TABLES[number][0]>('form');
@@ -71,7 +71,7 @@ export default function StrengthResults({ result, frames, width, height, url, re
           <p className="sprint10-hint">各回の最も深い所の前後では、測った線と角度を表示します。1/8は実際の8分の1の速さです。</p>
         </div>}
       </div>
-      <StrengthNotes result={result} refiner={refiner} camera={camera} />
+      <StrengthNotes result={result} refiner={refiner} fine={fine} camera={camera} />
     </>}
     <button onClick={onSave}>結果を保存（JSON）</button>
   </section>;

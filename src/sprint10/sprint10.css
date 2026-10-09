@@ -68,6 +68,7 @@
 .sprint10-table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:15px}
 .sprint10-table th,.sprint10-table td{padding:9px 4px;text-align:right;border-bottom:1px solid #e3ece8;white-space:nowrap}
 .sprint10-table th:first-child{text-align:left}.sprint10-table tbody th{font-weight:700}
+.sprint10 .sprint10-table .sprint10-link{min-height:36px;padding:2px 0;border:0;background:none;color:#135a48;font:inherit;font-weight:700;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
 .sprint10-table thead th{font-size:13px;line-height:1.25;color:#3f5f55;vertical-align:bottom}.sprint10-table thead small{display:block;font-size:11px;font-weight:500;color:#557468}
 .sprint10-panels .sprint10-advice li{font-size:15px}
 @media(max-width:480px){.sprint10-tabs{margin-inline:-16px;padding-inline:16px}.sprint10 .sprint10-tabs button{font-size:14px}.sprint10-table{font-size:14px}.sprint10-panels .sprint10-advice li{font-size:14px}}

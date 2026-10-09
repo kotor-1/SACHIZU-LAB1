@@ -16,6 +16,8 @@ import './strength.css';
 
 type Source = 'video' | 'camera';
 interface Measured { frames: CrouchFrame[]; width: number; height: number; refiner: 'webgpu' | 'wasm' | null;
+  /** The pose read with RTMPose-m 384×288 (fine.ts), not 256×192. */
+  fine?: boolean;
   /** The video the frames came from (pictures and the slow replay); null for the camera without a recording. */
   url: string | null; from: 'video' | 'camera' | 'clip' }
 /** The camera's recording: at most as long as a video taken (recording.ts) and this large; the counting goes on. */
@@ -24,6 +26,16 @@ const CLIP_LIMIT = { milliseconds: 90_000, bytes: 120 * 1024 * 1024 };
 const LIVE_EVERY = .25;
 /** A rep is told when its bottom is at least this long after the last one told (s). */
 const TOLD_APART = .5;
+
+/** A camera that would not start, in words with what to do: WebKit's own text is English (「スクワットのリアルタイム解析で
+ * カメラが起動しない」, the user, 2026-10-09). */
+export function cameraTrouble(e: unknown): string {
+  const name = e instanceof Error || e instanceof DOMException ? e.name : '';
+  if (name === 'NotAllowedError' || name === 'SecurityError') return 'カメラの使用が許可されていません。Safariでは、アドレスバーの「ぁあ」（aA）→「Webサイトの設定」→「カメラ」を「許可」にして、ページを読み込み直してください。録画した動画でも解析できます。';
+  if (name === 'NotReadableError') return 'カメラを開けませんでした。ほかのアプリ（カメラ・ビデオ通話など）がカメラを使っていないか確かめて、ページを読み込み直してください。';
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'この端末で使えるカメラが見つかりませんでした。録画した動画を読み込んでください。';
+  return e instanceof Error ? e.message : String(e);
+}
 
 /** Squat and Romanian deadlift form from the side, a recorded video or the camera (the user, 2026-10-08:
  * 「録画でもリアルタイムでもできるようにしたい」). The camera tells each rep aloud: from the side the athlete faces
@@ -63,7 +75,7 @@ export default function StrengthLab() {
       const { measureStrength } = await import('./recording');
       const data = await measureStrength(target, control.signal, (fraction, text) => { setProgress(fraction); setMessage(text); });
       if (control.signal.aborted) return;
-      setMeasured({ frames: data.frames, width: data.width, height: data.height, refiner: data.refiner, url: targetUrl, from });
+      setMeasured({ frames: data.frames, width: data.width, height: data.height, refiner: data.refiner, fine: data.fine, url: targetUrl, from });
       setMessage('解析が終わりました。');
     } catch (e) { if (!control.signal.aborted) setMessage(e instanceof Error ? e.message : String(e)); }
     finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
@@ -84,10 +96,12 @@ export default function StrengthLab() {
     const element = camera.current!;
     try {
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('カメラを利用できません。HTTPS接続を確認するか、録画した動画を読み込んでください。');
+      setMessage('カメラを起動しています…（カメラの使用を求められたら「許可」を押してください）');
       const media = await untilAborted(navigator.mediaDevices.getUserMedia(cameraConstraints(navigator.mediaDevices.getSupportedConstraints())), control.signal);
       stream.current = media; element.srcObject = media; await element.play(); await waitForCurrentFrame(element, control.signal);
       // The screen kept on through the set (the phone on a tripod, nobody touching it).
       try { awake = await (navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock?.request('screen') ?? null; } catch { awake = null; }
+      setMessage('骨格モデルを準備しています…');
       const { prepareStrengthWorker, runLive } = await import('./live');
       const client = await prepareStrengthWorker(control.signal, text => setMessage(text));
       if (control.signal.aborted) { client.dispose(); return; }
@@ -110,7 +124,7 @@ export default function StrengthLab() {
         }
         setHud({ reps: told.length, last: lastCue, angles: liveAngles(body, exercise, f.width, f.height), fps: f.fps, seen: !!f.frame.pose });
       });
-    } catch (e) { if (!control.signal.aborted) setMessage(e instanceof Error ? e.message : String(e)); }
+    } catch (e) { if (!control.signal.aborted) setMessage(cameraTrouble(e)); }
     finally {
       void awake?.release().catch(() => undefined);
       const recorded = recorder ? await recorder.stop() : null;
@@ -138,7 +152,7 @@ export default function StrengthLab() {
   function save() {
     if (!result || !measured) return;
     const blob = new Blob([JSON.stringify({ version: STRENGTH_VERSION, exercise, source: measured.from, file: measured.from === 'video' ? file?.name : undefined,
-      refiner: measured.refiner, result: { ...result, postures: undefined }, postures: result.postures,
+      refiner: measured.refiner, fine: !!measured.fine, result: { ...result, postures: undefined }, postures: result.postures,
       // The camera's points (no video kept to analyse again): to look into a count that went wrong.
       ...(measured.from === 'camera' ? { frames: measured.frames, size: { width: measured.width, height: measured.height } } : {}) }, null, 2)], { type: 'application/json' });
     const href = URL.createObjectURL(blob), a = document.createElement('a');
@@ -191,7 +205,7 @@ export default function StrengthLab() {
       {busy && !live && <progress max="1" value={progress} aria-label="解析の進み具合" />}
     </section>}
     {result && measured && <StrengthResults result={result} frames={measured.frames} width={measured.width} height={measured.height}
-      url={measured.url} refiner={measured.refiner} camera={measured.from === 'camera'} onSave={save} />}
+      url={measured.url} refiner={measured.refiner} fine={!!measured.fine} camera={measured.from === 'camera'} onSave={save} />}
     <footer>{STRENGTH_VERSION} · 動画とカメラの映像はこの端末内で処理し、外部へ送信しません。</footer>
   </main>;
 }

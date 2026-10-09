@@ -18,7 +18,7 @@ const ORT_WASM = new URL('../../node_modules/onnxruntime-web/dist/ort-wasm-simd-
 export const PIXEL_MEAN = [123.675, 116.28, 103.53], PIXEL_STD = [58.395, 57.12, 57.375];
 const IW = 192, IH = 256, MEAN = PIXEL_MEAN, STD = PIXEL_STD;
 /** Halpe26 keypoints in MediaPipe's 33 indices (toes: the big toes). */
-const FROM_HALPE: Record<number, number> = { 0: 0, 11: 5, 12: 6, 13: 7, 14: 8, 15: 9, 16: 10, 23: 11, 24: 12, 25: 13, 26: 14, 27: 15, 28: 16, 29: 24, 30: 25, 31: 20, 32: 21 };
+export const FROM_HALPE: Record<number, number> = { 0: 0, 11: 5, 12: 6, 13: 7, 14: 8, 15: 9, 16: 10, 23: 11, 24: 12, 25: 13, 26: 14, 27: 15, 28: 16, 29: 24, 30: 25, 31: 20, 32: 21 };
 
 /** The model's input window (pixels): the pose's box widened 1.25 times to 3:4, as RTMPose was trained. */
 export function cropOf(pose: readonly CrouchPoint[], width: number, height: number) {
