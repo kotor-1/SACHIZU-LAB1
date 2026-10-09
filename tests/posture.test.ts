@@ -148,7 +148,7 @@ describe('posture measures', () => {
     }
     expect(sagittal(side()).facing).toBe('right'); expect(sagittal(mirror(side())).facing).toBe('left');
     const bent = sagittal(side(0, 40)).measures.find(q => q.key === 'knee')!;
-    expect(bent.value).toBeGreaterThan(8); expect(bent.text).toMatch(/^曲がっている/);
+    expect(bent.value).toBeGreaterThan(8); expect(bent.text).toMatch(/^屈曲/);
     // A knee bent a little is usual; pressed back as far is not.
     expect(levelOf('knee', 6)).toBe(0); expect(levelOf('knee', -6)).toBe(1);
   });
@@ -197,17 +197,17 @@ describe('posture findings', () => {
     expect(findingsOf(tilt)).toEqual([]);
     expect(nearEdgeOf(tilt).map(f => [f.key, f.value.toFixed(2), f.views.join()])).toEqual([['bodyAxis', '-1.12', 'front,back'], ['kneeLeft', '3.86', 'front,back']]);
     expect(nearEdgeOf({ front: result('front', { shoulderTilt: 3.6 }), back: result('back', { shoulderTilt: -.4 }) })[0].value).toBeCloseTo(1.6, 9);
-    expect(nearEdgeOf(tilt).map(nearText)).toEqual(['体の軸 右1.1°', '左膝 O脚の向き3.9°']);
-    expect(nearText({ key: 'headTilt', level: 0, value: -1.87, views: ['front'] })).toBe('頭の傾き 右1.9°');
-    expect(nearText({ key: 'headForward', level: 1, value: 10.4, views: ['side'] })).toBe('頭の位置 前10.4°');
-    expect(nearText({ key: 'knee', level: 0, value: -4.6, views: ['side'] })).toBe('膝 反り4.6°');
+    expect(nearEdgeOf(tilt).map(nearText)).toEqual(['体幹の側方傾斜 右1.1°', '左膝 内反（O脚傾向）3.9°']);
+    expect(nearText({ key: 'headTilt', level: 0, value: -1.87, views: ['front'] })).toBe('頭部の側方傾斜 右1.9°');
+    expect(nearText({ key: 'headForward', level: 1, value: 10.4, views: ['side'] })).toBe('頭部 前方偏位10.4°');
+    expect(nearText({ key: 'knee', level: 0, value: -4.6, views: ['side'] })).toBe('膝関節 過伸展4.6°');
   });
   it('tells the clearest first, the head forward and the knee pressed back before plain asymmetries, at most 4', () => {
     const f = findingsOf({ front: result('front', { shoulderTilt: 2, headTilt: 5, bodyAxis: 2, kneeLeft: 5 }), side: result('side', { headForward: 15, knee: -12, trunkLean: 5 }) });
     expect(f.map(x => x.key)).toEqual(['knee', 'headTilt', 'headForward', 'shoulderTilt']);
-    expect(findingText(f[0]).title).toBe('膝が反っています（過伸展）');
-    expect(findingText({ key: 'shoulderTilt', level: 1, value: -2, views: ['front'] }).title).toBe('右肩が低めです');
-    expect(findingText({ key: 'kneeLeft', level: 1, value: 5, views: ['front'] }).title).toBe('左膝が外向きです（O脚の向き）');
+    expect(findingText(f[0]).title).toBe('膝関節が過伸展しています（反張膝の傾向）');
+    expect(findingText({ key: 'shoulderTilt', level: 1, value: -2, views: ['front'] }).title).toBe('右肩が低めです（肩の高さの左右差）');
+    expect(findingText({ key: 'kneeLeft', level: 1, value: 5, views: ['front'] }).title).toBe('左膝が内反しています（O脚傾向）');
     expect(Object.keys(MEASURE_GUIDE)).toHaveLength(11);
   });
   it('tells the head\'s tilt from the front only: from behind it is for reference', () => {

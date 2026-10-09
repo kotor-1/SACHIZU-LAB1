@@ -192,7 +192,7 @@ export default function PostureLab() {
       <details className="sprint10-more"><summary>数値の見方</summary>
         <p>どの値も骨格の点を結んだ線の角度で、距離の物差しは使いません。目安の範囲は、理想の姿勢（Kendall）のまわりに、骨格の点のずれ（数度）と、ふつうに見られる小さな左右差の分だけ幅を持たせた、このアプリの基準です。</p>
         <dl className="posture-guides">{(Object.keys(MEASURE_GUIDE) as (keyof typeof MEASURE_GUIDE)[]).filter(k => k !== 'kneeRight').map(k =>
-          <div key={k}><dt>{k === 'kneeLeft' ? '膝の向き（正面・後ろ）' : labelOf(k)}</dt><dd>{MEASURE_GUIDE[k]}</dd></div>)}</dl>
+          <div key={k}><dt>{k === 'kneeLeft' ? '膝の内反・外反（正面・後ろ）' : labelOf(k)}</dt><dd>{MEASURE_GUIDE[k]}</dd></div>)}</dl>
         <p>正面と後ろの両方を撮ったときは、同じ傾きを2回測ることになります。ポイントでは2枚の平均を伝え、2枚で向きが逆のときは（はっきりしないため）伝えません。</p>
         <p>境目との差が読み取りの誤差（±{nearOf('shoulderTilt')}°、横の頭の位置は±{nearOf('headForward')}°）より小さい値は「境目」として、ポイントに入れず別にまとめます。同じ写真でも、ブラウザや端末の画像の読み込みの違いで、この程度は値が動くためです。</p>
         <p>骨格：人を見つけるのはMediaPipe、測る点はRTMPose-l（Halpe26、入力384×288）です。点は、写真そのままと左右反転の2通り×枠の大きさ3通りで読み取った平均です（カメラは3コマの中央値）。正面・後ろでは、耳と目を頭と肩だけの枠でもう一度読み取ります（頭の傾きが正確になります）。モデルに渡す画像は、各画素の範囲の平均で作ります（どのブラウザでも同じ値になります）。</p>
@@ -204,8 +204,8 @@ export default function PostureLab() {
   </main>;
 }
 
-const LABELS: Record<string, string> = { headTilt: '頭の傾き', shoulderTilt: '肩の高さ', pelvisTilt: '腰の高さ（参考）', bodyAxis: '体の軸',
-  headForward: '頭の位置（横）', trunkLean: '上体の傾き（横）', pelvisForward: '骨盤の位置（横）', knee: '膝（横）', bodyLean: '全身の傾き（横）' };
+const LABELS: Record<string, string> = { headTilt: '頭部の側方傾斜', shoulderTilt: '肩の高さの左右差', pelvisTilt: '骨盤の側方傾斜（参考）', bodyAxis: '体幹の側方傾斜',
+  headForward: '頭部の前方偏位（横）', trunkLean: '体幹の前傾・後傾（横）', pelvisForward: '骨盤の前後の偏位（横）', knee: '膝関節の屈曲・過伸展（横）', bodyLean: '全身の前傾・後傾（横）' };
 const labelOf = (k: string) => LABELS[k] ?? k;
 
 function Shooting() {

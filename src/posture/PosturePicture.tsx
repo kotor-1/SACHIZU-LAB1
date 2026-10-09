@@ -63,14 +63,14 @@ function draw(c: HTMLCanvasElement, picture: Picture, r: ViewResult, tilt: numbe
     const back = r.facing === 'left' ? 1 : -1, at = (q: Keypoint) => Math.min(q.x, ankle.x) - 40 * lw + (back > 0 ? Math.abs(q.x - ankle.x) + 80 * lw : 0);
     // Forward or back (the knee: bent or pressed back), as the table says.
     const v = (key: MeasureKey, ahead = '前', behind = '後') => { const x = valueOf(key); return x === null ? '—' : `${x < 0 ? behind : ahead}${Math.abs(x).toFixed(1)}°`; };
-    if (seen(ear)) tag(`頭 ${v('headForward')}`, at(ear), ear.y, colorOf('headForward'), back);
-    if (seen(shoulder)) tag(`上体 ${v('trunkLean')}`, at(shoulder), shoulder.y, colorOf('trunkLean'), back);
-    if (seen(hip)) tag(`骨盤 ${v('pelvisForward')}`, at(hip), hip.y, colorOf('pelvisForward'), back);
-    if (seen(knee)) tag(`膝 ${v('knee', '曲', '反')}`, at(knee), knee.y, colorOf('knee'), back);
+    if (seen(ear)) tag(`頭部 ${v('headForward', '前方', '後方')}`, at(ear), ear.y, colorOf('headForward'), back);
+    if (seen(shoulder)) tag(`体幹 ${v('trunkLean', '前傾', '後傾')}`, at(shoulder), shoulder.y, colorOf('trunkLean'), back);
+    if (seen(hip)) tag(`骨盤 ${v('pelvisForward', '前方', '後方')}`, at(hip), hip.y, colorOf('pelvisForward'), back);
+    if (seen(knee)) tag(`膝 ${v('knee', '屈曲', '過伸展')}`, at(knee), knee.y, colorOf('knee'), back);
     return;
   }
   // Front and back: the lines across (ears, shoulders, hips) against level, the axis against the vertical, the knees.
-  const across: [number, number, MeasureKey, string][] = [[K.leftEar, K.rightEar, 'headTilt', '耳'], [K.leftShoulder, K.rightShoulder, 'shoulderTilt', '肩'], [K.leftHip, K.rightHip, 'pelvisTilt', '腰']];
+  const across: [number, number, MeasureKey, string][] = [[K.leftEar, K.rightEar, 'headTilt', '耳'], [K.leftShoulder, K.rightShoulder, 'shoulderTilt', '肩'], [K.leftHip, K.rightHip, 'pelvisTilt', '骨盤']];
   for (const [a, b, key, name] of across) if (seen(p[a], p[b])) {
     const mx = (p[a].x + p[b].x) / 2, my = (p[a].y + p[b].y) / 2, half = Math.abs(p[a].x - p[b].x) / 2 + (x1 - x0) * .08;
     ctx.setLineDash([12 * lw, 9 * lw]); ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = 2.5 * lw; line(ctx, mx - half, my, mx + half, my); ctx.setLineDash([]);
@@ -92,7 +92,8 @@ function draw(c: HTMLCanvasElement, picture: Picture, r: ViewResult, tilt: numbe
     ctx.strokeStyle = colorOf(key); ctx.lineWidth = 7 * lw; line(ctx, p[hip].x, p[hip].y, p[knee].x, p[knee].y); line(ctx, p[knee].x, p[knee].y, p[ankle].x, p[ankle].y);
     dot(ctx, p[knee].x, p[knee].y, 9 * lw, colorOf(key));
     const x = valueOf(key), outward = p[knee].x < (ankles?.x ?? p[knee].x) ? -1 : 1;
-    tag(`${name} ${x === null ? '—' : `${Math.abs(x).toFixed(1)}°`}`, p[knee].x + outward * 40 * lw, p[knee].y, colorOf(key), outward);
+    // Varus (the knee outside the hip–ankle line) or valgus, as the table says.
+    tag(`${name} ${x === null ? '—' : `${x > 0 ? '内反' : '外反'}${Math.abs(x).toFixed(1)}°`}`, p[knee].x + outward * 40 * lw, p[knee].y, colorOf(key), outward);
   }
 }
 
