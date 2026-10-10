@@ -28,3 +28,39 @@ describe('RTMPose refinement (crouch start angles)', () => {
     expect(anglePose(frames[0])![0].x).toBe(.2); expect(anglePose(frames[1])![0].x).toBe(.1);
   });
 });
+
+describe('a model that stops answering', () => {
+  it('gives up an operation that does not settle in time, and lets one that does through', async () => {
+    vi.useFakeTimers();
+    const { withinTime } = await import('../src/cmj/session-lifecycle');
+    const hung = withinTime(new Promise(() => {}), 20_000, '骨格モデル'), rejected = expect(hung).rejects.toThrow('骨格モデルが20秒たっても応答しません');
+    await vi.advanceTimersByTimeAsync(20_001); await rejected;
+    await expect(withinTime(Promise.resolve(7), 20_000, 'x')).resolves.toBe(7);
+    vi.useRealTimers();
+  });
+  it('reads a frame on WebAssembly when a WebGPU run does not answer, and keeps going from there', async () => {
+    vi.useFakeTimers();
+    const ort = await import('onnxruntime-web');
+    const out = { simcc_x: { data: new Float32Array(26 * 576) }, simcc_y: { data: new Float32Array(26 * 768) } };
+    const gpu = { run: vi.fn(() => new Promise(() => {})), release: vi.fn(async () => {}) }, cpu = { run: vi.fn(async () => out), release: vi.fn(async () => {}) };
+    (ort.InferenceSession.create as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (_b: unknown, o: { executionProviders: string[] }) => o.executionProviders[0] === 'webgpu' ? gpu : cpu);
+    vi.stubGlobal('navigator', { gpu: {} });
+    vi.stubGlobal('caches', undefined);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1]))));
+    vi.stubGlobal('document', { createElement: () => ({ width: 0, height: 0, getContext: () => ({ clearRect() {}, drawImage() {}, getImageData: () => ({ data: new Uint8ClampedArray(192 * 256 * 4) }) }) }) });
+    // The model's bytes taken as the real model's (its SHA-256 answered as the expected one).
+    const { RTM_MODEL_SHA256 } = await import('../src/sprint10/rtm-refine');
+    vi.spyOn(globalThis.crypto.subtle, 'digest').mockImplementation(async () => new Uint8Array(RTM_MODEL_SHA256.match(/../g)!.map(x => parseInt(x, 16))).buffer);
+    const { loadRefiner } = await import('../src/sprint10/rtm-refine');
+    const refiner = await loadRefiner(new AbortController().signal, () => {});
+    expect(refiner.backend).toBe('webgpu');
+    const pose = Array.from({ length: 33 }, (_, i) => ({ x: .4 + (i % 5) * .03, y: .2 + Math.floor(i / 5) * .08, visibility: .9 }));
+    const source = { width: 1920, height: 1080 } as HTMLCanvasElement;
+    const read = refiner.refine(source, pose);
+    await vi.advanceTimersByTimeAsync(20_001);
+    expect(await read).not.toBeNull();
+    expect(refiner.backend).toBe('wasm');
+    expect(cpu.run).toHaveBeenCalledTimes(1); expect(gpu.release).toHaveBeenCalled();
+    vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks();
+  });
+});

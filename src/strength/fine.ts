@@ -10,7 +10,8 @@
 import * as ort from 'onnxruntime-web';
 import { downloadModel } from '../cmj/model-download';
 import type { CrouchPoint } from '../sprint10/crouch';
-import { FROM_HALPE } from '../sprint10/rtm-refine';
+import { CREATE_LIMIT, FROM_HALPE, RUN_LIMIT } from '../sprint10/rtm-refine';
+import { withinTime } from '../cmj/session-lifecycle';
 import { cropAround, decode, IH, IW, meanOf, type Crop, type Keypoint } from '../posture/keypoints';
 import { areaInput } from '../posture/model-input';
 
@@ -57,26 +58,26 @@ async function open(signal: AbortSignal, status: (text: string) => void): Promis
     : { executionProviders: [ep], graphOptimizationLevel: 'all' };
   for (const ep of (!gpu ? ['wasm'] : apple ? ['wasm', 'webgpu'] : ['webgpu', 'wasm']) as FineModel['backend'][]) {
     let session: ort.InferenceSession;
-    try { session = await ort.InferenceSession.create(bytes!, options(ep)); } catch { continue; }
+    try { session = await withinTime(ort.InferenceSession.create(bytes!, options(ep)), CREATE_LIMIT, '角度用の骨格モデルの準備'); } catch { continue; }
     bytes = null;
     const input = new Float32Array(3 * IW * IH);
     let current = ep, wasm: Promise<ort.InferenceSession | null> | null = null;
     // WebGPU failing while it runs (the device lost, its memory full): on WebAssembly from then on, made from the copy kept
     // on the device; only if that fails too does the analysis fall back to MediaPipe's points (recording.ts).
     const toWasm = () => wasm ??= (async () => {
-      try { return await ort.InferenceSession.create(await downloadModel(url, new AbortController().signal, () => undefined, FINE_SHA256), options('wasm')); }
+      try { return await withinTime(ort.InferenceSession.create(await downloadModel(url, new AbortController().signal, () => undefined, FINE_SHA256), options('wasm')), CREATE_LIMIT, '角度用の骨格モデルの準備'); }
       catch { return null; }
     })();
     return { get backend() { return current; }, async read(pixels, crop, mirrored) {
       areaInput(pixels.data, pixels.width, pixels.height, crop, mirrored, input);
       const run = () => session.run({ input: new ort.Tensor('float32', input, [1, 3, IH, IW]) });
       let out: ort.InferenceSession.OnnxValueMapType;
-      try { out = await run(); }
+      try { out = await withinTime(run(), RUN_LIMIT, '角度用の骨格モデル'); }
       catch (e) {
         if (current !== 'webgpu') throw e;
         const next = await toWasm(); if (!next) throw e;
         const old = session; session = next; current = 'wasm'; void old.release().catch(() => undefined);
-        out = await run();
+        out = await withinTime(run(), RUN_LIMIT, '角度用の骨格モデル');
       }
       return decode(out.simcc_x.data as Float32Array, out.simcc_y.data as Float32Array, crop, mirrored);
     } };

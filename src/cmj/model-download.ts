@@ -3,7 +3,10 @@
  * public hurdle screen took 136 s for a 1.35 s video in a fresh WebKit, 24 s with the models at hand (2026-10-08, the
  * user: 「解析に結構時間かかった」). Kept only when the bytes match the model's SHA-256, and a kept copy is used only while
  * it still does (a changed model is downloaded again). Where storage is missing or full, every analysis downloads. */
+import { withinTime } from './session-lifecycle';
 const KEEP = 'sachizu-models-v1';
+/** Storage that does not answer within this (ms) is passed over: the model is downloaded (or not kept). */
+const STORE_LIMIT = 20_000;
 const hexOf = async (bytes: Uint8Array<ArrayBuffer>) =>
   Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('');
 /** A kept copy's key: the model's address with its SHA-256. A changed model (another hash) is never taken for the old one,
@@ -14,9 +17,9 @@ const absolute = (url: string) => new URL(url, globalThis.location?.href).href;
 async function kept(url: string, sha256: string): Promise<Uint8Array<ArrayBuffer> | null> {
   try {
     if (typeof caches === 'undefined') return null;
-    const store = await caches.open(KEEP), key = keyOf(url, sha256), hit = await store.match(key);
+    const store = await withinTime(caches.open(KEEP), STORE_LIMIT, '端末の保存'), key = keyOf(url, sha256), hit = await withinTime(store.match(key), STORE_LIMIT, '端末の保存');
     if (!hit) return null;
-    const bytes = new Uint8Array(await hit.arrayBuffer());
+    const bytes = new Uint8Array(await withinTime(hit.arrayBuffer(), STORE_LIMIT, '端末の保存'));
     if (await hexOf(bytes) === sha256) return bytes;
     await store.delete(key);
   } catch { /* not allowed here (a private window): downloaded */ }
@@ -27,8 +30,8 @@ async function kept(url: string, sha256: string): Promise<Uint8Array<ArrayBuffer
 async function keep(url: string, bytes: Uint8Array<ArrayBuffer>, sha256: string) {
   try {
     if (typeof caches === 'undefined') return;
-    const store = await caches.open(KEEP), key = keyOf(url, sha256);
-    await store.put(key, new Response(bytes));
+    const store = await withinTime(caches.open(KEEP), STORE_LIMIT, '端末の保存'), key = keyOf(url, sha256);
+    await withinTime(store.put(key, new Response(bytes)), STORE_LIMIT, '端末の保存');
     const mine = absolute(key), base = absolute(url), older = absolute(keyOf(url, ''));
     for (const request of await store.keys()) if (request.url !== mine && (request.url === base || request.url.startsWith(older))) await store.delete(request);
   } catch { /* storage full or not allowed: downloaded again next time */ }

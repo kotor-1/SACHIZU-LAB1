@@ -1,6 +1,7 @@
 import * as ort from 'onnxruntime-web';
 import { downloadModel } from '../cmj/model-download';
 import type { CrouchPoint } from './crouch';
+import { withinTime } from '../cmj/session-lifecycle';
 
 /** The athlete's pose once more, with RTMPose-m (Halpe26), inside the box of
  * the MediaPipe pose that found and followed the athlete. Used for the angles
@@ -51,6 +52,9 @@ export interface Refiner {
   /** RTMPose in the box of `pose` (normalized) on `source` (the whole frame); null without a box. */
   refine(source: HTMLCanvasElement, pose: readonly CrouchPoint[]): Promise<CrouchPoint[] | null>;
 }
+/** The longest a session may take to be made, and a frame to be read (ms): one that does not answer (a GPU that hangs)
+ * is given up, the other way (WebAssembly) taken, and a frame not read keeps MediaPipe's pose. A frame takes 0.03-0.5 s. */
+export const CREATE_LIMIT = 90_000, RUN_LIMIT = 20_000;
 let loading: Promise<Refiner> | null = null;
 /** The model, loaded once a page (55.7 MB; WebGPU when the browser has it, else WebAssembly). A load begun for an
  * analysis that was then cancelled ends in that analysis's AbortError: a new analysis (its own signal not aborted) loads
@@ -76,7 +80,7 @@ async function open(signal: AbortSignal, status: (text: string) => void) {
   let session: ort.InferenceSession | null = null, backend: Refiner['backend'] = 'wasm';
   const gpu = typeof navigator !== 'undefined' && !!(navigator as Navigator & { gpu?: unknown }).gpu;
   for (const ep of (gpu ? ['webgpu', 'wasm'] : ['wasm']) as Refiner['backend'][]) {
-    try { session = await ort.InferenceSession.create(bytes, { executionProviders: [ep], graphOptimizationLevel: 'all' }); backend = ep; break; } catch { /* the next */ }
+    try { session = await withinTime(ort.InferenceSession.create(bytes, { executionProviders: [ep], graphOptimizationLevel: 'all' }), CREATE_LIMIT, '骨格モデルの準備'); backend = ep; break; } catch { /* the next */ }
   }
   if (!session) throw new Error('高精度の骨格モデルを開始できませんでした。');
   return { model: session, backend };
@@ -91,7 +95,7 @@ async function create(signal: AbortSignal, status: (text: string) => void): Prom
   const toWasm = () => wasm ??= (async () => {
     try {
       const bytes = await downloadModel(`${import.meta.env.BASE_URL}models/rtmpose/${RTM_MODEL}`, new AbortController().signal, () => undefined, RTM_MODEL_SHA256);
-      const session = await ort.InferenceSession.create(bytes, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+      const session = await withinTime(ort.InferenceSession.create(bytes, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' }), CREATE_LIMIT, '骨格モデルの準備');
       opening = Promise.resolve({ model: session, backend: 'wasm' as const });
       return session;
     } catch { return null; }
@@ -112,13 +116,13 @@ async function create(signal: AbortSignal, status: (text: string) => void): Prom
     for (let i = 0; i < N; i++) for (let ch = 0; ch < 3; ch++) input[ch * N + i] = (rgba[4 * i + ch] - MEAN[ch]) / STD[ch];
     const run = () => model.run({ input: new ort.Tensor('float32', input, [1, 3, IH, IW]) });
     let out: ort.InferenceSession.OnnxValueMapType;
-    try { out = await run(); }
+    try { out = await withinTime(run(), RUN_LIMIT, '骨格モデル'); }
     catch (e) {
       console.warn('RTMPose', e);
       if (backend !== 'webgpu') return null;
       const session = await toWasm(); if (!session) return null;
       const old = model; model = session; backend = 'wasm'; void old.release().catch(() => undefined);
-      try { out = await run(); } catch { return null; }
+      try { out = await withinTime(run(), RUN_LIMIT, '骨格モデル'); } catch { return null; }
     }
     return decodePose(out.simcc_x.data as Float32Array, out.simcc_y.data as Float32Array, c, W, H);
   } };
