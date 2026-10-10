@@ -34,7 +34,7 @@
 .sprint10 .crouch-review-actions .sprint10-primary{min-width:0;font-size:16px}
 .crouch-review-more{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
 .sprint10 .crouch-review-more button{min-height:40px;padding:6px 12px;font-size:13px;background:transparent;border-color:#cfdcd6;color:#3f5f55}
-.sprint10-tabs.crouch-tabs{grid-template-columns:repeat(5,minmax(0,1fr))}.sprint10 .crouch-tabs button{font-size:14px;padding:6px 0}
+.sprint10-tabs.crouch-tabs{grid-template-columns:1.35fr .7fr 1fr 1fr 1fr 1fr}.sprint10 .crouch-tabs button{font-size:13.5px;padding:6px 0}
 .crouch-tabs .sprint10-badge{position:absolute;top:-4px;right:-2px;margin:0;min-width:17px;height:17px;font-size:10.5px;vertical-align:0;box-shadow:0 0 0 2px #fff}
 .crouch-edited{color:#2a62d8;font-weight:800;margin-left:2px}
 .crouch-check-note{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0 0;padding:10px 12px;border-radius:10px;background:#eef4ff;color:#23406e;font-size:13px;line-height:1.5}

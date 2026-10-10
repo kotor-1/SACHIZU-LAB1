@@ -43,6 +43,8 @@ export interface StepResult {
    * first step's push in the same study. The toe-off values are the first step's only: the studies give no others, and
    * RTMPose looks only at the frames whose angles are used (refineTargets). */
   trunkToeOff: number | null;
+  /** The pose model's side of the stance leg at that toe-off (for the picture of the thighs). */
+  sideToeOff: 0 | 1 | null;
 }
 /** Angles at one moment (medians over a few frames); `frame` is the frame shown
  * for it and `frontSide` the pose model's side of the front leg in that frame. */
@@ -50,6 +52,8 @@ export interface Posture { frame: number; pts: number; trunkAngle: number | null
 export interface CrouchResult {
   version: string; reason: string | null; direction: number;
   set: Posture | null; blockClearance: Posture | null;
+  /** The hips' first movement out of the set (s): the push's start, for the block's force (ground-force.ts). */
+  moveStart?: number | null;
   blocks: { front: number; rear: number | null } | null;
   contacts: Contact[]; steps: StepResult[];
   /** Front block clearance to the first touchdown (s). */
@@ -59,6 +63,9 @@ export interface CrouchResult {
 
 /** The hip has moved off when it is this many leg lengths ahead of its set position. */
 const ONSET_LEGS = .06;
+/** The hips' first movement: the set's spread from the hips before MOVE_QUIET s ahead of the onset, at least MOVE_FLOOR
+ * leg lengths (about 1 cm). */
+const MOVE_QUIET = .15, MOVE_FLOOR = .012;
 /** The block zone reaches this far (leg lengths) beyond the set toes; a pushing
  * toe may be unseen for up to BLOCK_GAP s. */
 const BLOCK_MARGIN = .15, BLOCK_GAP = .05, FRONT_BEHIND = .12, SET_MIN = .1;
@@ -106,6 +113,14 @@ export function analyzeCrouchStart(frames: readonly CrouchFrame[], options: Crou
   // The set must be seen still before the movement (a video starting as the athlete
   // rose, with the front foot still on its block, was otherwise taken for a set).
   if (onset - rest[0].t < SET_MIN) return fail('スタートの構えを確認できませんでした。構えから映っている動画を使ってください。');
+  // The hips' first movement: the onset above waits for them to be ONSET_LEGS ahead (about 0.1 s into the push, the
+  // block's force then wrongly over a shorter push). The last moment before it within the set's own spread of the start:
+  // three times the median deviation of the set's hips (up to MOVE_QUIET s before the onset), at least MOVE_FLOOR legs.
+  const quiet = rest.slice(0, onsetIndex).filter(h => h.t <= onset - MOVE_QUIET).map(h => Math.abs(h.x - startHip)).sort((a, b) => a - b);
+  const band = Math.max(MOVE_FLOOR * leg, 3 * (quiet[quiet.length >> 1] ?? 0));
+  let moved = onsetIndex;
+  while (moved > 0 && (rest[moved - 1].x - startHip) * direction > band) moved--;
+  base.moveStart = rest[Math.max(0, moved - 1)].t;
 
   // Toes of both sides, pooled.
   const toes = toesOf(seen, W, H), planted = plantedToes(toes, leg), real = plantsOf(planted, leg);
@@ -222,8 +237,9 @@ export function stepsOf(contacts: readonly Contact[], frames: readonly CrouchFra
     const side = at ? sideNearest(at, c.x / W, W) : null;
     const toe = i === 0 && c.toeOffFrame != null ? frames.find(f => f.frame === c.toeOffFrame) : null, off = toe ? anglePose(toe) : null;
     // The stance leg in a frame is the side whose toe is at the contact's place (the model's labels swap side-on).
+    const stanceOf = (pose: CrouchPoint[] | null) => pose ? sideNearest(pose, c.x / W, W) : null;
     const gapOf = (pose: CrouchPoint[] | null) => {
-      const stance = pose ? sideNearest(pose, c.x / W, W) : null;
+      const stance = stanceOf(pose);
       if (!pose || stance === null) return null;
       const stand = thighAngle(pose, stance, W, H, direction, leg), swing = thighAngle(pose, (1 - stance) as 0 | 1, W, H, direction, leg);
       return stand === null || swing === null ? null : swing - stand;
@@ -231,7 +247,7 @@ export function stepsOf(contacts: readonly Contact[], frames: readonly CrouchFra
     return { step: c.index, contactSeconds, flightSeconds, stepSeconds, pitch: stepSeconds ? 1 / stepSeconds : null,
       shankAngle: at && side !== null ? shankAngle(at, side, W, H, direction) : null,
       trunkAngle: at ? trunkAngle(at, W, H, direction, leg) : null, side,
-      thighGapTouchdown: gapOf(at), thighGapToeOff: gapOf(off), trunkToeOff: off ? trunkAngle(off, W, H, direction, leg) : null };
+      thighGapTouchdown: gapOf(at), thighGapToeOff: gapOf(off), trunkToeOff: off ? trunkAngle(off, W, H, direction, leg) : null, sideToeOff: stanceOf(off) };
   });
 }
 

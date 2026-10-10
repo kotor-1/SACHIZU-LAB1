@@ -33,17 +33,14 @@ async function seekTo(v: HTMLVideoElement, t: number) {
   await new Promise<void>(r => requestAnimationFrame(() => r()));
 }
 
-/** A picture of each phase: the athlete cut out of its frame, the skeleton and
- * the measured angles with their values. Made from a hidden copy of the video. */
-/** Draws more on a phase's picture: `to` turns a normalized point into canvas pixels, `unit` sizes lines and text. */
-export type FigureOverlay = (p: Phase, ctx: CanvasRenderingContext2D, to: (q: { x: number; y: number }) => { x: number; y: number }, unit: number) => void;
-export function PhaseFigures({ url, frames, phases, onShow, guides = {}, overlay }: { url: string; frames: readonly CrouchFrame[]; phases: Phase[];
-  onShow: (p: Phase) => void; guides?: Record<string, string>; overlay?: FigureOverlay }) {
+/** Pictures of `phases` (key → JPEG data URL), made from a hidden copy of the video: the athlete cut out of each frame,
+ * the skeleton, the measured angles with their values, then `overlay`. */
+export function usePhasePictures(url: string, frames: readonly CrouchFrame[], phases: Phase[], overlay?: FigureOverlay) {
   const [images, setImages] = useState<Record<string, string>>({}), [failed, setFailed] = useState(false);
   const interval = useMemo(() => frameInterval(frames), [frames]);
   // Drawn again only when a picture would change (a moment's frame or marks): a new array of the same phases on every
   // render (a tap in 確認, a key in 身長) started the hidden video over each time, several at once on a phone.
-  const shownKey = phases.map(p => `${p.key}:${p.frame}:${JSON.stringify(p.marks ?? null)}`).join('|');
+  const shownKey = phases.map(p => `${p.key}:${p.frame}:${JSON.stringify(p.marks ?? null)}:${p.focus?.join(',') ?? ''}`).join('|');
   const latest = useRef(phases); latest.current = phases;
   useEffect(() => {
     const phases = latest.current;
@@ -68,7 +65,8 @@ export function PhaseFigures({ url, frames, phases, onShow, guides = {}, overlay
           if (closed) return;
           const canvas = document.createElement('canvas'); canvas.width = FIGURE_W; canvas.height = FIGURE_H;
           const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('no canvas');
-          const W = v.videoWidth, H = v.videoHeight, view = figureView(pose, W, H, FIGURE_W / FIGURE_H), k = FIGURE_W / view.w;
+          const around = p.focus ? pose.map((q, i) => p.focus!.includes(i) ? q : { ...q, visibility: 0 }) : pose;
+          const W = v.videoWidth, H = v.videoHeight, view = figureView(around, W, H, FIGURE_W / FIGURE_H), k = FIGURE_W / view.w;
           ctx.drawImage(v, view.x, view.y, view.w, view.h, 0, 0, FIGURE_W, FIGURE_H);
           const to = (q: { x: number; y: number }) => ({ x: (q.x * W - view.x) * k, y: (q.y * H - view.y) * k });
           drawCrouchFigure(ctx, pose, to, p.marks, FIGURE_W / 48, true);
@@ -80,6 +78,16 @@ export function PhaseFigures({ url, frames, phases, onShow, guides = {}, overlay
     })();
     return () => { closed = true; v.pause(); v.removeAttribute('src'); v.load(); v.remove(); };
   }, [url, frames, shownKey, interval, overlay]);   // eslint-disable-line react-hooks/exhaustive-deps
+  return { images, failed };
+}
+
+/** A picture of each phase: the athlete cut out of its frame, the skeleton and
+ * the measured angles with their values. Made from a hidden copy of the video. */
+/** Draws more on a phase's picture: `to` turns a normalized point into canvas pixels, `unit` sizes lines and text. */
+export type FigureOverlay = (p: Phase, ctx: CanvasRenderingContext2D, to: (q: { x: number; y: number }) => { x: number; y: number }, unit: number) => void;
+export function PhaseFigures({ url, frames, phases, onShow, guides = {}, overlay }: { url: string; frames: readonly CrouchFrame[]; phases: Phase[];
+  onShow: (p: Phase) => void; guides?: Record<string, string>; overlay?: FigureOverlay }) {
+  const { images, failed } = usePhasePictures(url, frames, phases, overlay);
   // One picture at a time: swiped sideways, or chosen above (six stacked
   // pictures made the phone screen long, the user 2026-10-05: 「縦長で使いにくい」).
   const track = useRef<HTMLOListElement>(null), [at, setAt] = useState(0);

@@ -1,47 +1,90 @@
-import { Fragment, useState } from 'react';
-import type { ResearchSummary, Sex, Verdict } from './crouch-research';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { anglePose, type CrouchFrame } from './crouch';
+import { markColor, type Mark } from './crouch-figure';
+import { firstShown, type ResearchRow, type ResearchSummary, type Sex, type Verdict } from './crouch-research';
+import { drawResearchTarget, SWING_COLOR, TARGET_COLOR } from './crouch-research-figure';
+import { usePhasePictures, type FigureOverlay } from './CrouchViews';
 
-/** The verdicts as shown: a mark and a word (the marks alone were not self-explanatory on a phone). */
-export const VERDICT: Record<Verdict, { mark: string; word: string }> = {
-  top: { mark: '◎', word: '上位' }, ok: { mark: '○', word: '範囲内' }, improve: { mark: '△', word: '伸びしろ' },
-  note: { mark: '', word: '参考' }, none: { mark: '', word: '測れない' },
-};
+/** The verdicts in words (the marks ◎○△ were not understood at a glance, the user 2026-10-10). */
+const WORDS: Record<Exclude<Verdict, 'top'>, string> = { ok: 'ふつう', improve: '伸びしろ', note: '参考', none: '測れない' };
+export const wordOf = (row: ResearchRow) => row.verdict !== 'top' ? WORDS[row.verdict]
+  : row.bands.some(b => b.kind === 'top' && b.label.includes('トップ')) ? 'トップ並み' : '良い';
 const ORDER = '①②③④⑤⑥⑦⑧';
-/** The summary's items, each kept on one line where it fits (a phone broke 「1歩目接地の脛」 in two). */
-const items = (labels: string[], numbered: boolean) => labels.map((label, i) =>
-  <span key={label} className={numbered ? 'crouch-research-unit numbered' : 'crouch-research-unit'}>{numbered ? ORDER[i] ?? '' : ''}{label}{!numbered && i < labels.length - 1 ? '・' : ''}</span>);
+/** The athlete's line on the picture (as drawCrouchFigure draws it), its colour and name for the legend, and the
+ * landmarks the picture is cut round so the angle is large: the trunk with the head, or the leg. */
+function markOf(row: ResearchRow): { marks: Mark[]; color: string; name: string; focus: number[] } {
+  const f = row.figure, v = row.num ?? 0, none = { marks: [], color: '', name: '', focus: [] };
+  if (!f || row.num === null) return none;
+  if (f.kind === 'trunk') {
+    const mark: Mark = { kind: 'trunk', label: '体幹', value: v };
+    return { marks: [mark], color: markColor(mark), name: '体幹', focus: [0, 11, 12, 23, 24, 25, 26] };
+  }
+  if (f.side === null) return none;
+  const leg = [23, 25, 27, 29, 31].map(i => i + f.side!);
+  if (f.kind === 'shank') { const mark: Mark = { kind: 'shank', side: f.side, label: '脛', value: v }; return { marks: [mark], color: markColor(mark), name: '脛', focus: leg }; }
+  if (f.kind === 'knee') {
+    const label = row.key === 'frontKnee' ? '前膝' : '後膝', mark: Mark = { kind: 'knee', side: f.side, label, value: v };
+    return { marks: [mark], color: markColor(mark), name: label, focus: leg };
+  }
+  return { marks: [], color: SWING_COLOR, name: '後ろ足のもも', focus: [23, 24, 25, 26, 27, 28] };
+}
 
-/** The crouch start against the studies (crouch-research.ts): the summary first (good points, what to work on, what could
- * not be measured), then a table in the order of the movement, a row's explanation opened by tapping its name. Narrow
- * enough for a phone: the studies' value takes the line under each item, the whole width. */
-export default function CrouchResearch({ summary, sex, onSex }: { summary: ResearchSummary; sex: Sex; onSex: (s: Sex) => void }) {
-  const [open, setOpen] = useState<string | null>(null);
+/** One value on the athlete's own picture at its moment: the athlete's line and the studies' range in green. The times
+ * (no picture) are told as now → the studies. */
+function ResearchPicture({ row, url, frames, direction }: { row: ResearchRow; url: string; frames: readonly CrouchFrame[]; direction: number }) {
+  const { marks, color, name, focus } = markOf(row);
+  const drawn = !!(url && row.moment && row.figure && row.num !== null && marks.length + (row.figure?.kind === 'gap' ? 1 : 0));
+  const phases = useMemo(() => drawn && row.moment ? [{ key: row.key, label: row.moment.name, frame: row.moment.frame, pts: row.moment.pts, marks, focus }] : [],
+    [drawn, row.key, row.moment?.frame, row.num]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const overlay = useCallback<FigureOverlay>((p, ctx, to, unit) => {
+    const f = frames.find(q => q.frame === p.frame), pose = f ? anglePose(f) : null;
+    if (pose) drawResearchTarget(ctx, pose, to, row, direction || 1, unit);
+  }, [row, frames, direction]);
+  const { images, failed } = usePhasePictures(url, frames, phases, overlay);
+  return <div className="cr-pic" aria-live="polite">
+    <div className="cr-pic-head"><strong>{row.moment ? `${row.moment.name}：${row.short}` : row.label}</strong>
+      <span className="cr-pic-value">{row.value}</span><span className={`cr-word ${row.verdict}`}>{wordOf(row)}</span></div>
+    {drawn ? images[row.key] ? <img src={images[row.key]} alt={`${row.label}：この選手の${name}（${row.value}）と、研究の範囲（${row.target}）`} />
+      : <div className="sprint10-phase-wait">{failed ? '画像を作れませんでした' : '画像を作成しています…'}</div>
+      : row.num !== null && <p className="cr-time">いま {row.value}<span>→ {row.target}</span></p>}
+    {drawn && <p className="cr-key" aria-hidden="true">
+      <span><i style={{ background: color }} />この選手の{name}</span>
+      <span><i style={{ background: TARGET_COLOR }} />{row.target}</span>
+      {row.figure?.kind === 'gap' && <span><i className="white" />支持脚のもも</span>}</p>}
+    <p>{row.text}</p>
+  </div>;
+}
+
+/** The crouch start against the studies (crouch-research.ts), in plain words first (the user, 2026-10-10: the table was
+ * 「長いし文章ばかり」, the chips with ◎○△ and a scale 「まだわかりにくい」: which angle, what to do, how to read it):
+ * what is good, what to work on in order with how, the chosen value on the athlete's own picture with the studies'
+ * range in green, and every value in a list folded away. The first shown is what to work on first. */
+export default function CrouchResearch({ summary, sex, onSex, url, frames, direction }: { summary: ResearchSummary; sex: Sex; onSex: (s: Sex) => void;
+  url: string; frames: readonly CrouchFrame[]; direction: number }) {
+  const [picked, setPicked] = useState<string | null>(null), picture = useRef<HTMLDivElement>(null);
+  const key = picked !== null && summary.rows.some(r => r.key === picked) ? picked : firstShown(summary);
+  const row = summary.rows.find(r => r.key === key) ?? null, groups = [...new Set(summary.rows.map(r => r.group))];
+  const byLabel = (labels: string[]) => labels.map(label => summary.rows.find(r => r.label === label)).filter((r): r is ResearchRow => !!r);
+  const good = byLabel(summary.good).filter(r => r.plain), fix = byLabel(summary.improve);
+  // A value picked: its picture, brought into view when it is off the screen.
+  const pick = (k: string) => { setPicked(k); requestAnimationFrame(() => picture.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })); };
   return <section className="crouch-research" aria-label="研究と比べる">
     <div className="crouch-research-head"><h3>研究と比べる</h3>
       <div className="sprint10-seg" role="group" aria-label="比べる研究">{(['female', 'male'] as Sex[]).map(s =>
         <button key={s} type="button" aria-pressed={sex === s} onClick={() => onSex(s)}>{s === 'female' ? '女子' : '男子'}</button>)}</div></div>
-    <ul className="crouch-research-summary" aria-label="まとめ">
-      {summary.good.length > 0 && <li className="good"><strong>良い点</strong><span>{items(summary.good, false)}</span></li>}
-      <li className="improve"><strong>伸びしろ</strong><span>{summary.improve.length ? items(summary.improve, true)
-        : '研究と比べて、はっきりした伸びしろはありませんでした。'}</span></li>
-      {summary.missing.length > 0 && <li className="missing"><strong>測れなかった所</strong><span>{items(summary.missing, false)}</span></li>}
-    </ul>
-    <div className="sprint10-table-wrap"><table className="sprint10-table crouch-research-table">
-      {/* Fixed widths: an opened explanation (across the row) widened the value column and broke the names in two. */}
-      <colgroup><col /><col className="crouch-research-value" /><col className="crouch-research-verdict" /></colgroup>
-      <thead><tr><th scope="col">項目</th><th scope="col">この選手</th><th scope="col">判定</th></tr></thead>
-      <tbody>{summary.rows.map((row, i) => {
-        const shown = open === row.key, v = VERDICT[row.verdict];
-        return <Fragment key={row.key}>
-          {row.group !== summary.rows[i - 1]?.group && <tr className="crouch-research-group"><th scope="rowgroup" colSpan={3}>{row.group}</th></tr>}
-          <tr className="crouch-research-item">
-            <th scope="row"><button type="button" aria-expanded={shown} aria-label={`${row.label}の説明`} onClick={() => setOpen(shown ? null : row.key)}>{row.short}</button></th>
-            <td>{row.value}</td>
-            <td><span className={`crouch-verdict ${row.verdict}`}>{v.mark}{v.word}</span></td></tr>
-          <tr className="crouch-research-ref"><td colSpan={3}>研究：{row.research}</td></tr>
-          {shown && <tr className="crouch-research-text"><td colSpan={3}>{row.text}</td></tr>}
-        </Fragment>;
-      })}</tbody></table></div>
-    <p className="sprint10-hint">項目を押すと説明が出ます。研究の値は短距離選手の研究の平均や範囲で、選手ごとの目標ではありません。女子の研究がない項目は、男女の研究や世界トップ男子の値と比べています（判定の決め方と出典は「数値の見方」）。</p>
+    {good.length > 0 && <div className="cr-good"><h4>良いところ</h4><ul>{good.map(r =>
+      <li key={r.key}><button type="button" aria-pressed={r.key === key} onClick={() => pick(r.key)}>{r.plain}</button></li>)}</ul></div>}
+    <div className="cr-fix"><h4>直すところ{fix.length > 1 ? '（この順に）' : ''}</h4>
+      {fix.length ? <ol>{fix.map((r, i) => <li key={r.key}>
+        <button type="button" aria-pressed={r.key === key} onClick={() => pick(r.key)}>{ORDER[i] ?? ''} {r.plain ?? r.label}</button>
+        <span className="cr-now">いま {r.value} → {r.target}</span>{r.cue && <span className="cr-cue">コツ：{r.cue}</span>}</li>)}</ol>
+        : <p>研究と比べて、はっきり直すところはありません。</p>}</div>
+    <p className="cr-hint">項目を押すと、下の画像が変わります。</p>
+    {row && <div ref={picture}><ResearchPicture row={row} url={url} frames={frames} direction={direction} /></div>}
+    <details className="cr-all"><summary>全部の項目を見る（{summary.rows.length}）</summary>
+      <ul>{groups.map(g => <li key={g}><span className="cr-phase">{g.split(' ').map(part => <span key={part}>{part}</span>)}</span><div className="cr-items">
+        {summary.rows.filter(r => r.group === g).map(r => <button key={r.key} type="button" className={`cr-item ${r.verdict}`} aria-pressed={r.key === key}
+          onClick={() => pick(r.key)}>{r.short} <b>{r.value}</b> <em>{wordOf(r)}</em></button>)}</div></li>)}</ul>
+    </details>
   </section>;
 }

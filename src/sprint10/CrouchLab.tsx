@@ -8,6 +8,7 @@ import { crouchPhases, type Phase } from './crouch-figure';
 import { crouchAdvice, GUIDE } from './crouch-advice';
 import { crouchResearch, type Sex } from './crouch-research';
 import CrouchResearch from './CrouchResearch';
+import ForceView from './ForceView';
 import CrouchCharts, { StepTable } from './CrouchCharts';
 import { CrouchReplay, frameInterval, insideFrame, PhaseFigures, type ReplayEvent } from './CrouchViews';
 import { applyEdits, moments } from './crouch-edit';
@@ -21,8 +22,8 @@ const NUDGE = .002;
 const seconds = (v: number | null | undefined, digits = 3) => v == null ? '—' : v.toFixed(digits);
 /** The studies chosen for the comparison (女子/男子), kept in this browser. */
 const SEX_KEY = 'sachizu-research-sex';
-type Tab = 'advice' | 'check' | 'pose' | 'steps' | 'replay';
-const TABS: [Tab, string][] = [['advice', 'ポイント'], ['check', '確認'], ['pose', '姿勢'], ['steps', '歩ごと'], ['replay', 'スロー']];
+type Tab = 'advice' | 'force' | 'check' | 'pose' | 'steps' | 'replay';
+const TABS: [Tab, string][] = [['advice', 'ポイント'], ['force', '力'], ['check', '確認'], ['pose', '姿勢'], ['steps', '歩ごと'], ['replay', 'スロー']];
 /** The colours of the measured lines on the pictures (markColor in crouch-figure). */
 const LEGEND = [['#ffb02e', '体幹（腰→肩）'], ['#3ad7ff', '脛（足首→膝）'], ['#ff6fd8', '前膝'], ['#b58cff', '後膝']] as const;
 
@@ -70,6 +71,9 @@ export default function CrouchLab() {
   const [sex, setSexState] = useState<Sex>(() => { try { return localStorage.getItem(SEX_KEY) === 'male' ? 'male' : 'female'; } catch { return 'female'; } });
   const setSex = (next: Sex) => { setSexState(next); try { localStorage.setItem(SEX_KEY, next); } catch { /* not kept: chosen again next time */ } };
   const research = useMemo(() => result && !result.reason ? crouchResearch(result, sex) : null, [result, sex]);
+  // The steps' trends in one line when they follow the usual pattern; only what to check is spelt out.
+  const flowChecks = advice.filter(a => a.level === 'check');
+  const flowGood = [...new Set(advice.map(a => a.topic))].filter(topic => !flowChecks.some(a => a.topic === topic));
   const checks = advice.filter(a => a.level === 'check').length + (research?.rows.filter(row => row.verdict === 'improve').length ?? 0);
   const events: ReplayEvent[] = useMemo(() => !result || result.reason ? [] : [
     ...(result.set ? [{ label: '構え', short: '構え', pts: result.set.pts }] : []),
@@ -206,9 +210,16 @@ export default function CrouchLab() {
             {id === 'check' && waiting > 0 && <span className="sprint10-badge" aria-label={`要確認 ${waiting}か所`}>{waiting}</span>}</button>)}</div>
         <div ref={panels} className="sprint10-panels">
           <div id="crouch-panel-advice" role="tabpanel" aria-labelledby="crouch-tab-advice" hidden={tab !== 'advice'}>
-            {research && <CrouchResearch summary={research} sex={sex} onSex={setSex} />}
-            {advice.length > 0 && <><h3>歩ごとの流れ</h3><ul className="sprint10-advice" aria-label="歩ごとの流れ">{advice.map(a => <li key={a.topic + a.text} className={a.level}>
-              <span aria-hidden="true">{a.level === 'good' ? '✓' : '!'}</span><div><strong>{a.topic}</strong>{a.text}</div></li>)}</ul></>}
+            {research && measured && <CrouchResearch summary={research} sex={sex} onSex={setSex} url={url} frames={measured.frames} direction={result?.direction ?? 1} />}
+            {advice.length > 0 && <div className="cr-flow"><h3>歩ごとの流れ</h3>
+              {flowChecks.length > 0 && <ul className="sprint10-advice" aria-label="歩ごとの流れで確かめたい所">{flowChecks.map(a => <li key={a.topic + a.text} className="check">
+                <span aria-hidden="true">!</span><div><strong>{a.topic}</strong>{a.text}</div></li>)}</ul>}
+              {flowGood.length > 0 && <p className="cr-flow-ok">✓ {flowGood.join('・')}{flowChecks.length ? 'は' : 'とも'}、加速の流れどおりです。</p>}</div>}
+          </div>
+          <div id="crouch-panel-force" role="tabpanel" aria-labelledby="crouch-tab-force" hidden={tab !== 'force'}>
+            {measured && <ForceView kind="crouch" contacts={result.contacts} frames={measured.frames} width={measured.width} height={measured.height}
+              direction={result.direction} url={url} block={result.moveStart != null && result.blockClearance
+                ? { moveStart: result.moveStart, clearance: result.blockClearance.pts, side: result.set?.frontSide ?? null } : null} />}
           </div>
           <div id="crouch-panel-check" role="tabpanel" aria-labelledby="crouch-tab-check" hidden={tab !== 'check'}>
             <p className="sprint10-hint">自動判定のコマを1つずつ確かめます。ずれていたら◀▶か下のコマで合わせて「このコマに決める」、合っていれば「OK」。数値はすぐ変わります。</p>
@@ -239,7 +250,8 @@ export default function CrouchLab() {
           <p>接地は靴が床に着いた時、離地はつま先が床から離れた時です。骨格の動きで、足が着く場所とおおよその瞬間を決め、その前後の足元の画像（靴先の画素が、着地した靴と床のどちらに近いか）で瞬間を決め直します。画像ではっきりしない所は骨格の判定のままです。真横から1秒240コマで撮影した3人の検証動画では、映像で見た瞬間との差は最大でおよそ1/60秒でした。同じ動画を暗く・ノイズを多くすると、骨格だけでは接地が最大約1/25秒ずれましたが、画像で決め直すと約1/45秒でした。</p>
           <p>ピッチは接地から次の接地までの時間の逆数です。角度は鉛直を0°とし、進行方向へ倒れる向きを正とします（脛は足首から膝、体幹は腰から肩）。膝は伸び切った状態が180°です。</p>
           <p>骨格の推定が崩れたコマの角度は出しません。</p>
-          <p>研究と比べる：◎上位は、世界トップやトップ選手の平均±標準偏差の範囲（鍛えた選手の値しかない項目は、その平均より標準偏差ぶん以上良い値）。○範囲内は、ふつうの範囲か、上位との差が測定の誤差（角度5°、ももの開き8°、時間0.01秒）ほどの値。△伸びしろは、研究で速いスタートと結びつく向きに、上位との差が誤差より大きい値。参考は、研究で良し悪しが決まっていない（結論が分かれる）値です。ももの開きは後ろ足のももと支持脚のももの角度の差で、「前」は後ろ足の膝が支持脚の膝より前（挟み込み）です。脚が速く動く瞬間の値のため、判定したコマが1つずれたり、端末（骨格モデルの計算方式）が違ったりすると数度変わります（同じ動画で前83°と前87°）。ブロックを出た後の体幹は、比べる研究に合わせて水平からの角度で表します。</p>
+          <p>研究と比べる：「トップ並み」は世界トップやトップ選手の平均±標準偏差の範囲、「良い」は鍛えた選手の平均より標準偏差ぶん以上良い値（鍛えた選手の値しかない項目）。「ふつう」は、ふつうの範囲か、トップとの差が測定の誤差（角度5°、ももの開き8°、時間0.01秒）ほどの値。「伸びしろ」は、研究で速いスタートと結びつく向きに、トップとの差が誤差より大きい値。「参考」は、研究で良し悪しが決まっていない（結論が分かれる）値です。画像の緑の範囲は研究の値（世界トップ・トップ選手、それがない項目は鍛えた選手の平均±標準偏差や研究の範囲）で、色の線がこの選手です。「コツ」は、研究で速い選手に見られる向きへ近づけるための、ひとつの目安です。ももの開きは後ろ足のももと支持脚のももの角度の差で、「前」は後ろ足の膝が支持脚の膝より前（挟み込み）です。脚が速く動く瞬間の値のため、判定したコマが1つずれたり、端末（骨格モデルの計算方式）が違ったりすると数度変わります（同じ動画で前83°と前87°）。体幹は、研究の水平からの角度を、このアプリの角度（鉛直から）に直して比べます。</p>
+          <p>床反力（「力」）：フォースプレートを使わず、動画と体重から1回の接地（ブロックは押している間）の平均の力を出します。縦は体重×9.8×（滞空時間÷接地時間＋1）（Morinら 2005）、最大の目安はその1.57倍（力の波形を半分の正弦波とみなす）。前向きは体重×その接地で増えた速さ÷接地時間で、速さは骨格から求めた全身の重心が空中で進む速さ（空中では前向きの速さが変わらないため）。ブロックは体重×離れた後の空中の速さ÷押した時間（重心が動き始めてから前足が離れるまで）、縦は手で支えた分も含みます。距離は身長と胴の長さの比（胴は身長の0.288、Drillis・Contini 1966）から出すため、身長が実際と違うと前向きの力もその割合だけずれます（目安±1割）。研究の値は、一流男子17人とジュニア男子20人のブロックの押す時間・離れる速さ・1〜2歩目の接地時間と離地の速さ（Graham-Smithら 2020）から計算したものです。女子の値は見つかっていません。1回の値は腰や手足の点のずれで大きく変わることがあるので、同じ条件の何本かで比べてください。</p>
           <p>研究の出典：構えの膝はBezodisら（2019、総説：前膝91〜99°、後膝117〜136°）、速い選手ほど前膝が深いことはCiacciら（2017、世界トップ・一流の男女20人）、女子の前膝の平均（約103°）と構えの体幹はČohら（1998、男子13人・女子11人）。ブロックを離れてから1歩目の接地までと1歩目の接地時間はBezodisら（2019：ダイヤモンドリーグの選手は100m 女子11.10秒・男子10.03秒、その下の群は11.95秒・10.74秒）。1歩目の体幹・脛・ももの開きの世界トップ男子は、2018年世界室内60m決勝の8人（Walkerら 2021：離地の体幹とももの開きの2つで、1歩目の推進の違いの約9割を説明）。鍛えた選手の脛・ももの開き・空中時間は男子15人・女子6人（女子の100m平均11.79秒、Donaldsonら 2022）。接地で脛が前に倒れているほど良いことはDonaldsonら（2020、一流と準一流の比較）と2023年の研究（J Sports Sci）。接地のときの挟み込みが速さと結びつくのは最高速度の局面（Miyashiroら 2019）で、加速では離地で支持脚のももを後ろまで伸ばす選手ほど速い結果です（Haugenら 2018）。歩ごとの流れ（歩ごとに接地時間が短くなり、脛と体幹が起きていく）はBezodisら（2019）とDonaldsonら（2022）。グラフの点線はČoh・Tomazin（2006、100m 10.15秒の選手）の1〜4歩目です。</p>
           <p>骨格：選手を見つけて追い、接地・離地を判定するのはMediaPipe、角度と画像・スロー再生の骨格はRTMPose（{measured?.refiner === 'webgpu' ? 'WebGPU' : measured?.refiner === 'wasm' ? 'WebAssembly' : '今回は未使用'}）です。かがんだ構えではRTMPoseの方が膝・腰の位置が体に合い、接地・離地の時刻は映像との差がMediaPipeの方が小さかったためです（3人の検証動画）。</p>
           <p>接地・離地・ブロックを離れる瞬間は、「確認」で1コマ単位で直せます。直した値には ✎ を付け、保存（JSON）には自動の結果も残します。暗い動画や、カメラの性能が低いスマホの動画では、自動の判定が1コマ以上ずれることがあります。</p>

@@ -17,6 +17,7 @@ import PlayerBar from './PlayerBar';
 import type { SprintStart } from './tracker';
 import StrideResults from './StrideResults';
 import CrouchLab from './CrouchLab';
+import ForceView from './ForceView';
 import './sprint10.css';
 import { keepAwake } from '../cmj/keep-awake';
 
@@ -49,8 +50,8 @@ const valuesOf = (r: SprintResult | null, section: string, entry: number | null 
   ...(entry === null ? [] : [{ label: '目標50mタイム', value: r?.duration && !r.reason ? target50(entry, length, r.duration)?.time ?? null : null, unit: '秒', digits: 2 }]),
   { label: '平均接地時間', value: times?.contact ?? null, unit: '秒', digits: 3 }, { label: '平均滞空時間', value: times?.flight ?? null, unit: '秒', digits: 3 }];
 /** The result's views, as the crouch start's (the user, 2026-10-09: 「クラウチングスタートと同じような表示、機能にしてください」). */
-type Tab = 'advice' | 'check' | 'steps' | 'replay';
-const TABS: [Tab, string][] = [['advice', 'ポイント'], ['check', '確認'], ['steps', '歩ごと'], ['replay', 'スロー']];
+type Tab = 'advice' | 'force' | 'check' | 'steps' | 'replay';
+const TABS: [Tab, string][] = [['advice', 'ポイント'], ['force', '力'], ['check', '確認'], ['steps', '歩ごと'], ['replay', 'スロー']];
 /** The contact moments' keys (moment-edits.ts): `td{n}` / `to{n}`. */
 const contactKey = (key: string) => /^t[do]\d+$/.test(key);
 const contactEdits = (e: Edits): Edits => Object.fromEntries(Object.entries(e).filter(([k]) => contactKey(k)));
@@ -95,6 +96,8 @@ export default function Sprint10Lab() {
   const auto = useMemo(() => samples && confirmed && distanceM > 0 ? analyzeSprint(samples, start, finish, distanceM, mode) : null, [samples, start, finish, confirmed, distanceM, mode]);
   // Each step's touchdown and toe-off on the followed poses (sprint-contacts.ts), as judged and with the user's frames.
   const runAuto = useMemo(() => timeline ? runContacts(timeline.frames, timeline.width, timeline.height, undefined, mode === 'standing') : null, [timeline, mode]);
+  // The development app's study scripts read the measured frames and steps (as CrouchLab's __crouch).
+  useEffect(() => { if (import.meta.env.DEV && timeline) (window as unknown as { __sprint?: unknown }).__sprint = { timeline, start, finish, distanceM }; }, [timeline, start, finish, distanceM]);
   const run = useMemo(() => { const e = contactEdits(edits); return timeline && runAuto && Object.keys(e).length ? runContacts(timeline.frames, timeline.width, timeline.height, e, mode === 'standing') : runAuto; },
     [timeline, runAuto, edits, mode]);
   const list = useMemo(() => {
@@ -335,7 +338,7 @@ export default function Sprint10Lab() {
         {waiting > 0 && ` 要確認 ${waiting}か所。`}</span>
         {tab !== 'check' && <button type="button" onClick={openCheck}>確認する</button>}</p>}
       {!result.reason && <>
-      <div ref={tabs} className="sprint10-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
+      <div ref={tabs} className="sprint10-tabs sprint-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
         <button key={id} id={`sprint-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`sprint-panel-${id}`} onClick={() => id === 'check' ? openCheck() : choose(id)}>
           {label}{id === 'check' && waiting > 0 && <span className="sprint10-badge" aria-label={`要確認 ${waiting}か所`}>{waiting}</span>}</button>)}</div>
       <div ref={panels} className="sprint10-panels">
@@ -347,6 +350,11 @@ export default function Sprint10Lab() {
             <p>接地・離地は、つま先が地面の高さまで下りた時・地面から離れた時を、選手を追った骨格（MediaPipe）の動きから判定しています（クラウチングスタート・ハードルと同じ方法）。選手が画面に小さく映ると数コマずれることがあるため、「確認」で1コマ単位で直してください。直すと接地時間・滞空時間がすぐ変わります。平均接地時間・平均滞空時間は、2本の線の間で接地した歩の平均です。10m・最高速度区間での判定の精度は、まだ確かめていません。</p>
             <p>「確認」で線を越えるコマを直すと、直したコマの分だけ通過の時刻をずらして計算し直します（コマの間の細かい時刻と、脚の入れ替わりは自動の判定のままです）。</p>
             {SPRINT10_NOTES.map(w => <p key={w}>{w}</p>)}</details>
+        </div>
+        <div id="sprint-panel-force" role="tabpanel" aria-labelledby="sprint-tab-force" hidden={tab !== 'force'}>
+          {/* The picture's metres from the two lines: their distance on the track over their distance on the picture. */}
+          {timeline && run && url && <ForceView kind="run" contacts={run.contacts} frames={timeline.frames} width={timeline.width} height={timeline.height}
+            direction={run.direction} url={url} pxPerM={distanceM > 0 && finish !== start ? Math.abs(finish - start) * timeline.width / distanceM : null} top={mode === 'flying'} />}
         </div>
         <div id="sprint-panel-check" role="tabpanel" aria-labelledby="sprint-tab-check" hidden={tab !== 'check'}>
           <p className="sprint10-hint">線を越える瞬間と、各歩の接地・離地のコマを1つずつ確かめます。ずれていたら◀▶か下のコマで合わせて「このコマに決める」、合っていれば「OK」。数値はすぐ変わります。</p>
