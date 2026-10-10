@@ -114,7 +114,7 @@ const within = (key: MeasureKey, v: number) => levelOf(key, v) === 0;
  * leaning to the person's left; knees positive outward (bow legs' way), negative inward (knock knees'). */
 export function frontal(points: readonly Keypoint[], view: 'front' | 'back'): Measure[] {
   const p = sided(points, view), toLeft = view === 'front' ? 1 : -1;
-  const lower = (key: MeasureKey, flat: string) => (v: number) => within(key, v) ? `${flat} ${f1(v)}` : `${v > 0 ? '左' : '右'}が低い ${f1(v)}`;
+  const lower = (key: MeasureKey, flat: string) => (v: number) => within(key, v) ? `${flat}\u00a0${f1(v)}` : `${v > 0 ? '左' : '右'}が低い\u00a0${f1(v)}`;
   // Anatomical words (the user, 2026-10-09: 「膝の外向きという表現が間違えている」「解剖学的に正しい表現にしてください」): the
   // knee off the hip–ankle line in the frontal plane is varus (内反, bow legs) or valgus (外反, knock knees), not where
   // the kneecap faces (its rotation).
@@ -128,17 +128,17 @@ export function frontal(points: readonly Keypoint[], view: 'front' | 'back'): Me
     if (!seen(p[hip], p[k], p[ankle])) return null;
     const b = bend(p[hip], p[k], p[ankle]); return b.side * outward * b.off;
   };
-  const way = (key: MeasureKey) => (v: number) => within(key, v) ? `ほぼ中間（まっすぐ） ${f1(v)}` : `${v > 0 ? '内反（O脚傾向）' : '外反（X脚傾向）'} ${f1(v)}`;
+  const way = (key: MeasureKey) => (v: number) => within(key, v) ? `ほぼ中間\u00a0${f1(v)}` : `${v > 0 ? '内反（O脚）' : '外反（X脚）'}\u00a0${f1(v)}`;
   return [
     // From behind the ears are often under the hair: the ear line moved 0.5-0.7° with the window and the browser on the
     // user's back photo (the front's, 0.2°), so the back's is shown for reference and the findings take the front's.
-    measure('headTilt', '頭部の側方傾斜（両耳の線）', ears, v => within('headTilt', v) ? `ほぼ水平 ${f1(v)}` : `${v > 0 ? '左' : '右'}へ傾斜（${v > 0 ? '左' : '右'}耳が低い） ${f1(v)}`, view === 'back'),
-    measure('shoulderTilt', '肩の高さの左右差（両肩関節の線）', shoulders, lower('shoulderTilt', 'ほぼ水平')),
-    measure('pelvisTilt', '骨盤の側方傾斜（左右の股関節中心の線）', hips, lower('pelvisTilt', 'ほぼ水平'), true),
-    measure('bodyAxis', '体幹の側方傾斜（両足関節の中点→両肩の中点）', axis, v => within('bodyAxis', v) ? `ほぼ鉛直 ${f1(v)}` : `${v > 0 ? '左' : '右'}へ傾斜 ${f1(v)}`),
+    measure('headTilt', '頭部の側方傾斜', ears, v => within('headTilt', v) ? `ほぼ水平\u00a0${f1(v)}` : `${v > 0 ? '左' : '右'}耳が低い\u00a0${f1(v)}`, view === 'back'),
+    measure('shoulderTilt', '肩の高さの左右差', shoulders, lower('shoulderTilt', 'ほぼ水平')),
+    measure('pelvisTilt', '骨盤の側方傾斜', hips, lower('pelvisTilt', 'ほぼ水平'), true),
+    measure('bodyAxis', '体幹の側方傾斜', axis, v => within('bodyAxis', v) ? `ほぼ鉛直\u00a0${f1(v)}` : `${v > 0 ? '左' : '右'}へ傾斜\u00a0${f1(v)}`),
     // The person's left knee outward is toward the person's left: the picture's right from the front.
-    measure('kneeRight', '右膝の内反・外反（股関節・膝・足関節の並び）', knee(K.rightHip, K.rightKnee, K.rightAnkle, -toLeft), way('kneeRight')),
-    measure('kneeLeft', '左膝の内反・外反（股関節・膝・足関節の並び）', knee(K.leftHip, K.leftKnee, K.leftAnkle, toLeft), way('kneeLeft')),
+    measure('kneeRight', '右膝の内反・外反', knee(K.rightHip, K.rightKnee, K.rightAnkle, -toLeft), way('kneeRight')),
+    measure('kneeLeft', '左膝の内反・外反', knee(K.leftHip, K.leftKnee, K.leftAnkle, toLeft), way('kneeLeft')),
   ];
 }
 
@@ -169,17 +169,17 @@ export function sagittal(points: readonly Keypoint[]): { facing: 'left' | 'right
   const facing = facingOf(points), d = facing === 'left' ? -1 : 1;
   const { ear, shoulder, hip, knee, ankle } = sidePoints(points, facing);
   const ok = (...q: Keypoint[]) => facing !== null && seen(...q);
-  const fwd = (key: MeasureKey, flat: string, ahead: string, behind: string) => (v: number) => within(key, v) ? `${flat} ${f1(v)}` : `${v - GUIDES[key].ideal > 0 ? ahead : behind} ${f1(v)}`;
+  const fwd = (key: MeasureKey, flat: string, ahead: string, behind: string) => (v: number) => within(key, v) ? `${flat}\u00a0${f1(v)}` : `${v - GUIDES[key].ideal > 0 ? ahead : behind}\u00a0${f1(v)}`;
   const kneeValue = ok(hip, knee, ankle) ? (() => { const b = bend(hip, knee, ankle); return b.side * d * b.off; })() : null;
   return { facing, measures: [
     // The trunk's line leaning back is not the low back arched (lumbar extension, 「反る」): in sway-back the thorax is
     // behind and the lumbar curve often flatter. The hip ahead of the ankle is the pelvis displaced forward, not tilted
     // forward (anterior pelvic tilt cannot be seen from these points).
-    measure('headForward', '頭部の前方偏位（肩関節→耳の線）', ok(shoulder, ear) ? d * lean(shoulder, ear) : null, fwd('headForward', '耳が肩のほぼ真上', '前方偏位（頭部前方位）', '後方偏位')),
-    measure('trunkLean', '体幹の前傾・後傾（股関節→肩関節の線）', ok(hip, shoulder) ? d * lean(hip, shoulder) : null, fwd('trunkLean', 'ほぼ鉛直', '前傾', '後傾')),
-    measure('pelvisForward', '骨盤の前後の偏位（足関節→股関節の線）', ok(ankle, hip) ? d * lean(ankle, hip) : null, fwd('pelvisForward', 'ほぼ足関節の上', '前方偏位', '後方偏位')),
-    measure('knee', '膝関節の屈曲・過伸展（股関節・膝・足関節の並び）', kneeValue, v => within('knee', v) ? `ほぼ伸展位 ${f1(v)}` : v > 0 ? `屈曲 ${f1(v)}` : `過伸展（反張膝の傾向） ${f1(v)}`),
-    measure('bodyLean', '全身の前傾・後傾（足関節→耳の線）', ok(ankle, ear) ? d * lean(ankle, ear) : null, fwd('bodyLean', 'ほぼ鉛直', '前傾', '後傾')),
+    measure('headForward', '頭部の前方偏位', ok(shoulder, ear) ? d * lean(shoulder, ear) : null, fwd('headForward', 'ほぼ肩の真上', '前方偏位', '後方偏位')),
+    measure('trunkLean', '体幹の前傾・後傾', ok(hip, shoulder) ? d * lean(hip, shoulder) : null, fwd('trunkLean', 'ほぼ鉛直', '前傾', '後傾')),
+    measure('pelvisForward', '骨盤の前後の偏位', ok(ankle, hip) ? d * lean(ankle, hip) : null, fwd('pelvisForward', 'ほぼ足関節の上', '前方偏位', '後方偏位')),
+    measure('knee', '膝関節の屈曲・過伸展', kneeValue, v => within('knee', v) ? `ほぼ伸展位\u00a0${f1(v)}` : v > 0 ? `屈曲\u00a0${f1(v)}` : `過伸展\u00a0${f1(v)}`),
+    measure('bodyLean', '全身の前傾・後傾', ok(ankle, ear) ? d * lean(ankle, ear) : null, fwd('bodyLean', 'ほぼ鉛直', '前傾', '後傾')),
   ] };
 }
 

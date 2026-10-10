@@ -120,7 +120,7 @@ describe('posture measures', () => {
     p[K.rightShoulder] = at(510, 380 + Math.tan(3 / 180 * Math.PI) * 180);   // the picture's left shoulder 3° lower
     const f = frontal(p, 'front'), b = frontal(p, 'back');
     // From the front the picture's left is the person's right; from behind, the person's left.
-    expect(value(f, 'shoulderTilt')).toBeCloseTo(-3, 6); expect(f.find(q => q.key === 'shoulderTilt')!.text).toBe('右が低い 3.0°');
+    expect(value(f, 'shoulderTilt')).toBeCloseTo(-3, 6); expect(f.find(q => q.key === 'shoulderTilt')!.text).toBe('右が低い\u00a03.0°');
     expect(value(b, 'shoulderTilt')).toBeCloseTo(3, 6); expect(levelOf('shoulderTilt', 3)).toBe(2);
     // The model's left and right crossed (seen from behind): the same answer.
     const crossed = p.map(q => ({ ...q }));

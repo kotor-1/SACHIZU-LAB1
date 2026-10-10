@@ -42,6 +42,8 @@ function draw(c: HTMLCanvasElement, picture: Picture, r: ViewResult, tilt: numbe
   toCanvas();
   const lw = 1 / s, colorOf = (key: MeasureKey) => { const m = r.measures.find(q => q.key === key); return LEVEL_COLORS[m?.level ?? 'none']; };
   const valueOf = (key: MeasureKey) => r.measures.find(q => q.key === key)?.value ?? null;
+  // The direction word (内反, 過伸展, 前方 ...) only outside the guide: next to a value in the guide it read like a finding.
+  const off = (key: MeasureKey) => (r.measures.find(q => q.key === key)?.level ?? 0) >= 1;
   const seen = (...q: Keypoint[]) => q.every(k => k && k.score >= .3);
   ctx.lineCap = 'round';
   ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 4 * lw;
@@ -62,7 +64,7 @@ function draw(c: HTMLCanvasElement, picture: Picture, r: ViewResult, tilt: numbe
     // The tags behind the athlete (the side away from the face), clear of the line in front.
     const back = r.facing === 'left' ? 1 : -1, at = (q: Keypoint) => Math.min(q.x, ankle.x) - 40 * lw + (back > 0 ? Math.abs(q.x - ankle.x) + 80 * lw : 0);
     // Forward or back (the knee: bent or pressed back), as the table says.
-    const v = (key: MeasureKey, ahead = '前', behind = '後') => { const x = valueOf(key); return x === null ? '—' : `${x < 0 ? behind : ahead}${Math.abs(x).toFixed(1)}°`; };
+    const v = (key: MeasureKey, ahead = '前', behind = '後') => { const x = valueOf(key); return x === null ? '—' : `${off(key) ? x < 0 ? behind : ahead : ''}${Math.abs(x).toFixed(1)}°`; };
     if (seen(ear)) tag(`頭部 ${v('headForward', '前方', '後方')}`, at(ear), ear.y, colorOf('headForward'), back);
     if (seen(shoulder)) tag(`体幹 ${v('trunkLean', '前傾', '後傾')}`, at(shoulder), shoulder.y, colorOf('trunkLean'), back);
     if (seen(hip)) tag(`骨盤 ${v('pelvisForward', '前方', '後方')}`, at(hip), hip.y, colorOf('pelvisForward'), back);
@@ -92,8 +94,8 @@ function draw(c: HTMLCanvasElement, picture: Picture, r: ViewResult, tilt: numbe
     ctx.strokeStyle = colorOf(key); ctx.lineWidth = 7 * lw; line(ctx, p[hip].x, p[hip].y, p[knee].x, p[knee].y); line(ctx, p[knee].x, p[knee].y, p[ankle].x, p[ankle].y);
     dot(ctx, p[knee].x, p[knee].y, 9 * lw, colorOf(key));
     const x = valueOf(key), outward = p[knee].x < (ankles?.x ?? p[knee].x) ? -1 : 1;
-    // Varus (the knee outside the hip–ankle line) or valgus, as the table says.
-    tag(`${name} ${x === null ? '—' : `${x > 0 ? '内反' : '外反'}${Math.abs(x).toFixed(1)}°`}`, p[knee].x + outward * 40 * lw, p[knee].y, colorOf(key), outward);
+    // Varus (the knee outside the hip–ankle line) or valgus, as the table says, when outside the guide.
+    tag(`${name} ${x === null ? '—' : `${off(key) ? x > 0 ? '内反' : '外反' : ''}${Math.abs(x).toFixed(1)}°`}`, p[knee].x + outward * 40 * lw, p[knee].y, colorOf(key), outward);
   }
 }
 

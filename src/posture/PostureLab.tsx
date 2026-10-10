@@ -183,7 +183,7 @@ export default function PostureLab() {
         {s.source === 'photo' && s.roll !== null && s.pitch !== null && <p className="sprint10-hint">撮影のときのスマホの傾き（写真の記録）：左右{Math.abs(s.roll).toFixed(1)}°・{s.pitch >= 0 ? '下' : '上'}向き{Math.abs(s.pitch).toFixed(1)}°</p>}
         {v === 'side' && r.facing && <p className="sprint10-hint">{r.facing === 'right' ? '右' : '左'}向き。カメラに近い側（{r.facing === 'right' ? '右' : '左'}半身）の点で測っています。</p>}
         <table className="sprint10-table posture-table"><thead><tr><th scope="col">項目</th><th scope="col">結果</th><th scope="col">判定</th></tr></thead>
-          <tbody>{r.measures.map(m => <tr key={m.key}><th scope="row">{m.label}{m.reference && <small>（参考）</small>}</th><td>{m.text}</td>
+          <tbody>{r.measures.map(m => <tr key={m.key}><th scope="row">{m.label}{m.reference && <small style={{ whiteSpace: 'nowrap' }}>（参考）</small>}</th><td>{m.text}</td>
             <td>{m.level === null ? '—' : <><span className="posture-level-tag" style={{ borderColor: LEVEL_COLORS[m.level] }}>{LEVEL_WORDS[m.level]}</span>
               {nearEdge(m.key, m.value!) && <small className="posture-edge">境目</small>}</>}</td></tr>)}</tbody></table>
         {notesOf(v).map(w => <p key={w} className="sprint10-note">{w}</p>)}
