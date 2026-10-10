@@ -113,3 +113,23 @@
 .throw-tabs .sprint10-badge{position:absolute;top:-4px;right:-2px;margin:0;min-width:17px;height:17px;font-size:10.5px;vertical-align:0;box-shadow:0 0 0 2px #fff}
 @media(max-width:400px){.sprint10 .throw-tabs button{font-size:12.5px}}
 .sprint10-gate-review{margin-top:12px}
+/* The crouch start against the studies (CrouchResearch.tsx). */
+.crouch-research{margin:4px 0 18px}
+.crouch-research-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.crouch-research-head h3{margin:0}
+.crouch-research-head .sprint10-seg{margin:0}
+.crouch-research-summary{list-style:none;margin:12px 0;padding:0;display:grid;gap:6px}
+.crouch-research-summary li{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:baseline;padding:9px 12px;border-radius:10px;background:#f2f7f5;font-size:15px;line-height:1.5}
+.crouch-research-summary strong{font-size:13px;white-space:nowrap}.crouch-research-summary .good strong{color:#167a4e}.crouch-research-summary .improve strong{color:#9a5b00}.crouch-research-summary .missing strong{color:#5d6f69}
+.sprint10 .crouch-research-table th,.sprint10 .crouch-research-table td{white-space:normal;vertical-align:top}
+.crouch-research-table{table-layout:fixed}.crouch-research-table col.crouch-research-value{width:7.5em}.crouch-research-table col.crouch-research-verdict{width:6.6em}
+.crouch-research-table tbody th{text-align:left;font-weight:700}
+.sprint10 .crouch-research-table .crouch-research-item>*{border-bottom:0;padding-bottom:0;vertical-align:baseline}
+.sprint10 .crouch-research-table .crouch-research-ref td{padding-top:1px;text-align:left;font-size:12.5px;line-height:1.4;color:#557468}
+.crouch-research-unit{display:inline-block}.crouch-research-unit.numbered{margin-right:.6em}
+.sprint10 .crouch-research-table tbody th button{min-height:32px;padding:0;border:0;background:none;color:#123b31;font:inherit;font-weight:700;text-align:left;text-decoration:underline dotted;text-underline-offset:3px;cursor:pointer}
+.crouch-research-table td:nth-child(2){white-space:nowrap;font-weight:700}
+.crouch-verdict{display:inline-block;padding:2px 7px;border-radius:999px;font-size:13px;font-weight:700;white-space:nowrap;background:#eef2f1;color:#3f5f55}
+.crouch-verdict.top{background:#dcf3e7;color:#146b44}.crouch-verdict.ok{background:#eef2f1;color:#3f5f55}.crouch-verdict.improve{background:#fdf0d8;color:#8a5000}
+.crouch-verdict.note{background:#e8eef5;color:#425b74}.crouch-verdict.none{background:none;color:#7a8c86}
+.crouch-research-text td{text-align:left;font-size:14px;line-height:1.6;color:#284b40;background:#f7faf9}
+.sprint10 .crouch-research-table .crouch-research-group th{padding:10px 4px 4px;text-align:left;font-size:13px;font-weight:700;color:#3f5f55;border-bottom:1px solid #cfded8}

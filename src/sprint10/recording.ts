@@ -216,6 +216,9 @@ export function refineTargets(r: CrouchResult, frames: readonly CrouchFrame[]): 
   const near: [number, number, number][] = [];   // [frame, frames before, frames after]
   if (r.blockClearance) near.push([r.blockClearance.frame, S.FAR + 3, S.FAR + S.BC_TIP_FAR + 3]);
   for (const c of r.contacts) if (c.touchdownFrame != null) near.push([c.touchdownFrame, S.FAR + 2, S.FAR + 2]);
+  // The first toe-off: the thighs' separation and the trunk there (crouch-research.ts).
+  const first = r.contacts[0]?.toeOffFrame;
+  if (first != null) near.push([first, S.FAR + 2, S.FAR + 2]);
   for (const f of frames) {
     if (!f.pose) continue;
     if (r.set && Math.abs(f.pts - r.set.pts) <= SET_SPAN + 1e-6) out.add(f.frame);

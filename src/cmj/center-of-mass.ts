@@ -18,6 +18,11 @@ export const COM_MODEL = 'segment-mass-mean-wrist-hand-proxy-v2';
 // This is NOT an anatomical reconstruction or Metric's model.
 // https://www.has-motion.com/wiki/doku.php?id=visual3d:documentation:definitions:adjusted_zatsiorsky-seluyanov_s_segment_inertia_parameters
 const REQUIRED = [7, 8, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
+/** The confidence a point needs. The elbows and wrists (13-16) swing behind the hips in a countermovement and MediaPipe
+ * marks them a little less sure there: on the user's 240 fps videos (2026-10-10) the wrist read 0.43-0.49 for 7-37
+ * frames, which dropped the frames and voided the jumps. The forearm and hand are 2% of the body's mass a side, so
+ * their point a little less sure moves the COM by well under a millimetre; the trunk, legs and feet keep 0.5. */
+const MIN_VISIBILITY = (i: number) => i >= 13 && i <= 16 ? .3 : .5;
 type Point = { x: number; y: number };
 const between = (a: Point, b: Point, f: number): Point => ({ x: a.x + f * (b.x - a.x), y: a.y + f * (b.y - a.y) });
 
@@ -28,7 +33,7 @@ export function centerOfMassSample(poses: readonly NormalizedLandmark[][], frame
   for (const i of REQUIRED) {
     if (!p[i] || !Number.isFinite(p[i].x) || !Number.isFinite(p[i].y) ||
       p[i].x <= 0 || p[i].x >= 1 || p[i].y <= 0 || p[i].y >= 1) return fail('BODY_POINT_OUTSIDE_IMAGE');
-    if (!Number.isFinite(p[i].visibility) || p[i].visibility < .5) return fail('BODY_POINT_OCCLUDED');
+    if (!Number.isFinite(p[i].visibility) || p[i].visibility < MIN_VISIBILITY(i)) return fail('BODY_POINT_OCCLUDED');
   }
   const shoulders = between(p[11], p[12], .5), hips = between(p[23], p[24], .5);
   const head = between(p[7], p[8], .5);

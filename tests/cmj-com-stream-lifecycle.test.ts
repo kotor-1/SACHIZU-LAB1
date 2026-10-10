@@ -118,15 +118,19 @@ describe('COM stream baseline and result lifecycle', () => {
     expect(results).toHaveLength(1);
     expect(Math.abs(results[0].analysis.heightCm! - 30)).toBeLessThan(1.5);
   });
-  it('does not fill a lost measurement observation or publish an incomplete movement', () => {
+  it('does not fill a lost measurement observation; one lost in flight is tolerated, a hole longer than the gap is not', () => {
     const stream = new COMStream();
     const rows = jump().map(p => p.frame === 33 ? { ...p, comX: null, comY: null, bodyScale: null,
       reason: 'BODY_POINT_OCCLUDED' } : p);
     const results = process(stream, rows);
     expect(results).toHaveLength(1);
-    expect(results[0].analysis.heightCm).toBeNull();
-    expect(results[0].analysis.reason).toBe('COM_TRACKING_LOST');
+    expect(Math.abs(results[0].analysis.heightCm! - 30)).toBeLessThan(1.5);
     expect(results[0].analysis.samples.some(p => p.comY === null)).toBe(true);
+    const hole = process(new COMStream(), jump().map(p => p.frame >= 31 && p.frame <= 35 ? { ...p, comX: null, comY: null, bodyScale: null,
+      reason: 'BODY_POINT_OCCLUDED' } : p));
+    expect(hole).toHaveLength(1);
+    expect(hole[0].analysis.heightCm).toBeNull();
+    expect(hole[0].analysis.reason).toBe('COM_TRACKING_LOST');
     const partial = new COMStream(); process(partial, jump().filter(p => p.pts <= 1));
     expect(partial.end()?.analysis).toMatchObject({ heightCm: null, reason: 'RECORDING_ENDED_BEFORE_RECOVERY' });
     expect(partial.diagnostics.prepared).toBe(false);

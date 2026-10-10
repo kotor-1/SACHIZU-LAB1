@@ -6,9 +6,9 @@
  * pooled), so the left/right labels of the pose model, which swap when the
  * legs cross in a side view, are never needed. */
 import { contactOf, contactPlants, legLength, median, PLANT_GAP, plantedToes, plantsOf, quantile, TOE, toesOf, visible, type Contact, type Toe } from './contacts';
-import { kneeAngle, shankAngle, sideNearest, trunkAngle } from './angles';
+import { kneeAngle, shankAngle, sideNearest, thighAngle, trunkAngle } from './angles';
 /** v2 (2026-10-04): angles from RTMPose when given (`refined`). */
-export const CROUCH_VERSION = 'crouch-start-v2-experimental';
+export const CROUCH_VERSION = 'crouch-start-v2.1-experimental';
 export const MAX_STEPS = 5;
 
 export interface CrouchPoint { x: number; y: number; visibility?: number }
@@ -34,6 +34,15 @@ export interface StepResult {
   shankAngle: number | null; trunkAngle: number | null;
   /** The pose model's side (0 left, 1 right landmarks) of the stance leg at touchdown, for the picture. */
   side: 0 | 1 | null;
+  /** The thighs' separation (degrees) at touchdown and at toe-off: the swing thigh's angle less the stance thigh's (each
+   * from hanging straight down, forward +), so + is the swing knee ahead of the stance knee: the 「挟み込み」 coaches look
+   * at (the user, 2026-10-10: 「一歩目の着地時に挟み込めてない」). World-class men: −70 ± 15° at the first touchdown, +102 ± 7°
+   * at its toe-off, the latter tied to the first step's push (Walker et al. 2021, crouch-research.ts). */
+  thighGapTouchdown: number | null; thighGapToeOff: number | null;
+  /** The trunk's lean at toe-off (from vertical, as trunkAngle); with the separation, the toe-off values tied to the
+   * first step's push in the same study. The toe-off values are the first step's only: the studies give no others, and
+   * RTMPose looks only at the frames whose angles are used (refineTargets). */
+  trunkToeOff: number | null;
 }
 /** Angles at one moment (medians over a few frames); `frame` is the frame shown
  * for it and `frontSide` the pose model's side of the front leg in that frame. */
@@ -211,9 +220,18 @@ export function stepsOf(contacts: readonly Contact[], frames: readonly CrouchFra
     const stepSeconds = next?.touchdown != null && c.touchdown !== null ? next.touchdown - c.touchdown : null;
     const td = c.touchdownFrame !== null ? frames.find(f => f.frame === c.touchdownFrame) : null, at = td ? anglePose(td) : null;
     const side = at ? sideNearest(at, c.x / W, W) : null;
+    const toe = i === 0 && c.toeOffFrame != null ? frames.find(f => f.frame === c.toeOffFrame) : null, off = toe ? anglePose(toe) : null;
+    // The stance leg in a frame is the side whose toe is at the contact's place (the model's labels swap side-on).
+    const gapOf = (pose: CrouchPoint[] | null) => {
+      const stance = pose ? sideNearest(pose, c.x / W, W) : null;
+      if (!pose || stance === null) return null;
+      const stand = thighAngle(pose, stance, W, H, direction, leg), swing = thighAngle(pose, (1 - stance) as 0 | 1, W, H, direction, leg);
+      return stand === null || swing === null ? null : swing - stand;
+    };
     return { step: c.index, contactSeconds, flightSeconds, stepSeconds, pitch: stepSeconds ? 1 / stepSeconds : null,
       shankAngle: at && side !== null ? shankAngle(at, side, W, H, direction) : null,
-      trunkAngle: at ? trunkAngle(at, W, H, direction, leg) : null, side };
+      trunkAngle: at ? trunkAngle(at, W, H, direction, leg) : null, side,
+      thighGapTouchdown: gapOf(at), thighGapToeOff: gapOf(off), trunkToeOff: off ? trunkAngle(off, W, H, direction, leg) : null };
   });
 }
 

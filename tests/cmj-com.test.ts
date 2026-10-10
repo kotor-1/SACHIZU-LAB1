@@ -89,6 +89,14 @@ describe('whole-body COM proxy', () => {
     expect(centerOfMassSample([p], 0, 0).reason).toBe('BODY_POINT_OCCLUDED');
     expect(centerOfMassSample([body(), body()], 0, 0).reason).toBe('POSE_NOT_UNIQUE');
   });
+  it('takes an elbow or wrist a little less sure (swung behind the hip), not a leg or hip', () => {
+    const arm = body(); arm[15].visibility = .45; arm[14].visibility = .35;
+    expect(centerOfMassSample([arm], 0, 0).comY).toBe(centerOfMassSample([body()], 0, 0).comY);
+    const knee = body(); knee[25].visibility = .45;
+    expect(centerOfMassSample([knee], 0, 0).reason).toBe('BODY_POINT_OCCLUDED');
+    const hip = body(); hip[24].visibility = .45;
+    expect(centerOfMassSample([hip], 0, 0).reason).toBe('BODY_POINT_OCCLUDED');
+  });
 });
 describe('COM stream movement segmentation', () => {
   it('detects and measures a jump from toe takeoff and the airborne COM arc', () => {
@@ -101,8 +109,14 @@ describe('COM stream movement segmentation', () => {
   it('requires recovery footage and rejects tracking loss during movement', () => {
     const early = new COMStream(); for (const p of jump().filter(p => p.pts < 1.4)) early.push(p);
     expect(early.end()?.analysis).toMatchObject({ heightCm: null, reason: 'RECORDING_ENDED_BEFORE_RECOVERY' });
-    const interrupted = new COMStream(); const failures: COMResult[] = [];
-    for (const p of jump()) { const r = interrupted.push(p.pts === 1 ? { ...p, comY: null } : p); if (r) failures.push(r); }
+    // One frame lost in flight (an arm swung behind the hip) hides no motion of the ballistic COM: the arc is fitted
+    // on the frames present and the height still read; a hole longer than the COM method's gap is a loss.
+    const interrupted = new COMStream(); const results: COMResult[] = [];
+    for (const p of jump()) { const r = interrupted.push(p.pts === 1 ? { ...p, comY: null } : p); if (r) results.push(r); }
+    expect(results[0]?.analysis.heightCm).toBeCloseTo(3 ** 2 / (2 * G) * 100, 0);
+    expect(results[0]?.analysis.samples.some(p => p.comY === null)).toBe(true);
+    const lost = new COMStream(); const failures: COMResult[] = [];
+    for (const p of jump()) { const r = lost.push(p.pts >= 1 && p.pts < 1.15 ? { ...p, comY: null } : p); if (r) failures.push(r); }
     expect(failures[0]?.analysis).toMatchObject({ heightCm: null, reason: 'COM_TRACKING_LOST' });
   });
   it('still publishes after a single noisy frame once the jumper has returned', () => {

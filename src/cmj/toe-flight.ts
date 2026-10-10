@@ -124,8 +124,13 @@ export function analyzeToeFlight(samples: readonly COMSample[], baselineScale: n
   const takeoff = Math.max(lt, rt), landing = Math.min(ll, rl);
   diagnostics.takeoffPts = takeoff; diagnostics.landingPts = landing;
   if (landing - takeoff < TOE_FLIGHT.flightSeconds[0] || landing - takeoff > TOE_FLIGHT.flightSeconds[1]) return fail('FLIGHT_TIME_IMPLAUSIBLE');
-  const air = samples.filter(p => p.pts > takeoff + TOE_FLIGHT.airMarginSeconds && p.pts < landing - TOE_FLIGHT.airMarginSeconds);
-  if (air.some(p => p.comY === null) || exceedsSampleGap(air.map(p => p.pts))) return fail('COM_TRACKING_LOST');
+  // In flight the COM is ballistic, so a frame whose points were not all seen (an arm swung behind the hip) hides no
+  // motion: the arc is fitted on the airborne samples present, as long as no hole, at the ends included, is longer than
+  // the COM method allows (MAX_COM_GAP_SECONDS). Every airborne frame was demanded before: on the user's 240 fps videos
+  // (2026-10-10) a wrist a little less sure for 7 frames voided a jump with 130 airborne samples.
+  const airborne = samples.filter(p => p.pts > takeoff + TOE_FLIGHT.airMarginSeconds && p.pts < landing - TOE_FLIGHT.airMarginSeconds);
+  const air = airborne.filter(p => p.comY !== null);
+  if (!air.length || exceedsSampleGap([airborne[0].pts, ...air.map(p => p.pts), airborne[airborne.length - 1].pts])) return fail('COM_TRACKING_LOST');
   if (air.length < TOE_FLIGHT.minimumArcSamples) return fail('INSUFFICIENT_ARC_SAMPLES');
   const arc = quadratic(air.map(p => ({ t: p.pts - apexRow.pts, y: p.comY! })));
   if (!arc || arc.a <= 0 || arc.rmse > baselineScale * TOE_FLIGHT.maximumArcRmseScale) return fail('GRAVITY_ARC_UNRESOLVED');
