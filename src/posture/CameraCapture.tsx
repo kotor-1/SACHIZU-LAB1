@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { POSE_EDGES } from '../cmj/pose-drawing';
 import { VIEW_NAMES, type View } from './analysis';
 import { FRAME, fitOf, Stillness, type Landmark } from './fit';
-import { PostureCamera, tiltOf, type LiveFrame, type Voice } from './live';
+import { PostureCamera, tiltOf, type LiveFrame, type TrackState, type Voice } from './live';
 import type { PostureModel } from './rtm';
 import { readFrames, tallest, type Shot } from './still';
 
@@ -14,10 +14,14 @@ export const ASK: Record<View, string> = {
 };
 /** Seconds counted down once the athlete fits and is still; frames taken then, a moment apart (seconds). */
 const COUNT = 3, TAKES = [0, .15, .3];
-/** The phone may lean this much in the screen's plane (degrees): the tilts measured are a few degrees. */
-export const LEVEL = 1.5;
+/** The phone may lean this much in the screen's plane (degrees) for a picture to be taken. The lean goes straight into
+ * every tilt measured and is not taken out of the picture (the sensor's sign is not yet checked on a device; the lean is
+ * kept with the picture), so it stays under the guides' 1.5° with room for the reading's 0.5°. */
+export const LEVEL = 1;
 /** A fit lost for less than this (seconds) does not stop the countdown (the pose flickers). */
 const GRACE = .4;
+/** A failed reading's reason stays on the screen this long (seconds) before the next ask replaces it. */
+const HOLD = 4;
 
 type Phase = 'starting' | 'position' | 'countdown' | 'taking' | 'error';
 interface Props {
@@ -37,7 +41,7 @@ export default function CameraCapture({ views, facing, voice, motion, model, onS
   const [step, setStep] = useState(0), [phase, setPhase] = useState<Phase>('starting');
   const [message, setMessage] = useState('カメラを起動しています…'), [count, setCount] = useState(0), [roll, setRoll] = useState<number | null>(null);
   const [taken, setTaken] = useState<View[]>([]), [flash, setFlash] = useState(0);
-  const flow = useRef({ step: 0, phase: 'starting' as Phase, until: 0, count: 0, lost: 0, roll: null as number | null, message: '', since: 0, spoken: '', spokenAt: -99 });
+  const flow = useRef({ step: 0, phase: 'starting' as Phase, until: 0, count: 0, lost: 0, roll: null as number | null, message: '', since: 0, spoken: '', spokenAt: -99, hold: 0 });
   const still = useRef(new Stillness()), camera = useRef<PostureCamera | null>(null), ended = useRef(false), skip = useRef(() => {});
   const props = useRef({ views, onShot, onEnd, model, voice }); props.current = { views, onShot, onEnd, model, voice };
 
@@ -56,9 +60,17 @@ export default function CameraCapture({ views, facing, voice, motion, model, onS
   }, [motion]);
 
   useEffect(() => {
-    const control = new AbortController(), cam = new PostureCamera(video.current!, frame), f = flow.current;
+    const control = new AbortController(), cam = new PostureCamera(video.current!, frame, trackChanged), f = flow.current;
     camera.current = cam;
     const set = (next: Phase) => { f.phase = next; setPhase(next); };
+    /** The camera's picture ended (another app took the camera, the page was away too long) or stopped for the moment
+     * (the page in the background): said, instead of a frozen picture under a count. */
+    function trackChanged(state: TrackState) {
+      if (control.signal.aborted || f.phase === 'error' || f.phase === 'starting') return;
+      if (state === 'ended') { set('error'); setMessage('カメラが止まりました。「閉じる」で閉じて、もう一度カメラを起動してください。'); return; }
+      if (f.phase === 'countdown' || f.phase === 'position') { set('position'); still.current.reset(); }
+      f.message = state === 'muted' ? 'カメラの映像が止まっています。この画面に戻ると再開します。' : ''; setMessage(f.message);
+    }
     const tell = (text: string, now: number) => {
       if (text !== f.message) { f.message = text; f.since = now; setMessage(text); }
       // A request kept for 2.5 s is spoken (not more often than every 7 s, the same one).
@@ -82,6 +94,8 @@ export default function CameraCapture({ views, facing, voice, motion, model, onS
       draw(overlay.current, live, pose, fit?.ok ? (f.phase === 'countdown' ? 'go' : 'fit') : 'off');
       if (!view) return;
       if (f.phase === 'position') {
+        // A failed reading's reason is read (and spoken) before the asks start again.
+        if (now < f.hold) return;
         const ask = !fit!.ok ? fit!.message : !level ? 'スマホをまっすぐ縦に立ててください。' : !isStill ? 'そのまま動かないでください。' : '';
         tell(ask || 'そのまま…', now);
         if (fit!.ok && level && isStill) { f.until = now + COUNT; f.count = COUNT; f.lost = 0; set('countdown'); setCount(COUNT); props.current.voice.beep(); }
@@ -101,26 +115,37 @@ export default function CameraCapture({ views, facing, voice, motion, model, onS
     async function take(view: View) {
       f.phase = 'taking'; setPhase('taking'); setCount(0); props.current.voice.beep(880, 220); setFlash(n => n + 1);
       const frames: { picture: HTMLCanvasElement; pose: readonly Landmark[] }[] = [];
-      for (let i = 0; i < TAKES.length; i++) {
-        if (i) await new Promise(r => setTimeout(r, (TAKES[i] - TAKES[i - 1]) * 1000));
-        if (control.signal.aborted) return;
-        const g = cam.grab(), pose = tallest(g.poses);
-        if (pose) frames.push({ picture: g.picture, pose });
-      }
-      const views = props.current.views, next = views[f.step + 1];
-      props.current.voice.say(next ? `OK。次は、${ASK[next]}` : '撮影が終わりました。結果を表示します。');
-      setMessage(next ? `${VIEW_NAMES[view]}を撮りました。読み取っています…` : '読み取っています…');
       try {
-        const points = await readFrames(await props.current.model(), frames, view);
+        for (let i = 0; i < TAKES.length; i++) {
+          if (i) await new Promise(r => setTimeout(r, (TAKES[i] - TAKES[i - 1]) * 1000));
+          if (control.signal.aborted) return;
+          const g = cam.grab(), pose = tallest(g.poses);
+          if (pose) frames.push({ picture: g.picture, pose });
+        }
+        // The next ask waits for the reading: said before it, it stood when the reading then failed.
+        setMessage(`${VIEW_NAMES[view]}を撮りました。読み取っています…`); props.current.voice.say('撮りました。読み取っています。');
+        let m: PostureModel;
+        try { m = await props.current.model(); } catch (e) {
+          // The model cannot be made on this device: said once, with the way out. Tried again at each count, it was
+          // downloaded again each time (PostureLab lets a failed model go).
+          if (control.signal.aborted) return;
+          set('error'); setMessage(`${e instanceof Error ? e.message : String(e)} 写真を選んで解析してください。`); return;
+        }
+        const points = await readFrames(m, frames, view);
         if (control.signal.aborted) return;
         props.current.onShot({ view, picture: frames[0].picture, points, source: 'camera', frames: frames.length, people: 1,
           roll: f.roll, pitch: null, takenAt: new Date().toISOString() });
         setTaken(t => [...t, view]);
+        const next = props.current.views[f.step + 1];
+        props.current.voice.say(next ? `OK。次は、${ASK[next]}` : '撮影が終わりました。結果を表示します。');
         advance(now());
       } catch (e) {
         if (control.signal.aborted) return;
+        // The reason stays for a while and is spoken at once: the next frame's ask replaced it before it was read.
+        const at = now(), reason = (e instanceof Error ? e.message : String(e)).replace(/もう一度撮ってください。$/, '');
+        const text = `${reason}${/。$/.test(reason) ? '' : '。'}もう一度撮ります。`;
         set('position'); still.current.reset();
-        tell(`うまく読み取れませんでした（${e instanceof Error ? e.message : String(e)}）。もう一度撮ります。`, now());
+        f.hold = at + HOLD; f.message = text; f.since = at; f.spoken = text; f.spokenAt = at; setMessage(text); props.current.voice.say(text);
       }
     }
     function advance(at: number) {

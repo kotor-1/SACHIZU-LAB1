@@ -52,10 +52,15 @@ export interface Refiner {
   refine(source: HTMLCanvasElement, pose: readonly CrouchPoint[]): Promise<CrouchPoint[] | null>;
 }
 let loading: Promise<Refiner> | null = null;
-/** The model, loaded once a page (55.7 MB; WebGPU when the browser has it, else WebAssembly). */
-export function loadRefiner(signal: AbortSignal, status: (text: string) => void): Promise<Refiner> {
-  loading ??= create(signal, status).catch(e => { loading = null; throw e; });
-  return loading;
+/** The model, loaded once a page (55.7 MB; WebGPU when the browser has it, else WebAssembly). A load begun for an
+ * analysis that was then cancelled ends in that analysis's AbortError: a new analysis (its own signal not aborted) loads
+ * again, instead of going on without RTMPose and saying nothing. */
+export async function loadRefiner(signal: AbortSignal, status: (text: string) => void): Promise<Refiner> {
+  for (let attempt = 0; ; attempt++) {
+    const mine = loading ??= create(signal, status).catch(e => { loading = null; throw e; });
+    try { return await mine; }
+    catch (e) { if (signal.aborted || attempt > 0 || !(e instanceof DOMException && e.name === 'AbortError')) throw e; }
+  }
 }
 let opening: Promise<{ model: ort.InferenceSession; backend: Refiner['backend'] }> | null = null;
 /** The model's session, opened once a page: the refiner's, and the posture check's (src/posture/rtm.ts). */
@@ -64,9 +69,8 @@ export function openRtmPose(signal: AbortSignal, status: (text: string) => void)
   return opening;
 }
 async function open(signal: AbortSignal, status: (text: string) => void) {
+  // Checked against its SHA-256 by downloadModel.
   const bytes = await downloadModel(`${import.meta.env.BASE_URL}models/rtmpose/${RTM_MODEL}`, signal, text => status(text.replace('姿勢モデル', '高精度の骨格モデル')), RTM_MODEL_SHA256);
-  const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('');
-  if (digest !== RTM_MODEL_SHA256) throw new Error('高精度の骨格モデルのファイルが正しくありません。');
   status('高精度の骨格モデルを準備しています…');
   ort.env.wasm.wasmPaths = { wasm: ORT_WASM }; ort.env.wasm.numThreads = 1;
   let session: ort.InferenceSession | null = null, backend: Refiner['backend'] = 'wasm';
@@ -78,12 +82,25 @@ async function open(signal: AbortSignal, status: (text: string) => void) {
   return { model: session, backend };
 }
 async function create(signal: AbortSignal, status: (text: string) => void): Promise<Refiner> {
-  const { model, backend } = await openRtmPose(signal, status), crop = document.createElement('canvas');
+  const opened = await openRtmPose(signal, status), crop = document.createElement('canvas');
+  let model = opened.model, backend = opened.backend, wasm: Promise<ort.InferenceSession | null> | null = null;
+  // WebGPU can fail while running (the device lost, its memory full) after the session was made: from then on the model
+  // runs on WebAssembly (made from the copy kept on the device), and a frame it cannot read keeps MediaPipe's pose. A
+  // failure here failed the whole analysis (crouch start, hurdle, long jump, throws, curve start), and every later one
+  // on the page.
+  const toWasm = () => wasm ??= (async () => {
+    try {
+      const bytes = await downloadModel(`${import.meta.env.BASE_URL}models/rtmpose/${RTM_MODEL}`, new AbortController().signal, () => undefined, RTM_MODEL_SHA256);
+      const session = await ort.InferenceSession.create(bytes, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+      opening = Promise.resolve({ model: session, backend: 'wasm' as const });
+      return session;
+    } catch { return null; }
+  })();
   crop.width = IW; crop.height = IH;
   const ctx = crop.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('映像処理を開始できません。');
   const input = new Float32Array(3 * IW * IH);
-  return { backend, async refine(source, pose) {
+  return { get backend() { return backend; }, async refine(source, pose) {
     const W = source.width, H = source.height, c = cropOf(pose, W, H);
     if (!c) return null;
     // The window may reach past the picture: draw only its part inside, the rest left black (as in training).
@@ -93,7 +110,16 @@ async function create(signal: AbortSignal, status: (text: string) => void): Prom
     if (x1 > x0 && y1 > y0) ctx.drawImage(source, x0, y0, x1 - x0, y1 - y0, (x0 - sx) / c.scale, (y0 - sy) / c.scale, (x1 - x0) / c.scale, (y1 - y0) / c.scale);
     const rgba = ctx.getImageData(0, 0, IW, IH).data, N = IW * IH;
     for (let i = 0; i < N; i++) for (let ch = 0; ch < 3; ch++) input[ch * N + i] = (rgba[4 * i + ch] - MEAN[ch]) / STD[ch];
-    const out = await model.run({ input: new ort.Tensor('float32', input, [1, 3, IH, IW]) });
+    const run = () => model.run({ input: new ort.Tensor('float32', input, [1, 3, IH, IW]) });
+    let out: ort.InferenceSession.OnnxValueMapType;
+    try { out = await run(); }
+    catch (e) {
+      console.warn('RTMPose', e);
+      if (backend !== 'webgpu') return null;
+      const session = await toWasm(); if (!session) return null;
+      const old = model; model = session; backend = 'wasm'; void old.release().catch(() => undefined);
+      try { out = await run(); } catch { return null; }
+    }
     return decodePose(out.simcc_x.data as Float32Array, out.simcc_y.data as Float32Array, c, W, H);
   } };
 }

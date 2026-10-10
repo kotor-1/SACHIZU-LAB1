@@ -47,9 +47,13 @@ export function MomentReview({ url, frames, width: W, height: H, list, edits, ch
   const leg = useMemo(() => legGiven ?? legLength(frames.filter(f => f.pose), W, H), [legGiven, frames, W, H]);
   const interval = useMemo(() => frameInterval(frames), [frames]);
   const [cursor, setCursor] = useState(m?.frame ?? 0), [view, setView] = useState<View>('foot'), [marks, setMarks] = useState(true);
-  useEffect(() => { if (m) setCursor(m.frame); }, [m?.key]);   // eslint-disable-line react-hooks/exhaustive-deps
-  // A moment stays between its neighbours in time.
-  const i = m ? list.indexOf(m) : -1, lo = i > 0 ? list[i - 1].frame : -Infinity, hi = i >= 0 && i + 1 < list.length ? list[i + 1].frame : Infinity;
+  // The cursor follows the moment's frame as set: another moment, a frame decided, or the moment (or all) put back to the
+  // automatic one (after 「すべて自動に戻す」 it stayed on the old frame, and 「このコマに決める」 set that again).
+  useEffect(() => { if (m) setCursor(m.frame); }, [m?.key, m?.frame]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // A moment stays between its neighbours of the same kind in time: a gate's crossing between the gates, a foot's moments
+  // between the feet's (the 10 m lists both: a gate could not be moved past a touchdown near it, nor a touchdown past it).
+  const peers = m ? list.filter(q => (q.kind === 'crossing') === (m.kind === 'crossing')) : [];
+  const i = m ? peers.indexOf(m) : -1, lo = i > 0 ? peers[i - 1].frame : -Infinity, hi = i >= 0 && i + 1 < peers.length ? peers[i + 1].frame : Infinity;
   const allowed = (frame: number) => frame > lo && frame < hi && byFrame.has(frame);
 
   // The video: loaded once (Safari shows no picture until a video has played), then moved to the frame chosen.
@@ -164,7 +168,10 @@ export function MomentReview({ url, frames, width: W, height: H, list, edits, ch
       <button type="button" aria-label="1コマ進む" onClick={() => step(1)}>▶</button>
     </div>
     <div className="crouch-review-more">
-      {m.frame !== m.autoFrame && <button type="button" onClick={() => { onRevert(m.key); setCursor(m.autoFrame); }}>この瞬間を自動の判定に戻す</button>}
+      {/* Back to the automatic frame only where it keeps the order (a neighbour moved past it would come after it). */}
+      {m.frame !== m.autoFrame && (allowed(m.autoFrame)
+        ? <button type="button" onClick={() => onRevert(m.key)}>この瞬間を自動の判定に戻す</button>
+        : <small>隣の瞬間を直したため、この瞬間は自動の判定に戻せません（先に隣を戻してください）。</small>)}
       {Object.keys(edits).length > 0 && <button type="button" onClick={onRevertAll}>すべて自動に戻す</button>}
     </div>
   </div>;

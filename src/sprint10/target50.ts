@@ -16,11 +16,14 @@ export function timeAt(x: number, v0: number, tau = TAU) {
   for (let k = 0; k < 60; k++) { const mid = (lo + hi) / 2; if (distanceAt(mid, v0, tau) < x) lo = mid; else hi = mid; }
   return (lo + hi) / 2;
 }
+/** The fastest top speed taken (m/s): above the fastest ever run (about 12.4 m/s), a section measured wrong (the lines
+ * set at other distances than entered: 10 m in 0.55 s pointed to a 3.74 s 50 m). */
+export const TOP_SPEED_MAX = 13;
 /** The top speed (m/s) that runs the section from `entry` m to `entry + length` m in `seconds`, or null. */
 export function topSpeed(entry: number, length: number, seconds: number, tau = TAU): number | null {
   if (!(entry >= 0) || !(length > 0) || !(seconds > 0)) return null;
   const took = (v0: number) => timeAt(entry + length, v0, tau) - timeAt(entry, v0, tau);
-  let lo = .5, hi = 20;
+  let lo = .5, hi = TOP_SPEED_MAX;
   if (took(hi) > seconds || took(lo) < seconds) return null;
   for (let k = 0; k < 60; k++) { const mid = (lo + hi) / 2; if (took(mid) > seconds) lo = mid; else hi = mid; }
   return (lo + hi) / 2;

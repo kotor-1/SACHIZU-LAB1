@@ -16,6 +16,7 @@ import { contactMoments, effectsBetween, poseFlags, relatedValues, type ReviewMo
 import { MomentReview } from '../sprint10/MomentReview';
 import '../sprint10/sprint10.css';
 import './highjump.css';
+import { keepAwake } from '../cmj/keep-awake';
 
 /** One ▲▼◀▶ tap moves the chosen point by 0.1% of the picture. */
 const NUDGE = .001;
@@ -27,13 +28,15 @@ const ROLES = [['before', '踏切の2歩前', '2歩前'], ['penult', '踏切の1
 const valuesOf = (r: HighJumpResult): ReviewValue[] => [
   { label: '上向きの速さ（離地）', value: r.lift?.speed ?? null, unit: 'm/s', digits: 2 }, { label: '空中で上がった高さ', value: r.lift ? r.lift.h2 * 100 : null, unit: 'cm', digits: 0 },
   { label: '踏切の接地時間', value: r.times.takeoffContact, unit: '秒', digits: 3 }, { label: '最後の1歩（接地→接地）', value: r.times.lastStep, unit: '秒', digits: 3 },
-  { label: 'その前の1歩（接地→接地）', value: r.times.stepBefore, unit: '秒', digits: 3 }, { label: '最後の2歩のリズム', value: r.rhythm, unit: '', digits: 2 },
+  { label: 'その前の1歩（接地→接地）', value: r.times.stepBefore, unit: '秒', digits: 3 }, { label: '最後の2歩のリズム', value: r.rhythm === null ? null : r.rhythm * 100, unit: '%', digits: 0 },
   { label: '1歩前の接地時間', value: r.times.penultContact, unit: '秒', digits: 3 }, { label: '踏切前の空中', value: r.times.lastFlight, unit: '秒', digits: 3 },
   { label: '2歩前の接地時間', value: r.times.beforeContact, unit: '秒', digits: 3 }, { label: '踏切接地の後傾', value: r.posture.lean, unit: '°', digits: 0 }];
 type Handle = 'leftBar' | 'leftFoot' | 'rightBar' | 'rightFoot';
 const HANDLES: [Handle, string, string][] = [['leftBar', '左の支柱：バー', '左バー'], ['leftFoot', '左の支柱：根元', '左根元'], ['rightBar', '右の支柱：バー', '右バー'], ['rightFoot', '右の支柱：根元', '右根元']];
 interface Setting { points: Record<Handle, { x: number; y: number }>; barCm: number | null }
 const START: Setting['points'] = { leftBar: { x: .2, y: .45 }, leftFoot: { x: .2, y: .75 }, rightBar: { x: .8, y: .45 }, rightFoot: { x: .8, y: .75 } };
+/** A bar height that can be used (cm): while 120 is typed the box holds 12 on the way, which must not be analysed. */
+const barOk = (cm: number | null): cm is number => cm !== null && cm >= 50 && cm <= 250;
 const same = (a: Setting, b: Setting) => a.barCm === b.barCm && HANDLES.every(([h]) => a.points[h].x === b.points[h].x && a.points[h].y === b.points[h].y);
 const clamp = (v: number) => Math.max(0, Math.min(1, v));
 const uprights = (s: Setting): UprightPoints => ({ left: { foot: s.points.leftFoot, bar: s.points.leftBar }, right: { foot: s.points.rightFoot, bar: s.points.rightBar } });
@@ -60,7 +63,9 @@ export default function HighJumpLab() {
   // The judged moments the user set (frames by moment key), those confirmed, and the one being checked; everything shown
   // uses the result with them (the user, 2026-10-07: 「他のモードにも同じように自動解析と微調整モード追加しましょう」).
   const [edits, setEdits] = useState<Record<string, number>>({}), [checked, setChecked] = useState<ReadonlySet<string>>(new Set()), [moment, setMoment] = useState<string | null>(null);
-  useEffect(() => { setEdits({}); setChecked(new Set()); setMoment(null); }, [measured, used]);
+  // Reset for a new analysis only: the moments are the contacts (td{n} / to{n}), the same whatever lines and heights are
+  // used; 「計算し直す」 discarded every correction made.
+  useEffect(() => { setEdits({}); setChecked(new Set()); setMoment(null); }, [measured]);
   const options = useMemo(() => measured && used && used.barCm ? { width: measured.width, height: measured.height, uprights: uprights(used), barHeight: used.barCm / 100 } : null, [measured, used]);
   const auto: HighJumpResult | null = useMemo(() => measured && options ? analyzeHighJump(measured.frames, options) : null, [measured, options]);
   const result: HighJumpResult | null = useMemo(() => measured && options && auto ? Object.keys(edits).length ? analyzeHighJump(measured.frames, { ...options, edits }) : auto : null, [measured, options, auto, edits]);
@@ -136,16 +141,17 @@ export default function HighJumpLab() {
     },
   });
   async function analyze() {
-    if (!file || busy || !setting.barCm) return;
-    const control = new AbortController(); owner.current = control;
+    if (!file || busy || !barOk(setting.barCm)) return;
+    const control = new AbortController(); owner.current = control; let awake = () => {};
     setBusy(true); setMeasured(null); setProgress(0); setMessage('');
     try {
-      const data = await measureHighJump(file, control.signal, (fraction, text) => { setProgress(fraction); setMessage(text); });
+      awake = await keepAwake();
+      const data = await measureHighJump(file, control.signal, (fraction, text) => { if (control.signal.aborted) return; setProgress(fraction); setMessage(text); });
       if (control.signal.aborted) return;
       setMeasured(data); setUsed(setting); setMessage('解析が終わりました。');
     } catch (e) {
       if (!control.signal.aborted) setMessage(e instanceof Error ? e.message : String(e));
-    } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
+    } finally { awake(); if (owner.current === control) { owner.current = null; setBusy(false); } }
   }
   function choose(next: Tab) {
     setTab(next);
@@ -217,10 +223,10 @@ export default function HighJumpLab() {
       </div>
     </section>
     <section className="sprint10-card"><h2>3　解析する</h2>
-      <button className="sprint10-primary" disabled={!ready || busy || !setting.barCm} onClick={() => void analyze()}>解析する</button>
-      {measured && used && !same(used, setting) && setting.barCm && !busy && <button className="sprint10-recalc" onClick={() => setUsed(setting)}>今の点とバーの高さで計算し直す</button>}
+      <button className="sprint10-primary" disabled={!ready || busy || !barOk(setting.barCm)} onClick={() => void analyze()}>解析する</button>
+      {measured && used && !same(used, setting) && barOk(setting.barCm) && !busy && <button className="sprint10-recalc" onClick={() => setUsed(setting)}>今の点とバーの高さで計算し直す</button>}
       {busy && <button onClick={() => { owner.current?.abort(); owner.current = null; setBusy(false); setMessage('解析を中止しました。'); }}>中止</button>}
-      <p role="status">{message || (setting.barCm ? '動画を選び、支柱とバーに点を合わせると解析できます。' : '動画を選び、支柱とバーに点を合わせ、バーの高さを入れると解析できます。')}</p>
+      <p role="status">{message || (barOk(setting.barCm) ? '動画を選び、支柱とバーに点を合わせると解析できます。' : setting.barCm ? 'バーの高さは50〜250cmで入れてください。' : '動画を選び、支柱とバーに点を合わせ、バーの高さを入れると解析できます。')}</p>
       {busy && <progress max="1" value={progress} aria-label="解析の進み具合" />}
     </section>
     {result && used?.barCm && <section ref={resultCard} className="sprint10-card sprint10-result" aria-label="解析結果"><h2>解析結果</h2>

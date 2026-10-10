@@ -13,6 +13,7 @@ import { Voice } from './voice';
 import StrengthResults from './StrengthResults';
 import '../sprint10/sprint10.css';
 import './strength.css';
+import { keepAwake } from '../cmj/keep-awake';
 
 type Source = 'video' | 'camera';
 interface Measured { frames: CrouchFrame[]; width: number; height: number; refiner: 'webgpu' | 'wasm' | null;
@@ -34,7 +35,14 @@ export function cameraTrouble(e: unknown): string {
   if (name === 'NotAllowedError' || name === 'SecurityError') return 'カメラの使用が許可されていません。Safariでは、アドレスバーの「ぁあ」（aA）→「Webサイトの設定」→「カメラ」を「許可」にして、ページを読み込み直してください。録画した動画でも解析できます。';
   if (name === 'NotReadableError') return 'カメラを開けませんでした。ほかのアプリ（カメラ・ビデオ通話など）がカメラを使っていないか確かめて、ページを読み込み直してください。';
   if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'この端末で使えるカメラが見つかりませんでした。録画した動画を読み込んでください。';
-  return e instanceof Error ? e.message : String(e);
+  if (name === 'AbortError') return 'カメラを開けませんでした。ほかのアプリがカメラを使っていないか確かめて、もう一度「カメラを起動する」を押してください。';
+  const text = e instanceof Error ? e.message : String(e);
+  if (text === 'CAMERA_WORKER_TIMEOUT') return '骨格モデルの準備に時間がかかりすぎました。通信の良い所で、ページを読み込み直してください。';
+  if (text.startsWith('CAMERA_WORKER_')) return '骨格の解析を続けられませんでした。ページを読み込み直してください。録画した動画でも解析できます。';
+  // media-ready.ts's words are for a video file (「別の形式で保存」), not a camera.
+  if (text.includes('別の形式で保存')) return 'カメラの映像を表示できませんでした。ページを読み込み直してください。';
+  // The model's and the browser's own words are English: said in Japanese, with them in brackets.
+  return /[ぁ-んァ-ヶ一-龯]/.test(text) ? text : `カメラでの計測を続けられませんでした（${text}）。ページを読み込み直すか、録画した動画で解析してください。`;
 }
 
 /** Squat and Romanian deadlift form from the side, a recorded video or the camera (the user, 2026-10-08:
@@ -51,9 +59,12 @@ export default function StrengthLab() {
   const [speak, setSpeak] = useState(true), [keep, setKeep] = useState(true), [live, setLive] = useState(false);
   const [hud, setHud] = useState<{ reps: number; last: string; angles: string; fps: number | null; seen: boolean }>({ reps: 0, last: '', angles: '', fps: null, seen: false });
   const [clip, setClip] = useState<File | null>(null);
+  // The recording's own address (録画を詳しく解析): the chosen video keeps `url`, so 解析する never pairs it with the clip.
+  const [clipUrl, setClipUrl] = useState('');
   const voice = useRef<Voice | null>(null);
   useEffect(() => () => { owner.current?.abort(); stream.current?.getTracks().forEach(t => t.stop()); voice.current?.close(); }, []);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
+  useEffect(() => () => { if (clipUrl) URL.revokeObjectURL(clipUrl); }, [clipUrl]);
   useEffect(() => { if (voice.current) voice.current.speak = speak; }, [speak]);
   // The camera's view on screen once it starts (the steps above stay where they are).
   useEffect(() => { if (live) camera.current?.parentElement?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }); }, [live]);
@@ -65,44 +76,51 @@ export default function StrengthLab() {
 
   function changeFile(next: File | null) {
     owner.current?.abort(); owner.current = null; setBusy(false);
-    setFile(next); setUrl(next ? URL.createObjectURL(next) : ''); setMeasured(null); setMessage(''); setClip(null);
+    setFile(next); setUrl(next ? URL.createObjectURL(next) : ''); setMeasured(null); setMessage(''); setClip(null); setClipUrl('');
   }
   async function analyzeVideo(target: File, from: Measured['from'], targetUrl: string) {
     if (busy) return;
-    const control = new AbortController(); owner.current = control;
+    const control = new AbortController(); owner.current = control; let awake = () => {};
     setBusy(true); setMeasured(null); setProgress(0); setMessage('');
     try {
+      awake = await keepAwake();
       const { measureStrength } = await import('./recording');
-      const data = await measureStrength(target, control.signal, (fraction, text) => { setProgress(fraction); setMessage(text); });
+      const data = await measureStrength(target, control.signal, (fraction, text) => { if (control.signal.aborted) return; setProgress(fraction); setMessage(text); });
       if (control.signal.aborted) return;
       setMeasured({ frames: data.frames, width: data.width, height: data.height, refiner: data.refiner, fine: data.fine, url: targetUrl, from });
       setMessage('解析が終わりました。');
     } catch (e) { if (!control.signal.aborted) setMessage(e instanceof Error ? e.message : String(e)); }
-    finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
+    finally { awake(); if (owner.current === control) { owner.current = null; setBusy(false); } }
   }
 
   async function startCamera() {
     if (busy) return;
     const control = new AbortController(); owner.current = control;
     const v = new Voice(speak, true); voice.current?.close(); voice.current = v; v.unlock();
-    setBusy(true); setLive(true); setMeasured(null); setClip(null); setMessage('カメラを準備しています…');
+    setBusy(true); setLive(true); setMeasured(null); setClip(null); setClipUrl(''); setMessage('カメラを準備しています…');
     setHud({ reps: 0, last: '', angles: '', fps: null, seen: false });
     const frames: CrouchFrame[] = [];
     let size = { width: 0, height: 0 }, lastRun = -Infinity, armed = true, lastCue = '', recorder: ReturnType<typeof recordCamera> | null = null;
     // The bottoms of the reps told: each told once, in order, and never taken back (the analysis of all the frames so
     // far may later merge or drop one; the count on screen and aloud only goes up).
     const told: number[] = [];
-    let awake: { release: () => Promise<void> } | null = null;
+    let awake: { release: () => Promise<void> } | null = null, trouble = '';
     const element = camera.current!;
+    const stopped = () => { if (control.signal.aborted) throw new DOMException('中止', 'AbortError'); };
     try {
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('カメラを利用できません。HTTPS接続を確認するか、録画した動画を読み込んでください。');
       setMessage('カメラを起動しています…（カメラの使用を求められたら「許可」を押してください）');
-      const media = await untilAborted(navigator.mediaDevices.getUserMedia(cameraConstraints(navigator.mediaDevices.getSupportedConstraints())), control.signal);
-      stream.current = media; element.srcObject = media; await element.play(); await waitForCurrentFrame(element, control.signal);
+      // A camera given after a stop (the permission answered late) is closed at once, not left on.
+      const media = await untilAborted(navigator.mediaDevices.getUserMedia(cameraConstraints(navigator.mediaDevices.getSupportedConstraints())).then(m => {
+        if (control.signal.aborted) m.getTracks().forEach(t => t.stop());
+        return m;
+      }), control.signal);
+      stream.current = media; element.srcObject = media; await element.play(); await waitForCurrentFrame(element, control.signal); stopped();
       // The screen kept on through the set (the phone on a tripod, nobody touching it).
       try { awake = await (navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock?.request('screen') ?? null; } catch { awake = null; }
-      setMessage('骨格モデルを準備しています…');
+      stopped(); setMessage('骨格モデルを準備しています…');
       const { prepareStrengthWorker, runLive } = await import('./live');
+      stopped();
       const client = await prepareStrengthWorker(control.signal, text => setMessage(text));
       if (control.signal.aborted) { client.dispose(); return; }
       setMessage('');
@@ -124,7 +142,7 @@ export default function StrengthLab() {
         }
         setHud({ reps: told.length, last: lastCue, angles: liveAngles(body, exercise, f.width, f.height), fps: f.fps, seen: !!f.frame.pose });
       });
-    } catch (e) { if (!control.signal.aborted) setMessage(cameraTrouble(e)); }
+    } catch (e) { if (!control.signal.aborted) { trouble = cameraTrouble(e); setMessage(trouble); } }
     finally {
       void awake?.release().catch(() => undefined);
       const recorded = recorder ? await recorder.stop() : null;
@@ -133,7 +151,8 @@ export default function StrengthLab() {
       if (owner.current === control) {
         owner.current = null; setBusy(false); setLive(false);
         setClip(recorded && new File([recorded], `${exercise}-camera.${recorded.type.includes('mp4') ? 'mp4' : 'webm'}`, { type: recorded.type }));
-        if (frames.length) { setMeasured({ frames, ...size, refiner: null, url: null, from: 'camera' }); setMessage('計測を終えました。'); }
+        if (frames.length) { setMeasured({ frames, ...size, refiner: null, url: null, from: 'camera' }); setMessage(trouble ? `計測が途中で止まりました。${trouble}` : '計測を終えました。'); }
+        else if (!trouble) setMessage('');
       }
     }
   }
@@ -146,7 +165,7 @@ export default function StrengthLab() {
   function detail() {
     if (!clip) return;
     const next = URL.createObjectURL(clip);
-    setUrl(old => { if (old) URL.revokeObjectURL(old); return next; });
+    setClipUrl(next);
     void analyzeVideo(clip, 'clip', next);
   }
   function save() {
@@ -202,6 +221,8 @@ export default function StrengthLab() {
         <button className="sprint10-primary" onClick={detail}>録画を詳しく解析</button>
         <button onClick={saveClip}>撮影した動画を保存</button>
         <p className="sprint10-hint">カメラの計測は速さを優先した簡易版です。録画を詳しく解析すると、高精度の骨格で角度を測り直し、姿勢の画像とスロー再生も見られます。</p></div>}
+      {/* The recording's detailed analysis (minutes on a phone) can be stopped here too: 中止 was only in the video section. */}
+      {busy && !live && <button onClick={() => { owner.current?.abort(); owner.current = null; setBusy(false); setMessage('解析を中止しました。'); }}>中止</button>}
       {busy && !live && <progress max="1" value={progress} aria-label="解析の進み具合" />}
     </section>}
     {result && measured && <StrengthResults result={result} frames={measured.frames} width={measured.width} height={measured.height}

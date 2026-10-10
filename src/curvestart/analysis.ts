@@ -93,17 +93,26 @@ export function analyzeCurveStart(frames: readonly CrouchFrame[], setting: Curve
   const shoulders = (fr: CrouchFrame) => { const a = P(fr, 11), b = P(fr, 12); return a && b && a.v >= .3 && b.v >= .3 ? Math.hypot(a.x - b.x, a.y - b.y) : NaN; };
   const wristsY = (fr: CrouchFrame, minV: number) => { const a = P(fr, 15), b = P(fr, 16); return a && b && a.v >= minV && b.v >= minV ? (a.y + b.y) / 2 : NaN; };
   const seen = frames.filter(f => f.refined ?? f.pose);
-  if (seen.length < 30) return empty('選手を追えませんでした。ブロックの真後ろから、選手の全身と左右の白線が映るように撮影してください。');
+  // The frame counts in this analysis were set on 60 fps (the test videos). A video at another rate (an iPhone films 30
+  // by default; recording.ts reads one over 60 at about 60) has them in the same times: at 30 fps a footprint is half as
+  // many frames, and the run's start was looked for over twice as long. Frames read as filmed at 55-65 fps keep them as
+  // they were.
+  const gaps = frames.slice(1).map((f, i) => f.pts - frames[i].pts).filter(g => g > 0), fps = gaps.length ? 1 / med(gaps) : 60;
+  const steps1 = frames.slice(1).map((f, i) => f.frame - frames[i].frame);
+  const native = Math.abs(fps - 60) <= 5 && (steps1.length ? med(steps1) : 1) === 1;
+  const rate = native ? 1 : Math.max(.25, Math.min(1.25, fps / 60)), n = (k: number) => native ? k : Math.max(1, Math.round(k * rate));
+  const ptsAt = new Map(frames.map(f => [f.frame, f.pts]));
+  if (seen.length < n(30)) return empty('選手を追えませんでした。ブロックの真後ろから、選手の全身と左右の白線が映るように撮影してください。');
 
   // 2. The run's start: the wrists leave the ground (rise LIFT shoulder widths) for 3 frames, and the athlete then moves
   // away (shoulders 15% narrower 0.7-1 s later).
   let runStart: number | null = null, hands: number[] = [], lifted = false;
   for (let i = 0; i < seen.length && runStart === null; i++) {
-    const rest = med(hands.slice(-30)), sw = med(seen.slice(Math.max(0, i - 15), i + 1).map(shoulders));
-    const lift = seen.slice(i, i + 3);
-    if (hands.length >= 3 && Number.isFinite(rest) && Number.isFinite(sw) && lift.length === 3 && lift.every(f => wristsY(f, .1) < rest - LIFT * sw)
+    const rest = med(hands.slice(-n(30))), sw = med(seen.slice(Math.max(0, i - n(15)), i + 1).map(shoulders));
+    const lifts = Math.max(2, n(3)), lift = seen.slice(i, i + lifts);
+    if (hands.length >= 3 && Number.isFinite(rest) && Number.isFinite(sw) && lift.length === lifts && lift.every(f => wristsY(f, .1) < rest - LIFT * sw)
       && lift.some(f => Number.isFinite(wristsY(f, LIFT_SEEN)))) {
-      const later = med(seen.slice(i + 40, i + 61).map(shoulders));
+      const later = med(seen.slice(i + n(40), i + n(61)).map(shoulders));
       if (!Number.isFinite(later) || later < .85 * sw) { runStart = seen[i].frame; break; }
       lifted = true;   // the hands left the ground but the athlete did not move away
     }
@@ -124,7 +133,7 @@ export function analyzeCurveStart(frames: readonly CrouchFrame[], setting: Curve
   if (h < .6) notes.push('カメラが低い（地面から60 cm未満）ため、遠くの足の位置の誤差が大きくなります。1.3 m以上の高さを勧めます。');
 
   // The start point: on the start line, across from the hands where they rested.
-  const rested = seen.filter(f => f.frame < runStart! && P(f, 15)!.v >= .4 && P(f, 16)!.v >= .4).slice(-30);
+  const rested = seen.filter(f => f.frame < runStart! && P(f, 15)!.v >= .4 && P(f, 16)!.v >= .4).slice(-n(30));
   const handX = rested.length ? med(rested.map(f => (P(f, 15)!.x + P(f, 16)!.x) / 2)) : NaN;
   if (!Number.isFinite(handX)) return empty('構えの両手が見えず、スタート位置を決められませんでした。', camera);
   const closest = [...startPts].sort((a, b) => Math.abs(a[0] - handX) - Math.abs(b[0] - handX)).slice(0, 4);
@@ -136,9 +145,9 @@ export function analyzeCurveStart(frames: readonly CrouchFrame[], setting: Curve
   let lastFrame = seen.at(-1)!.frame, good: { at: P2; frame: number } | null = null, away = 0;
   const sizes: number[] = [];
   for (const f of seen) {
-    const q = pelvisOf(f), sz = sizeOf(f), size = sizes.length ? med(sizes.slice(-10)) : sz;
+    const q = pelvisOf(f), sz = sizeOf(f), size = sizes.length ? med(sizes.slice(-n(10))) : sz;
     const stray = !q || !Number.isFinite(sz) || sz < .5 * size || (good !== null && f.frame > runStart && Math.hypot(q[0] - good.at[0], q[1] - good.at[1]) > JUMP * size);
-    if (stray) { if (good && f.frame > runStart && ++away >= SWITCH) { lastFrame = good.frame; break; } continue; }
+    if (stray) { if (good && f.frame > runStart && ++away >= n(SWITCH)) { lastFrame = good.frame; break; } continue; }
     away = 0; good = { at: q!, frame: f.frame }; sizes.push(sz);
   }
 
@@ -182,16 +191,20 @@ export function analyzeCurveStart(frames: readonly CrouchFrame[], setting: Curve
   const alongOf = (g: P2) => (g[0] - Sg[0]) * ud[0] + (g[1] - Sg[1]) * ud[1];
 
   // 3. Footprints.
-  const tol = (fr: CrouchFrame) => Math.max(STILL_PX * Math.max(W, H) / 3840, STILL * sizeOf(fr));
+  // A foot moves `1 / rate` times as far between frames read less often.
+  const tol = (fr: CrouchFrame) => Math.max(STILL_PX * Math.max(W, H) / 3840, STILL * sizeOf(fr)) / rate;
+  const half = native ? 2 : Math.max(1, Math.round(2 * rate)), need = native ? 3 : Math.max(2, half + 1), piece = native ? 3 : Math.max(2, n(3));
+  const runStartPts = ptsAt.get(runStart!) ?? 0;
+  const afterStart = (fr: CrouchFrame) => native ? fr.frame >= runStart! + 6 : fr.pts >= runStartPts + 5.5 / 60;
   const pieces: { side: 'L' | 'R'; from: number; to: number; x: number; y: number }[] = [];
   for (const side of [0, 1]) {
     const raw = frames.map(fr => { const pts = [P(fr, 31 + side), P(fr, 29 + side)].filter((q): q is { x: number; y: number; v: number } => !!q && q.v >= .2); return pts.length ? [pts.reduce((a, q) => a + q.x, 0) / pts.length, pts.reduce((a, q) => a + q.y, 0) / pts.length] as P2 : null; });
-    const f = raw.map((_, i) => { const w = raw.slice(Math.max(0, i - 2), i + 3).filter((q): q is P2 => !!q); return w.length >= 3 ? [med(w.map(q => q[0])), med(w.map(q => q[1]))] as P2 : null; });
-    const still = frames.map((fr, i) => i > 0 && i + 1 < frames.length && !!f[i - 1] && !!f[i] && !!f[i + 1] && fr.frame >= runStart! + 6 && fr.frame <= lastFrame
+    const f = raw.map((_, i) => { const w = raw.slice(Math.max(0, i - half), i + half + 1).filter((q): q is P2 => !!q); return w.length >= need ? [med(w.map(q => q[0])), med(w.map(q => q[1]))] as P2 : null; });
+    const still = frames.map((fr, i) => i > 0 && i + 1 < frames.length && !!f[i - 1] && !!f[i] && !!f[i + 1] && afterStart(fr) && fr.frame <= lastFrame
       && Math.hypot(f[i]![0] - f[i - 1]![0], f[i]![1] - f[i - 1]![1]) < tol(fr) && Math.hypot(f[i + 1]![0] - f[i]![0], f[i + 1]![1] - f[i]![1]) < tol(fr));
     for (let i = 0; i < frames.length; i++) {
       if (!still[i]) continue; let j = i; while (j + 1 < frames.length && still[j + 1]) j++;
-      if (j - i + 1 >= 3) { const xs: number[] = [], ys: number[] = []; for (let k = i; k <= j; k++) { xs.push(f[k]![0]); ys.push(f[k]![1]); } pieces.push({ side: side ? 'R' : 'L', from: frames[i].frame, to: frames[j].frame, x: med(xs), y: med(ys) }); }
+      if (j - i + 1 >= piece) { const xs: number[] = [], ys: number[] = []; for (let k = i; k <= j; k++) { xs.push(f[k]![0]); ys.push(f[k]![1]); } pieces.push({ side: side ? 'R' : 'L', from: frames[i].frame, to: frames[j].frame, x: med(xs), y: med(ys) }); }
       i = j;
     }
   }
@@ -200,7 +213,7 @@ export function analyzeCurveStart(frames: readonly CrouchFrame[], setting: Curve
   for (const c of pieces) {
     const g = cam.ground(c.x, c.y); if (!g) continue;
     const same = [...merged].reverse().find(m => m.side === c.side);
-    if (same && c.from - same.first <= HOVER_FRAMES) {
+    if (same && (native ? c.from - same.first <= HOVER_FRAMES : (ptsAt.get(c.from) ?? 0) - (ptsAt.get(same.first) ?? 0) <= (HOVER_FRAMES + .5) / 60)) {
       const g0 = cam.ground(same.x, same.y);
       if (g0 && alongOf(g) - alongOf(g0) < HOVER_AHEAD) { if (c.y > same.y) Object.assign(same, { x: c.x, y: c.y, from: c.from, to: c.to }); continue; }
     }
@@ -218,13 +231,17 @@ export function analyzeCurveStart(frames: readonly CrouchFrame[], setting: Curve
   const dot3 = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
   steps.forEach((q, i) => {
     const a = steps[Math.max(0, i - 1)], b = steps[Math.min(steps.length - 1, i + 1)], hd: P2 = [b.ground[0] - a.ground[0], b.ground[1] - a.ground[1]], hl = Math.hypot(hd[0], hd[1]);
-    const head: P2 = hl > .3 ? [hd[0] / hl, hd[1] / hl] : ud, mid = Math.round((q.from + q.to) / 2), fr = frames.find(f => f.frame === mid), pel = fr && pelvisOf(fr); if (!pel) return;
+    // The frame read nearest the footprint's middle: with frames read apart (a 240 fps video read at about 60) the middle
+    // frame itself may not have been read, and the lean was then missing.
+    const mid = Math.round((q.from + q.to) / 2);
+    const fr = frames.reduce<CrouchFrame | undefined>((best, f) => f.frame >= q.from && f.frame <= q.to && (!best || Math.abs(f.frame - mid) < Math.abs(best.frame - mid)) ? f : best, undefined);
+    const head: P2 = hl > .3 ? [hd[0] / hl, hd[1] / hl] : ud, pel = fr && pelvisOf(fr); if (!fr || !pel) return;
     const z1 = .1, z2 = Math.min(.9, cam.C[2] - .15), A = cam.ground(pel[0], pel[1], z1), B = cam.ground(pel[0], pel[1], z2); if (!A || !B || z2 <= z1) return;
     const A3 = [A[0], A[1], z1], ab = [B[0] - A[0], B[1] - A[1], z2 - z1], n = [head[0], head[1], 0], den = dot3(ab, n); if (Math.abs(den) < 1e-6) return;
     const t = dot3([q.ground[0] - A3[0], q.ground[1] - A3[1], -A3[2]], n) / den, X = [A3[0] + t * ab[0], A3[1] + t * ab[1], A3[2] + t * ab[2]];
     if (X[2] < .3 || X[2] > 1.4) return;
     const side: P2 = [head[1], -head[0]], lateral = (X[0] - q.ground[0]) * side[0] + (X[1] - q.ground[1]) * side[1];
-    q.lean = Math.atan2(lateral, X[2]) * deg; q.leanFrame = mid; q.com = [X[0], X[1]];
+    q.lean = Math.atan2(lateral, X[2]) * deg; q.leanFrame = fr.frame; q.com = [X[0], X[1]];
   });
 
   // The body's path: the pelvis over the ground in the middle of each footprint (the foot moved across by the measured

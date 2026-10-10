@@ -24,7 +24,6 @@ export interface DemuxResult {
   hasEditList: boolean;
   presentationWindow: PresentationWindow | null;
   displayTimeline: DisplayTimeline;
-  mp4File: MP4Box.MP4File;
 }
 
 /** mp4box 0.5.2 が info.tracks[*].edits へ公開する elst entry の実型。 */
@@ -532,7 +531,8 @@ export async function demuxMP4(file: File | Blob): Promise<DemuxResult> {
         hasEditList: timeline.hasEditList,
         presentationWindow: timeline.presentationWindow,
         displayTimeline,
-        mp4File,
+        // Not the mp4box file: it keeps the whole file's bytes (its stream's buffers are never let go), a second copy
+        // beside the samples' own for as long as the result is held (a whole analysis); nobody used it.
       });
     }
 

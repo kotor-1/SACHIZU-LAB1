@@ -61,11 +61,13 @@ export async function measureCurveStart(file: File, signal: AbortSignal, progres
   try {
     await untilAborted(model.initialize(signal, message => progress(0, message)), signal);
     const read = await readFocal35(file).catch(() => null);
-    const count = (await untilAborted(demuxMP4(file), signal)).frames.length;
+    // About 60 frames a second are read (the analysis's frame counts are set on 60 fps; 240 fps was four times the work).
+    const times = (await untilAborted(demuxMP4(file), signal)).frames.map(f => f.pts), count = times.length;
+    const span = count > 1 ? times[count - 1] - times[0] : 0, stride = Math.max(1, Math.round((span > 0 ? (count - 1) / span : 60) / 60));
     const frames: CrouchFrame[] = [];
     let width = 0, height = 0, last: Pt[] | null = null, size = 0, clear: CurveRecording['clear'] | null = null, first: Small | null = null;
     const drift: Drift[] = [];
-    await readFrames(file, signal, () => true, async (frame, source, w, h) => {
+    await readFrames(file, signal, i => i % stride === 0 || i === count - 1, async (frame, source, w, h) => {
       width = w; height = h;
       let found: Pt[] | null = null;
       if (!last) {
@@ -92,7 +94,7 @@ export async function measureCurveStart(file: File, signal: AbortSignal, progres
       if (refined && boxOf(refined, w, h)) last = refined; else if (found) last = found;
       if (last && !size) { const lb = boxOf(last, w, h)!; size = Math.max(lb.x1 - lb.x0, lb.y1 - lb.y0); }
       frames.push({ frame: frame.frameIndex, pts: frame.pts, pose: found as CrouchPoint[] | null, ...(refiner ? { refined } : {}) });
-      if (frame.frameIndex % DRIFT_EVERY === 0 || frame.frameIndex === count - 1) {
+      if ((frame.frameIndex / stride) % DRIFT_EVERY === 0 || frame.frameIndex === count - 1) {
         const small = shrinkCanvas(source, w, h);
         if (!first) { first = small; drift.push({ frame: frame.frameIndex, dx: 0, dy: 0 }); }
         else { const prev = drift.at(-1)!, [dx, dy] = pictureShift(first, small, [prev.dx, prev.dy]); drift.push({ frame: frame.frameIndex, dx, dy }); }

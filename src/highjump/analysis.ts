@@ -150,8 +150,11 @@ export function analyzeHighJump(frames: readonly CrouchFrame[], options: HighJum
   const knee = (p: CrouchPoint[]) => kneeAngle(p, stance(p, T), W, H, leg);
   if (T.touchdownFrame !== null) {
     base.posture.lean = around(T.touchdownFrame, lean);
-    const f = seen[index.get(T.touchdownFrame)!], m = comOf(f.pose!), a = f.pose![27 + stance(f.pose!, T)];
-    if (m) base.leanLine = { frame: f.frame, ankle: { x: a.x, y: a.y }, com: m };
+    // A touchdown set by hand on a frame without the athlete's pose (確認 lets any frame be chosen) has no line drawn:
+    // read as there, it threw and the page was replaced by its error screen.
+    const k = index.get(T.touchdownFrame), f = k === undefined ? undefined : seen[k];
+    const m = f?.pose ? comOf(f.pose) : null, a = f?.pose ? f.pose[27 + stance(f.pose, T)] : null;
+    if (f && m && a) base.leanLine = { frame: f.frame, ankle: { x: a.x, y: a.y }, com: m };
     base.posture.kneeTouchdown = around(T.touchdownFrame, knee);
     base.posture.trunkTouchdown = around(T.touchdownFrame, p => trunkAngle(p, W, H, direction, leg));
   }

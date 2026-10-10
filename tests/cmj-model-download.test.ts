@@ -34,36 +34,46 @@ describe('model download', () => {
     const assertion = expect(downloadModel('/model', new AbortController().signal, vi.fn())).rejects.toThrow('45秒');
     await vi.advanceTimersByTimeAsync(45001); await assertion;
   });
-  it('keeps a checked model on the device and uses it while it still matches', async () => {
+  it('keeps a checked model on the device, keyed by its hash, and uses it while it still matches', async () => {
+    const { keyOf } = await import('../src/cmj/model-download');
     const hex = async (b: Uint8Array<ArrayBuffer>) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', b)), v => v.toString(16).padStart(2, '0')).join('');
+    const origin = 'https://example.test', path = (r: string | { url: string }) => typeof r === 'string' ? r : r.url.slice(origin.length);
+    vi.stubGlobal('location', { href: `${origin}/app/` });
     const store = new Map<string, Response>(), deleted: string[] = [];
     vi.stubGlobal('caches', { open: async () => ({
       match: async (url: string) => store.get(url)?.clone(), put: async (url: string, r: Response) => { store.set(url, r); },
-      delete: async (url: string) => { deleted.push(url); return store.delete(url); } }) });
+      keys: async () => [...store.keys()].map(k => ({ url: origin + k })),
+      delete: async (r: string | { url: string }) => { deleted.push(path(r)); return store.delete(path(r)); } }) });
     const model = new Uint8Array([1, 2, 3]), sha = await hex(model);
-    const fetch = vi.fn(async () => new Response(model, { headers: { 'content-length': '3' } }));
+    const fetch = vi.fn(async (_url: string, _init?: RequestInit) => new Response(model, { headers: { 'content-length': '3' } }));
     vi.stubGlobal('fetch', fetch);
+    // A copy kept before (under the address alone) and one of an older model: let go when the checked one is kept.
+    store.set('/model', new Response(new Uint8Array([7]))); store.set(keyOf('/model', 'f'.repeat(64)), new Response(new Uint8Array([8])));
     expect(await downloadModel('/model', new AbortController().signal, vi.fn(), sha)).toEqual(model);
-    expect(fetch).toHaveBeenCalledTimes(1); expect(store.has('/model')).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(1); expect(fetch.mock.calls[0][1]?.cache).toBe('no-cache');
+    expect([...store.keys()]).toEqual([keyOf('/model', sha)]);
     const status = vi.fn();
     expect(await downloadModel('/model', new AbortController().signal, status, sha)).toEqual(model);
     expect(fetch).toHaveBeenCalledTimes(1); expect(status.mock.calls.at(-1)?.[0]).toContain('端末に保存した');
-    // a kept copy that no longer matches (the model changed) is let go and downloaded again
-    store.set('/model', new Response(new Uint8Array([9, 9])));
+    // a kept copy that no longer matches its hash (damaged) is let go and downloaded again
+    store.set(keyOf('/model', sha), new Response(new Uint8Array([9, 9])));
     expect(await downloadModel('/model', new AbortController().signal, vi.fn(), sha)).toEqual(model);
-    expect(deleted).toEqual(['/model']); expect(fetch).toHaveBeenCalledTimes(2); expect(new Uint8Array(await store.get('/model')!.clone().arrayBuffer())).toEqual(model);
-    // a download that does not match is not kept (the caller's check reports it); no hash given, nothing is kept
+    expect(deleted).toContain(keyOf('/model', sha)); expect(fetch).toHaveBeenCalledTimes(2);
+    expect(new Uint8Array(await store.get(keyOf('/model', sha))!.clone().arrayBuffer())).toEqual(model);
+    // a download that does not match is refused here (checked once, not again by the caller) and not kept; no hash
+    // given, nothing is checked or kept, and the browser's own cache is used as before
     store.clear();
-    expect(await downloadModel('/model', new AbortController().signal, vi.fn(), '0'.repeat(64))).toEqual(model);
+    await expect(downloadModel('/model', new AbortController().signal, vi.fn(), '0'.repeat(64))).rejects.toThrow('ファイルが正しくありません');
     expect(await downloadModel('/other', new AbortController().signal, vi.fn())).toEqual(model);
+    expect(fetch.mock.calls.at(-1)?.[1]?.cache).toBe('default');
     expect(store.size).toBe(0);
   });
   it('downloads as before where the device cannot keep it', async () => {
+    const bytes = new Uint8Array([4, 5]), sha = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), v => v.toString(16).padStart(2, '0')).join('');
     vi.stubGlobal('caches', { open: async () => { throw new DOMException('denied', 'SecurityError'); } });
     vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([4, 5]))));
-    expect(await downloadModel('/model', new AbortController().signal, vi.fn(), 'a'.repeat(64))).toEqual(new Uint8Array([4, 5]));
+    expect(await downloadModel('/model', new AbortController().signal, vi.fn(), sha)).toEqual(bytes);
     vi.stubGlobal('caches', { open: async () => ({ match: async () => undefined, put: async () => { throw new DOMException('full', 'QuotaExceededError'); }, delete: async () => true }) });
-    const bytes = new Uint8Array([4, 5]), sha = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), v => v.toString(16).padStart(2, '0')).join('');
     expect(await downloadModel('/model', new AbortController().signal, vi.fn(), sha)).toEqual(bytes);
   });
   it('cancels an ongoing download', async () => {

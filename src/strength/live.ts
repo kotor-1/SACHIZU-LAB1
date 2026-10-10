@@ -17,10 +17,15 @@ export interface LiveFrame { frame: CrouchFrame; width: number; height: number; 
 export async function prepareStrengthWorker(signal: AbortSignal, status: (message: string) => void) {
   if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined')
     throw new Error('このブラウザではカメラでの解析ができません。録画した動画を読み込んでください。');
+  if (signal.aborted) throw new DOMException('中止', 'AbortError');
   const client = new LiveWorkerClient(new Worker(new URL('./live-worker.ts', import.meta.url)), status);
   const abort = () => client.dispose();
   signal.addEventListener('abort', abort, { once: true });
-  try { await client.request({ type: 'init' }, [], 90_000); return client; }
+  try {
+    await client.request({ type: 'init' }, [], 90_000);
+    if (signal.aborted) throw new DOMException('中止', 'AbortError');
+    return client;
+  }
   catch (e) { client.dispose(); throw e; }
   finally { signal.removeEventListener('abort', abort); }
 }
@@ -30,12 +35,14 @@ export async function runLive(video: HTMLVideoElement, client: LiveWorkerClient,
   const canvas = document.createElement('canvas'), context = canvas.getContext('2d');
   if (!context) throw new Error('映像処理を開始できません。');
   const clock = new CameraClock(), recent: number[] = [];
-  let callback = 0, inflight = false, done = false, n = 0, box: Box | null = null, lastPts = -Infinity;
+  let callback = 0, inflight = false, done = false, n = 0, box: Box | null = null, lastPts = -Infinity, offset = 0;
+  const track = (video.srcObject as MediaStream | null)?.getVideoTracks?.()[0] ?? null;
   try {
     await new Promise<void>((resolve, reject) => {
-      const clean = () => { done = true; video.cancelVideoFrameCallback(callback); signal.removeEventListener('abort', abort); video.removeEventListener('error', error); };
+      const clean = () => { done = true; video.cancelVideoFrameCallback(callback); signal.removeEventListener('abort', abort); video.removeEventListener('error', error); track?.removeEventListener('ended', ended); };
       const abort = () => { clean(); resolve(); };
       const error = () => { clean(); reject(new Error('カメラ映像を取得できませんでした。')); };
+      const ended = () => { clean(); reject(new Error('カメラの映像が途切れました（電話・ほかのアプリなど）。もう一度「カメラを起動する」を押してください。')); };
       const next: VideoFrameRequestCallback = (now, metadata) => {
         if (done) return;
         callback = video.requestVideoFrameCallback(next);
@@ -47,8 +54,11 @@ export async function runLive(video: HTMLVideoElement, client: LiveWorkerClient,
         let frameTime: number | null;
         try { frameTime = drawCameraFrame(video, context, cw, ch); } catch (e) { clean(); reject(e); return; }
         const timing = clock.read(now, { ...metadata, frameTime });
-        const pts = timing.measurementPts;
-        if (pts === null || pts <= lastPts) { inflight = false; return; }
+        // A clock that starts again from a smaller time (camera-clock.ts `reset`) carries on after the last frame.
+        if (timing.measurementPts === null) { inflight = false; return; }
+        if (timing.reset && timing.measurementPts + offset <= lastPts) offset = lastPts + 1 / 30 - timing.measurementPts;
+        const pts = timing.measurementPts + offset;
+        if (pts <= lastPts) { inflight = false; return; }
         lastPts = pts;
         void (async () => {
           let image: ImageBitmap | null = null;
@@ -69,7 +79,7 @@ export async function runLive(video: HTMLVideoElement, client: LiveWorkerClient,
           finally { image?.close(); inflight = false; }
         })();
       };
-      signal.addEventListener('abort', abort, { once: true }); video.addEventListener('error', error, { once: true });
+      signal.addEventListener('abort', abort, { once: true }); video.addEventListener('error', error, { once: true }); track?.addEventListener('ended', ended, { once: true });
       if (signal.aborted) { abort(); return; }
       callback = video.requestVideoFrameCallback(next);
     });

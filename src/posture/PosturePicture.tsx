@@ -72,7 +72,9 @@ function draw(c: HTMLCanvasElement, picture: Picture, r: ViewResult, tilt: numbe
     return;
   }
   // Front and back: the lines across (ears, shoulders, hips) against level, the axis against the vertical, the knees.
-  const across: [number, number, MeasureKey, string][] = [[K.leftEar, K.rightEar, 'headTilt', '耳'], [K.leftShoulder, K.rightShoulder, 'shoulderTilt', '肩'], [K.leftHip, K.rightHip, 'pelvisTilt', '骨盤']];
+  // The head's line is the eyes' when the ears are not seen (analysis.ts: the same fallback).
+  const head: [number, number, MeasureKey, string] = seen(p[K.leftEar], p[K.rightEar]) ? [K.leftEar, K.rightEar, 'headTilt', '耳'] : [K.leftEye, K.rightEye, 'headTilt', '目'];
+  const across: [number, number, MeasureKey, string][] = [head, [K.leftShoulder, K.rightShoulder, 'shoulderTilt', '肩'], [K.leftHip, K.rightHip, 'pelvisTilt', '骨盤']];
   for (const [a, b, key, name] of across) if (seen(p[a], p[b])) {
     const mx = (p[a].x + p[b].x) / 2, my = (p[a].y + p[b].y) / 2, half = Math.abs(p[a].x - p[b].x) / 2 + (x1 - x0) * .08;
     ctx.setLineDash([12 * lw, 9 * lw]); ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = 2.5 * lw; line(ctx, mx - half, my, mx + half, my); ctx.setLineDash([]);

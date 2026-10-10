@@ -13,6 +13,7 @@ import { analyzeRecording } from './run';
 import { LeanChart, PathPicture, TopView } from './CurveStartCharts';
 import '../sprint10/sprint10.css';
 import './curvestart.css';
+import { keepAwake } from '../cmj/keep-awake';
 
 /** One ▲▼◀▶ tap moves the chosen point by 0.1% of the picture. */
 const NUDGE = .001;
@@ -125,15 +126,16 @@ export default function CurveStartLab() {
   async function analyze() {
     if (!file || busy) return;
     background.current?.abort();   // one decoder at a time; the lines are drawn from the recording once it is made
-    const control = new AbortController(); owner.current = control;
+    const control = new AbortController(); owner.current = control; let awake = () => {};
     setBusy(true); setMeasured(null); setProgress(0); setMessage('');
     try {
-      const data = await measureCurveStart(file, control.signal, (fraction, text) => { setProgress(fraction); setMessage(text); });
+      awake = await keepAwake();
+      const data = await measureCurveStart(file, control.signal, (fraction, text) => { if (control.signal.aborted) return; setProgress(fraction); setMessage(text); });
       if (control.signal.aborted) return;
       setMeasured(data); setUsed(points); setMessage('解析が終わりました。');
     } catch (e) {
       if (!control.signal.aborted) setMessage(e instanceof Error ? e.message : String(e));
-    } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
+    } finally { awake(); if (owner.current === control) { owner.current = null; setBusy(false); } }
   }
   function choose(next: Tab) {
     setTab(next);

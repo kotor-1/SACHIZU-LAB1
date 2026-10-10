@@ -112,16 +112,35 @@ export async function measureHurdle(file: File, signal: AbortSignal, progress: (
 
     // 2. Follow the runner coming in (the tracker is let go at the end of the pass); a runner already inside the
     // picture is followed again from where the survey first saw it.
-    const follow = (startX: number) => stage('選手の追跡', () => measureSprint(file, startX, signal, (f, m) => progress(.1 + .6 * f, m), direction > 0 ? .97 : .03, 'flying', 10, {
-      maxFps: CROUCH_FPS, watcher,
-      onSelected: (frame, selected, w, h) => { width = w; height = h;
-        frames.push({ frame: frame.frameIndex, pts: frame.pts, pose: selected.length === 33 ? selected.map(p => ({ x: p.x, y: p.y, visibility: p.visibility })) : null }); },
-    }));
-    const edge = direction > 0 ? .03 : .97, entry = surveyEntry(samples, direction);
+    // The pass's own 「解析が終わりました。」 is not the analysis's end (RTMPose comes next). A second follow says it looks
+    // again, and keeps the first one's sprint speed: its gates are nearer (`metres` scaled), and the speed taken as
+    // running is the gates' spacing over their metres.
+    const edge = direction > 0 ? .03 : .97, far = direction > 0 ? .97 : .03, entry = surveyEntry(samples, direction);
+    const follow = (startX: number, again = false) => {
+      let closed = false;
+      return stage('選手の追跡', () => measureSprint(file, startX, signal,
+        (f, m) => progress(.1 + .6 * f, m === '解析が終わりました。' ? '選手の追跡が終わりました。' : again ? `選手を探し直しています。${m}` : m),
+        far, 'flying', 10 * Math.abs(far - startX) / Math.abs(far - edge), {
+        maxFps: CROUCH_FPS, watcher,
+        onRevised: (from, filled) => {
+          // A nearer, faster runner replaced the one followed first: that one's poses go (they pooled two people's toes).
+          // The new runner's earlier frames are found by the path led back in pass 3, as before.
+          if (from !== null) { for (const f of frames) if (f.pts >= from) f.pose = null; return; }
+          // Someone taken up after the athlete was lost (over 1.5 s): a runner coming in behind where the athlete was (a
+          // practice with several in turn) is someone else, whose poses are not added; one taken up further on is the
+          // athlete followed again.
+          const last = [...frames].reverse().find(f => f.pose), first = filled[0];
+          if (last && first && ((first.pose[23].x + first.pose[24].x) / 2 - (last.pose![23].x + last.pose![24].x) / 2) * direction < -.05) closed = true;
+        },
+        onSelected: (frame, selected, w, h) => { width = w; height = h;
+          frames.push({ frame: frame.frameIndex, pts: frame.pts, pose: !closed && selected.length === 33 ? selected.map(p => ({ x: p.x, y: p.y, visibility: p.visibility })) : null }); },
+      }));
+    };
     await follow(edge);
-    if (!frames.some(f => f.pose) && entry !== null && (entry - edge) * direction > ENTRY_AHEAD) {
+    // Not from a line at the far edge: with little picture left before the finish line the tracker took the wrong way.
+    if (!frames.some(f => f.pose) && entry !== null && (entry - edge) * direction > ENTRY_AHEAD && (far - (entry + direction * ENTRY_AHEAD)) * direction > .1) {
       frames.length = 0;
-      await follow(entry + direction * ENTRY_AHEAD);
+      await follow(entry + direction * ENTRY_AHEAD, true);
     }
 
     // 3. RTMPose; then one reading: before the athlete was decided, along the path led back (the watcher), and every

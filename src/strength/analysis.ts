@@ -15,7 +15,9 @@ export type Exercise = 'squat' | 'rdl' | 'slrdl';
 export const EXERCISES: Record<Exercise, string> = { squat: 'スクワット', rdl: 'RDL（両脚）', slrdl: 'RDL（片脚）' };
 /** Hinges (the reps by the trunk's lean) and the one-legged one. */
 export const hinge = (e: Exercise) => e !== 'squat';
-export const STRENGTH_VERSION = 'strength-v1';
+/** v1.1 (2026-10-09/10): the near side's points on both legs, the angles' frames read with RTMPose-m 384×288 (mirrored
+ * too); saved results before it measured the midpoint of the legs with RTMPose-m 256×192. */
+export const STRENGTH_VERSION = 'strength-v1.1';
 export interface StrengthOptions { width: number; height: number; exercise: Exercise }
 
 /** Points used below 0.3 visibility are left out (as the crouch start). */
@@ -159,7 +161,7 @@ export interface Rep {
   /** Back at rest or the next rep begun (live: told once settled). */
   settled: boolean;
 }
-/** A frame of a recorded set; `fine`: its pose read again with RTMPose-l (fine.ts), the angles' frames. */
+/** A frame of a recorded set; `fine`: its pose read again with RTMPose-m 384×288 (fine.ts), the angles' frames. */
 export type StrengthFrame = CrouchFrame & { fine?: boolean };
 export interface StrengthResult {
   exercise: Exercise; version: string;
@@ -325,7 +327,7 @@ export function analyzeStrength(frames: readonly CrouchFrame[], o: StrengthOptio
     // Standing: the frames at rest since the rep before.
     const rest = r.level + REST * (r.depth - r.level), from = n ? found[n - 1].e : 0;
     const stillAt = range(from, r.s + 1).filter(i => g[i] !== null && g[i]! <= rest), still = stillAt.map(i => postures[i]);
-    // The angles from the frames read with RTMPose-l (fine.ts) where there are any; the heel against all the standing
+    // The angles from the frames read with RTMPose-m 384×288 (fine.ts) where there are any; the heel against all the standing
     // frames (its rise is followed through the rep on RTMPose-m's frames).
     const all = still.length ? restingPosture(still, postures[r.s]) : postures[r.s], fine = finest(stillAt);
     const top = standing({ ...(fine.length ? restingPosture(fine, postures[r.s]) : all), foot: all.foot });

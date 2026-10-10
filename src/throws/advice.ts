@@ -65,19 +65,21 @@ function releaseAdvice(r: ThrowResult, rel: ReleaseMeasures | null): HurdleAdvic
   if (!rel) return out;
   if (r.event === 'jav') {
     const J = G.javRelease;
-    if (rel.speed !== null) out.push({ topic: 'リリース速度', level: 'info', text: `時速${speedRange(rel.speed)}。動画から推定した目安の値です（記録から求めた値との差は平均7%・最大13%）。参考：世界選手権の決勝のやり投げで男子 時速${kmh(J.speed.men)}km・女子 時速${kmh(J.speed.women)}km、日本選手権女子 時速${kmh(J.speed.japanWomen)}km。用具が軽いジャベリックスローとは比べられません）。` });
+    if (rel.speed !== null) out.push({ topic: 'リリース速度', level: 'info', text: `時速${speedRange(rel.speed)}。動画から推定した目安の値です（記録から求めた値との差は平均7%・最大13%）。参考：世界選手権の決勝のやり投げで男子 時速${kmh(J.speed.men)}km・女子 時速${kmh(J.speed.women)}km、日本選手権女子 時速${kmh(J.speed.japanWomen)}km（用具が軽いジャベリックスローとは比べられません）。` });
     if (rel.angle !== null) out.push({ topic: 'リリース角度', level: rel.angle < 25 || rel.angle > 45 ? 'check' : 'good',
       text: `${Math.round(rel.angle)}°（参考：世界選手権の決勝で男子 ${J.angle.men}°・女子 ${J.angle.women}°。ジャベリックスローの中学生は多くが30〜45°）。${rel.angle < 25 ? '低めに出ています。' : rel.angle > 45 ? '高めに出ています。' : ''}` });
     if (rel.attack !== null && rel.attitude !== null) out.push({ topic: '迎え角', level: rel.attack > J.attackRange[1] + 5 ? 'check' : 'good',
       text: `やりの向き ${Math.round(rel.attitude)}°、飛び出す角度との差（迎え角）${rel.attack >= 0 ? '+' : ''}${Math.round(rel.attack)}°（参考：世界選手権の決勝で迎え角 男子 ${J.attack.men}°・女子 ${J.attack.women}° 前後）。${rel.attack > J.attackRange[1] + 5 ? 'やりの先が飛ぶ向きより上を向いています。' : ''}` });
     if (r.com.atStart && r.com.atRelease !== null) {
       const loss = 1 - r.com.atRelease / r.com.atStart;
-      out.push({ topic: 'ブロックでの減速', level: 'info', text: `重心の前に進む速さが、ブロック脚の接地からリリースまでに ${Math.round(loss * 100)}% 落ちています（参考：日本選手権女子で ${Math.round(G.javDeceleration * 100)}% 前後。値は±10ポイントほどぶれます）。` });
+      // Measured from the block leg's touchdown, or from the hips furthest back when it is not in the picture.
+      const fromBlock = r.front !== null && !!r.deliveryStart && r.contacts[r.front]?.touchdownFrame === r.deliveryStart.frame;
+      out.push({ topic: 'ブロックでの減速', level: 'info', text: `重心の前に進む速さが、${fromBlock ? 'ブロック脚の接地' : '腰が最も後ろにきた瞬間'}からリリースまでに ${Math.round(loss * 100)}% 落ちています（参考：日本選手権女子で ${Math.round(G.javDeceleration * 100)}% 前後。値は±10ポイントほどぶれます）。` });
     }
     return out;
   }
   const S = G.shotReleaseFull;
-  if (rel.speed !== null) out.push({ topic: 'リリース速度', level: 'info', text: `時速${speedRange(rel.speed)}。動画から推定した目安の値です（記録から求めた値との差は平均7%・最大13%）。参考：世界選手権の女子決勝 時速${kmh(S.speed)}km、日本のトップ3女子 時速${kmh(S.speedJapan)}km。砲丸の重さで変わります）。` });
+  if (rel.speed !== null) out.push({ topic: 'リリース速度', level: 'info', text: `時速${speedRange(rel.speed)}。動画から推定した目安の値です（記録から求めた値との差は平均7%・最大13%）。参考：世界選手権の女子決勝 時速${kmh(S.speed)}km、日本のトップ3女子 時速${kmh(S.speedJapan)}km（砲丸の重さで変わります）。` });
   if (rel.angle !== null) out.push({ topic: 'リリース角度', level: rel.angle < 28 || rel.angle > 45 ? 'check' : 'good',
     text: `${Math.round(rel.angle)}°（参考：世界選手権の女子決勝 ${S.angle}°、日本のトップ3女子 ${S.angleJapan}°）。${rel.angle < 28 ? '低めに出ています。' : rel.angle > 45 ? '高めに出ています。' : ''}` });
   if (rel.heightShare !== null) out.push({ topic: 'リリースの高さ', level: 'info', text: `身長の ${Math.round(rel.heightShare * 100)}%${rel.height !== null ? `（約${rel.height.toFixed(2)} m）` : ''}（参考：世界選手権の女子決勝 ${Math.round(S.heightShare * 100)}%・${S.height} m）。` });

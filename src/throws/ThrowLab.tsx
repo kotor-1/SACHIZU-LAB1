@@ -15,6 +15,7 @@ import { footDown } from '../sprint10/crouch-edit';
 import { contactMoments, effectsBetween, poseFlags, relatedValues, type Edits, type ReviewMoment, type ReviewValue } from '../sprint10/moment-edits';
 import { MomentReview } from '../sprint10/MomentReview';
 import '../sprint10/sprint10.css';
+import { keepAwake } from '../cmj/keep-awake';
 
 /** One ◀/▶ tap moves the line by 0.2% of the frame width. */
 const NUDGE = .002;
@@ -29,6 +30,8 @@ const G = THROW_GUIDE;
 const fixed = (v: number | null | undefined, digits = 3) => v == null ? '—' : v.toFixed(digits);
 const round = (v: number | null | undefined) => v == null ? '—' : String(Math.round(v));
 /** The analysis with the user's frames (`release`, and the contacts' `td{n}`, `to{n}`). */
+/** A release set by hand is moved to a frame with the pose at most this many frames later (ThrowLab posed). */
+const SNAP_AHEAD = 3;
 const withEdits = (o: ThrowOptions, edits: Edits): ThrowOptions => ({ ...o, releaseFrame: edits.release ?? null, edits });
 /** The values a moment's frame changes (the check shows them before and after): the times and the angles at the moments.
  * The trunk is from vertical, forward positive. The release's speed and angle come from the implement's flight, searched
@@ -85,7 +88,10 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
   const releaseKey = result && !result.reason && result.release ? `${result.hand}:${result.release.frame}` : '';
   useEffect(() => {
     setFlight(null);
-    if (!result || result.reason || !implement || !result.release || !result.releaseHand || !result.bodyPx) return;
+    if (!result || result.reason || !implement || !result.release) return;
+    // A release set on a frame where the throwing hand is not seen (or no body size): nothing to search from. Said as not
+    // found; left at null, 「用具の飛び方を調べています…」 stayed on screen for good.
+    if (!result.releaseHand || !result.bodyPx) { setFlight({ path: null, attitude: null, scale: 0 }); return; }
     let off = false;
     const timer = setTimeout(() => {
       const scale = result.bodyPx! / (heightM ?? DEFAULT_HEIGHT);
@@ -95,6 +101,13 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
     }, 30);
     return () => { off = true; clearTimeout(timer); };
   }, [releaseKey, implement, heightM, event]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // The implement's pictures were read round the release of the hand chosen; another hand after the analysis searched
+  // stale pictures (speed and angle missing, or a wrong flight): the analysis is run again for it.
+  function changeHand(next: Hand) {
+    if (next === hand) return;
+    setHand(next);
+    if (measured) { setMeasured(null); setImplement(null); setMessage('投げる手を変えました。「解析する」を押して、もう一度解析してください。'); }
+  }
   const release = useMemo(() => result && !result.reason && flight ? releaseMeasures(result, flight.path, flight.attitude, heightM) : null, [result, flight, heightM]);
   const advice = useMemo(() => result && !result.reason ? throwAdvice(result, release, heightM) : [], [result, release, heightM]);
   const checks = advice.filter(a => a.level === 'check').length;
@@ -134,10 +147,13 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
   }, [auto, edits, measured, poseFrames, names.rearFoot, names.rearDown, names.rearShort, names.frontDown, names.frontShort]);
   const waiting = list.filter(m => m.flag && !checked.has(m.key)).length, editedCount = Object.keys(edits).length;
   const leg = useMemo(() => measured ? legLength(poseFrames.filter(f => f.pose), measured.width, measured.height) : 0, [poseFrames, measured]);
-  /** The frame with a pose nearest a frame: the release is taken only where the hand is seen. */
+  /** The frame with a pose nearest a frame (the release is taken only where the hand is seen), the one at or after it
+   * when one is within SNAP_AHEAD frames: snapped back past a front touchdown set just before it, the release took
+   * another foot as the front one. */
   const posed = useCallback((frame: number) => {
     const all = measured?.frames.filter(f => f.pose) ?? [];
-    return all.reduce<number | null>((b, f) => b === null || Math.abs(f.frame - frame) < Math.abs(b - frame) ? f.frame : b, null) ?? frame;
+    const after = all.find(f => f.frame >= frame && f.frame - frame <= SNAP_AHEAD);
+    return after?.frame ?? all.reduce<number | null>((b, f) => b === null || Math.abs(f.frame - frame) < Math.abs(b - frame) ? f.frame : b, null) ?? frame;
   }, [measured]);
   const preview = useCallback((m: ReviewMoment, frame: number) => {
     if (!measured || !options || !result) return [];
@@ -168,10 +184,11 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
   }
   async function analyze() {
     if (!file || busy) return;
-    const control = new AbortController(); owner.current = control;
+    const control = new AbortController(); owner.current = control; let awake = () => {};
     setBusy(true); setMeasured(null); setImplement(null); setProgress(0); setMessage('');
     try {
-      const data = await measureCrouch(file, line, control.signal, (fraction, text) => { setProgress(.85 * fraction); setMessage(text); });
+      awake = await keepAwake();
+      const data = await measureCrouch(file, line, control.signal, (fraction, text) => { if (control.signal.aborted) return; setProgress(.85 * fraction); setMessage(text); });
       if (control.signal.aborted) return;
       // The pictures around the release, for the implement (read again once the release is known).
       let frames: ImplementFrames | null = null;
@@ -179,14 +196,14 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
       if (found && !found.reason && found.release && found.releaseHand && found.bodyPx) {
         try {
           frames = await measureImplement(file, data.frames, data.width, data.height, found.release, found.releaseHand, found.direction,
-            found.bodyPx / (heightM ?? DEFAULT_HEIGHT), control.signal, (fraction, text) => { setProgress(.85 + .15 * fraction); setMessage(text); });
+            found.bodyPx / (heightM ?? DEFAULT_HEIGHT), control.signal, (fraction, text) => { if (control.signal.aborted) return; setProgress(.85 + .15 * fraction); setMessage(text); });
         } catch (e) { if (control.signal.aborted) return; frames = null; }
       }
       if (control.signal.aborted) return;
       setMeasured(data); setImplement(frames); setMessage('解析が終わりました。');
     } catch (e) {
       if (!control.signal.aborted) setMessage(e instanceof Error ? e.message : String(e));
-    } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
+    } finally { awake(); if (owner.current === control) { owner.current = null; setBusy(false); } }
   }
   function choose(next: Tab) {
     setTab(next);
@@ -284,7 +301,7 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
       </div></div>
       <div className="throw-choices" role="group" aria-label="投げる手"><span>投げる手</span>
         {([['right', '右投げ'], ['left', '左投げ']] as const).map(([id, label]) =>
-          <button key={id} type="button" aria-pressed={hand === id} disabled={busy} onClick={() => setHand(id)}>{label}</button>)}</div>
+          <button key={id} type="button" aria-pressed={hand === id} disabled={busy} onClick={() => changeHand(id)}>{label}</button>)}</div>
       {!jav && <div className="throw-choices" role="group" aria-label="投法"><span>投法</span>
         {([['glide', 'グライド'], ['standing', '立ち投げ（助走なし）']] as const).map(([id, label]) =>
           <button key={id} type="button" aria-pressed={style === id} disabled={busy} onClick={() => setStyle(id)}>{label}</button>)}</div>}
@@ -362,8 +379,8 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
           {jav ? <p>参考値の出典：ブロック脚の膝はCamposら（2004、1999年世界選手権男子決勝7人：接地158〜178°・最も曲がった時137〜163°・リリース137〜173°）とBennett・Walker・Bissas（2018、2017年世界選手権決勝：リリース 男子162±22°・女子169±17°）。ブロック脚の接地からリリースまでの時間はBennettら（2018：男子0.129±0.013秒・女子0.141±0.012秒）、Camposら（2004：0.11〜0.14秒）、瀧川ら（2020、日本選手権女子決勝：0.132±0.023秒）。接地での上体の後傾はBennettら（2018：男子14±3°・女子16±4°）、田内ら（2012：約15°）。いずれもやり投げの値で、ジャベリックスローの研究値は見つかりませんでした。</p>
             : <p>参考値の出典：グライドの局面時間はDinsdale・Thomas・Bissas（2018、2017年世界選手権女子決勝のグライドの7人：グライド0.136±0.014秒・右足→左足0.112±0.039秒・左足→リリース0.252±0.028秒）と田内ら（2006、日本のトップ8女子：0.148・0.165・0.233秒）。リリースの上体はDinsdaleら（2018：前へ6±6°）、リリースの膝はMastalerz・Sadowski（2022、トップ男子3人：前膝173±3°・後ろ膝142±11°）。パワーポジションの膝と上体の角度は、比べられる研究の値が見つかりませんでした（Young・Li 2005は、右足接地の右膝が曲がっている選手ほど記録が良い傾向を7人の女子で報告しています）。立ち投げの時間の研究値も見つかりませんでした。</p>}
           <p>リリース：投げた直後の数コマで背景と違う所（風で揺れる葉など、もともと動く所は大きく違う時だけ）から、手の近くを出て重力で落ちながらまっすぐ飛ぶ道筋を探し、リリースの瞬間の速さと角度を出しています。やりは後ろの端、砲丸は中心です。7本（ジャベ4本・砲丸3本）をChromeとSafari系で解析した差は、速度で最大6%、角度で最大6°でした。速度の縮尺は、骨格の胴（肩の中点〜腰の中点）の長さと入力した身長の比です（胴は身長の0.288）。記録から求めた速度の目安（ジャベリックスロー：前田・丹松 2008 の飛距離と初速度の関係式、砲丸：記録7m50からの逆算）と比べると、4人・6試技で差は最大11%・平均7%でした。脚（股関節〜足首）を使うと骨格の点の位置の都合で脚が短く出て、速度が15〜25%大きくなったため使っていません。目安自体にも幅があり（関係式のばらつき、どの試技の記録かが不明）、スピードガンなどとの比較はしていません。投げる腕の側から撮った動画（7本とも）で確かめています。用具が手から離れた後、0.05秒以上映っていないと出せません。</p>
-          {jav ? <p>リリースの参考値：Bennett・Walker・Bissas（2018、2017年世界選手権決勝：速度 男子 時速100km（27.9±0.7 m/秒）・女子 時速87km（24.3±1.0 m/秒）、角度 34.4±2.7°・34.9±3.3°、高さ 2.00±0.12・1.86±0.10 m、やりの向き 39.6±4.2°・40.7±5.7°、迎え角 5.2±3.7°・5.9±6.4°）、瀧川ら（2020、日本選手権女子：時速81km（22.6±0.7 m/秒）、ブロック脚の接地からリリースまでに重心の前に進む速さが44±8%低下）、前田・丹松（2008、ジャベリックスローの中学生：角度の多くが30〜45°、迎え角−5〜50°）。ブロックでの減速は、重心（de Leva 1996）の前に進む速さを接地とリリースの前後0.06秒で求めた値で、ブラウザによって最大12ポイント違いました。</p>
-            : <p>リリース・姿勢の参考値：Dinsdale・Thomas・Bissas（2018、2017年世界選手権女子決勝のグライド7人：速度 時速46km（12.67±0.32 m/秒）、角度36.4±1.3°、高さ2.07±0.04 m＝身長の116±3%、足幅1.08±0.15 m＝身長の61±9%、グライドの距離0.80±0.12 m）、加藤ら（2019、日本のトップ3女子：時速43km（11.90±0.12 m/秒）、33.7±1.5°）、Schaa（2010、2009年世界選手権男子のグライド：足幅1.25±0.07 m、グライド0.90±0.03 m）。足幅は前足と後ろ足のつま先の前後の距離、グライドの距離は後ろ足の構えの位置から接地の位置まで、身長の割合は画面上の身長（上）に対する割合です。</p>}
+          {jav ? <p>リリースの参考値：Bennett・Walker・Bissas（2018、2017年世界選手権決勝：速度 男子 時速100km（27.9±0.7 m/s）・女子 時速87km（24.3±1.0 m/s）、角度 34.4±2.7°・34.9±3.3°、高さ 2.00±0.12・1.86±0.10 m、やりの向き 39.6±4.2°・40.7±5.7°、迎え角 5.2±3.7°・5.9±6.4°）、瀧川ら（2020、日本選手権女子：時速81km（22.6±0.7 m/s）、ブロック脚の接地からリリースまでに重心の前に進む速さが44±8%低下）、前田・丹松（2008、ジャベリックスローの中学生：角度の多くが30〜45°、迎え角−5〜50°）。ブロックでの減速は、重心（de Leva 1996）の前に進む速さを接地とリリースの前後0.06秒で求めた値で、ブラウザによって最大12ポイント違いました。</p>
+            : <p>リリース・姿勢の参考値：Dinsdale・Thomas・Bissas（2018、2017年世界選手権女子決勝のグライド7人：速度 時速46km（12.67±0.32 m/s）、角度36.4±1.3°、高さ2.07±0.04 m＝身長の116±3%、足幅1.08±0.15 m＝身長の61±9%、グライドの距離0.80±0.12 m）、加藤ら（2019、日本のトップ3女子：時速43km（11.90±0.12 m/s）、33.7±1.5°）、Schaa（2010、2009年世界選手権男子のグライド：足幅1.25±0.07 m、グライド0.90±0.03 m）。足幅は前足と後ろ足のつま先の前後の距離、グライドの距離は後ろ足の構えの位置から接地の位置まで、身長の割合は画面上の身長（上）に対する割合です。</p>}
           <p>骨格：選手を見つけて追うのはMediaPipe、接地・リリースの判定、角度と画像・スロー再生の骨格はRTMPose（{measured.refiner === 'webgpu' ? 'WebGPU' : measured.refiner === 'wasm' ? 'WebAssembly' : '今回は未使用'}）です。</p></details>
       </>}
       <button onClick={save}>結果を保存（JSON）</button>

@@ -9,10 +9,18 @@ import { editContacts, type Edits } from './moment-edits';
 
 /** Plants this many leg lengths above the lowest are not on the ground (as the hurdle). */
 const GROUND_SPREAD = .4;
+/** A standing start's first contacts down longer than this (s), or down from the first frame followed, are the stance:
+ * a sprint's contacts are 0.08-0.3 s. */
+const STANCE_SECONDS = .4;
+/** A stretch without the runner this close (s) before a touchdown or after a toe-off leaves its time unknown. */
+const LOST_REACH = .06;
 export interface RunContacts { contacts: Contact[]; leg: number; direction: number }
 
-/** The contacts in time order (`edits`: the user's frames by `td{n}` / `to{n}`); null without enough of the runner. */
-export function runContacts(frames: readonly CrouchFrame[], W: number, H: number, edits?: Edits): RunContacts | null {
+/** The contacts in time order (`edits`: the user's frames by `td{n}` / `to{n}`); null without enough of the runner.
+ * `standing`: a standing start, whose stance (the feet down where the runner stands) is not a step. Listed, the front
+ * foot became 1歩目, 0.85 s down (IMG_4802), and with a staggered stance the rear foot's flight could span the front
+ * foot's contact left out of the chain. The steps keep their numbers (`index`) for the edits. */
+export function runContacts(frames: readonly CrouchFrame[], W: number, H: number, edits?: Edits, standing = false): RunContacts | null {
   const seen = frames.filter(f => f.pose);
   if (seen.length < 10) return null;
   const leg = legLength(seen, W, H);
@@ -21,11 +29,31 @@ export function runContacts(frames: readonly CrouchFrame[], W: number, H: number
   const hips = seen.flatMap(f => { const x = hipX(f.pose!); return x === null ? [] : [x]; });
   const direction = hips.length > 1 ? Math.sign(hips.at(-1)! - hips[0]) : 0;
   if (!direction) return null;
-  const toes = toesOf(seen, W, H), plants = contactPlants(plantsOf(plantedToes(toes, leg), leg), leg, direction);
-  if (!plants.length) return { contacts: [], leg, direction };
-  const ground = Math.max(...plants.map(p => p.y));
-  const onGround = plants.filter(p => ground - p.y < GROUND_SPREAD * leg);
-  let contacts = onGround.map((p, i) => contactOf(p, i + 1, toes, leg, seen.at(-1)!.pts, seen[0].pts));
+  // Plants off the ground are dropped before the steps are chained (as the high and long jumps): kept in the chain, one
+  // could hold off the next real contact (each must be well ahead of the last).
+  const toes = toesOf(seen, W, H), all = plantsOf(plantedToes(toes, leg), leg);
+  if (!all.length) return { contacts: [], leg, direction };
+  const ground = Math.max(...all.map(p => p.y));
+  const plants = contactPlants(all.filter(p => ground - p.y < GROUND_SPREAD * leg), leg, direction);
+  let contacts = plants.map((p, i) => contactOf(p, i + 1, toes, leg, seen.at(-1)!.pts, seen[0].pts));
+  if (standing) {
+    let k = 0;
+    while (k < contacts.length && (contacts[k].touchdown === null || (contacts[k].toeOff ?? Infinity) - contacts[k].touchdown! > STANCE_SECONDS)) k++;
+    contacts = contacts.slice(k);
+  }
+  // A touchdown or toe-off next to a stretch where the runner was not followed may have been in it: the first toe seen
+  // after it is late, not the touchdown (its time is then not given, as at the ends of the video). After the stance is
+  // told, which uses the touchdowns as found.
+  // The toe is taken as down a few frames into a contact (GROUND_BAND), so a stretch ending up to LOST_REACH s before the
+  // touchdown counts (and one beginning up to LOST_REACH s after the toe-off).
+  const times = seen.map(f => f.pts), steps = times.slice(1).map((t, i) => t - times[i]).sort((a, b) => a - b);
+  const gap = Math.max(.03, 3 * (steps.length ? steps[steps.length >> 1] : 0));
+  const lostIn = (from: number, to: number) => times.some((t, i) => i > 0 && t - times[i - 1] > gap && t > from && times[i - 1] < to);
+  contacts = contacts.map(c => {
+    const lostBefore = c.touchdown !== null && lostIn(c.touchdown - LOST_REACH, c.touchdown + 1e-9);
+    const lostAfter = c.toeOff !== null && lostIn(c.toeOff - 1e-9, c.toeOff + LOST_REACH);
+    return lostBefore || lostAfter ? { ...c, ...(lostBefore ? { touchdown: null, touchdownFrame: null } : {}), ...(lostAfter ? { toeOff: null, toeOffFrame: null } : {}) } : c;
+  });
   if (edits && Object.keys(edits).length) contacts = editContacts(contacts, edits, frames);
   return { contacts, leg, direction };
 }

@@ -34,6 +34,8 @@
 .posture-picture{display:block;width:100%;max-width:460px;height:auto;aspect-ratio:3/4;margin:0 auto 8px;border-radius:12px;background:#0c1816}
 .posture-legend{justify-content:center;margin-bottom:8px}
 .posture .posture-table th,.posture .posture-table td{white-space:normal;text-align:left;vertical-align:top}
+/* A result's word stays whole (no break inside 「内反（O脚）」): the line breaks at the space before its value. */
+.posture .posture-table td{word-break:keep-all}
 .posture-table tbody th{font-weight:650;font-size:13px}.posture-table tbody th small{font-weight:500;color:#557468}
 .posture-level-tag{display:inline-block;padding:1px 8px;border-left:5px solid;border-radius:6px;background:#f2f6f4;font-size:13px;font-weight:700;white-space:nowrap}
 .posture-tilt-row{display:grid;grid-template-columns:44px minmax(0,1fr) 44px auto;align-items:center;gap:8px;margin:6px 0 12px}

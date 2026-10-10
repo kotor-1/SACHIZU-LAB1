@@ -245,6 +245,20 @@ describe('the exercise chosen', () => {
     expect(cameraTrouble(err('NotReadableError'))).toContain('ほかのアプリ');
     expect(cameraTrouble(err('OverconstrainedError'))).toContain('見つかりません');
     expect(cameraTrouble(new Error('骨格モデルを開始できませんでした。'))).toBe('骨格モデルを開始できませんでした。');
+    // The worker's codes, the browser's and the model's English, and a video file's advice: in Japanese, for a camera.
+    expect(cameraTrouble(new Error('CAMERA_WORKER_TIMEOUT'))).toContain('時間がかかりすぎました');
+    expect(cameraTrouble(new Error('CAMERA_WORKER_FAILED'))).toContain('続けられませんでした');
+    expect(cameraTrouble(err('AbortError'))).toContain('カメラを開けませんでした');
+    expect(cameraTrouble(new Error('Packet timestamp mismatch on a calculator'))).toMatch(/^カメラでの計測を続けられませんでした（Packet timestamp mismatch/);
+    expect(cameraTrouble(new Error('この動画を再生できません。別の形式で保存してください。'))).not.toContain('別の形式');
+  });
+  it('averages the mirrored reading with its legs named as in the first reading', async () => {
+    const { matched } = await import('../src/strength/fine');
+    // Halpe26: the left leg at x 100, the right at x 200; the mirrored reading names them the other way round.
+    const first = Array.from({ length: 26 }, (_, i) => ({ x: [11, 13, 15, 20, 22, 24].includes(i) ? 100 : [12, 14, 16, 21, 23, 25].includes(i) ? 200 : 150, y: i * 10, score: 1 }));
+    const swapped = first.map((_, i) => { const pair = [[11, 12], [13, 14], [15, 16], [20, 21], [22, 23], [24, 25]].find(p => p.includes(i)); return pair ? { ...first[pair[0] === i ? pair[1] : pair[0]] } : { ...first[i] }; });
+    expect(matched(first, swapped).map(q => q.x)).toEqual(first.map(q => q.x));
+    expect(matched(first, first).map(q => q.x)).toEqual(first.map(q => q.x));
   });
   it('asks again when a squat is analysed as an RDL, and an RDL as a squat', async () => {
     const { strengthAdvice } = await import('../src/strength/advice');

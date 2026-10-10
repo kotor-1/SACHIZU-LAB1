@@ -16,17 +16,18 @@ import { contactMoments, effectsBetween, poseFlags, relatedValues, type ReviewMo
 import { MomentReview } from '../sprint10/MomentReview';
 import '../sprint10/sprint10.css';
 import './longjump.css';
+import { keepAwake } from '../cmj/keep-awake';
 
 type Tab = 'advice' | 'check' | 'pose' | 'numbers' | 'replay';
 const TABS: [Tab, string][] = [['advice', 'ポイント'], ['check', '確認'], ['pose', '姿勢'], ['numbers', '数値'], ['replay', 'スロー']];
 /** The values a moment's frame changes (the check shows them before and after); speeds in m/s with the scale. */
 const valuesOf = (r: LongJumpResult): ReviewValue[] => [
-  { label: '助走速度（最後の2歩）', value: mps(r, r.speed.lastTwoPx), unit: 'm/秒', digits: 2 }, { label: '踏切接地の瞬間の速さ', value: mps(r, r.speed.touchdownPx), unit: 'm/秒', digits: 2 },
-  { label: '離地の鉛直速度', value: mps(r, r.leave?.verticalPx ?? null), unit: 'm/秒', digits: 2 }, { label: '踏切角度', value: r.leave?.angle ?? null, unit: '°', digits: 1 },
+  { label: '助走速度（最後の2歩）', value: mps(r, r.speed.lastTwoPx), unit: 'm/s', digits: 2 }, { label: '踏切接地の瞬間の速さ', value: mps(r, r.speed.touchdownPx), unit: 'm/s', digits: 2 },
+  { label: '離地の鉛直速度', value: mps(r, r.leave?.verticalPx ?? null), unit: 'm/s', digits: 2 }, { label: '踏切角度', value: r.leave?.angle ?? null, unit: '°', digits: 1 },
   { label: '踏切の接地時間', value: r.takeoffContact, unit: '秒', digits: 3 },
   { label: '1歩前の接地時間', value: r.steps[0]?.contact ?? null, unit: '秒', digits: 3 }, { label: '1歩前の後の空中', value: r.steps[0]?.flight ?? null, unit: '秒', digits: 3 },
   { label: '2歩前の接地時間', value: r.steps[1]?.contact ?? null, unit: '秒', digits: 3 }, { label: '2歩前の後の空中', value: r.steps[1]?.flight ?? null, unit: '秒', digits: 3 },
-  { label: '最後の2歩のリズム', value: r.rhythm, unit: '', digits: 2 }, { label: '踏切接地の脚の角度', value: r.posture.legAngle, unit: '°', digits: 0 }];
+  { label: '最後の2歩のリズム', value: r.rhythm === null ? null : r.rhythm * 100, unit: '%', digits: 0 }, { label: '踏切接地の脚の角度', value: r.posture.legAngle, unit: '°', digits: 0 }];
 const LEGEND = [['#ffb02e', '体幹（腰→肩）'], ['#b58cff', '踏切脚の膝']] as const;
 const G = LONG_JUMP_GUIDE;
 const HEIGHT_RANGE = [100, 230] as const;
@@ -122,15 +123,16 @@ export default function LongJumpLab() {
   }
   async function analyze() {
     if (!file || busy) return;
-    const control = new AbortController(); owner.current = control;
+    const control = new AbortController(); owner.current = control; let awake = () => {};
     setBusy(true); setMeasured(null); setProgress(0); setMessage('');
     try {
-      const data = await measureHurdle(file, control.signal, (fraction, text) => { setProgress(fraction); setMessage(text.replace('踏切の前の動きを確認しています。', '助走の前のほうを確認しています。')); });
+      awake = await keepAwake();
+      const data = await measureHurdle(file, control.signal, (fraction, text) => { if (control.signal.aborted) return; setProgress(fraction); setMessage(text.replace('踏切の前の動きを確認しています。', '助走の前のほうを確認しています。')); });
       if (control.signal.aborted) return;
       setMeasured(data); setMessage('解析が終わりました。');
     } catch (e) {
       if (!control.signal.aborted) setMessage(e instanceof Error ? e.message : String(e));
-    } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
+    } finally { awake(); if (owner.current === control) { owner.current = null; setBusy(false); } }
   }
   function choose(next: Tab) {
     setTab(next);
@@ -158,11 +160,11 @@ export default function LongJumpLab() {
   const lastTwo = result ? mps(result, result.speed.lastTwoPx) : null, atTouchdown = result ? mps(result, result.speed.touchdownPx) : null;
   const upward = result ? mps(result, result.leave?.verticalPx ?? null) : null;
   const spread = result?.scale ? SPREADS[result.scale.source] : SPREADS.trunk, missing = '身長か物差しで出ます';
-  const vertical: [string, string, string, string] = ['離地の鉛直速度', upward === null ? '—' : upward.toFixed(2), 'm/秒',
+  const vertical: [string, string, string, string] = ['離地の鉛直速度', upward === null ? '—' : upward.toFixed(2), 'm/s',
     upward === null ? (result?.scale ? '' : missing) : `目安 ${(upward * (1 - spread)).toFixed(1)}〜${(upward * (1 + spread)).toFixed(1)}`];
   const angle: [string, string, string, string] = ['踏切角度（参考）', result?.leave ? Math.round(result.leave.angle).toString() : '—', '°',
     result?.leave ? '人ごとに最適が違い、目標にしない値' : result?.scale ? '' : missing];
-  const speedTile = (label: string, v: number | null): [string, string, string, string] => [label, v === null ? '—' : v.toFixed(1), 'm/秒',
+  const speedTile = (label: string, v: number | null): [string, string, string, string] => [label, v === null ? '—' : v.toFixed(1), 'm/s',
     v === null ? (result?.scale ? '' : missing) : `時速約${kmh(v)}km・目安 ${(v * (1 - spread)).toFixed(1)}〜${(v * (1 + spread)).toFixed(1)}`];
   const sc = result?.scale ?? null;
   const scaleText = !sc ? '' : sc.source === 'ruler'
@@ -195,7 +197,7 @@ export default function LongJumpLab() {
       {result.reason ? <p role="alert" className="sprint10-note">{result.reason}</p> : <>
         <div className="sprint10-metrics sprint10-summary">{[speedTile('助走速度（最後の2歩）', lastTwo), speedTile('踏切接地の瞬間', atTouchdown), vertical, angle].map(([label, value, unit, note]) =>
           <div key={label}><span>{label}</span><strong>{value}<small>{value === '—' ? '' : unit}</small></strong>{note && <em>{note}</em>}</div>)}</div>
-        <p className="sprint10-note"><strong>速さは動画から推定した目安です。</strong>{scaleText}研究では助走速度が記録と最も強く結びつき（0.1 m/秒速いと約13cm）、離地の鉛直速度も女子で記録と結びつきます。</p>
+        <p className="sprint10-note"><strong>速さは動画から推定した目安です。</strong>{scaleText}研究では助走速度が記録と最も強く結びつき（0.1 m/s速いと約13cm）、離地の鉛直速度も女子で記録と結びつきます。</p>
         {!measured.refiner && <p className="sprint10-note">高精度の骨格モデル（RTMPose）を読み込めなかったため、MediaPipeの骨格を使っています。</p>}
         {list.length > 0 && <p className="crouch-check-note"><span>{editedCount ? `手で直したコマを使っています（${editedCount}か所）。` : '接地・離地のコマは自動判定です。ずれていたら1コマ単位で直せます。'}
           {waiting > 0 && ` 要確認 ${waiting}か所。`}</span>
@@ -239,8 +241,8 @@ export default function LongJumpLab() {
           <p>縮尺（1 mが何画素か）は、次の順に使います。①物差し：踏切線（踏切板の白と緑の境目）から砂が始まる所までの距離と、その2本の線が助走路の奥・手前の縁と交わる4点から、地面の平面の写り方を求め、踏切足の位置での縮尺を出します（助走路の手前寄りか奥寄りかで縮尺が最大で±8%変わるため）。②身長：踏切前2歩の胴（肩の中点〜腰の中点、身長の0.288）の長さ。③重力：踏切の後の空中（0.45秒以上）の重心の放物線の曲がり。真横から240コマ/秒で撮った4本で物差し（2 m）と比べると、身長からの縮尺は−9〜+4%、重力からの縮尺は2本とも11%大きく（速さが約1割遅く出る）、物差しで測った選手の胴の長さは4本で0.40〜0.44 m（身長150 cm）でした。光電管などとの比較はしていないため、目安の幅は物差し±5%・身長±10%・重力±15%です。ChromeとSafari系の差は、最後の2歩の速さで2%以内でした。</p>
           <p>接地・離地のコマは「確認」で1コマ単位で直せ、直すと助走速度・リズム・離地の速さ・姿勢の値がすぐ変わります（保存のJSONには自動の結果も残します）。</p>
           <p>接地は、つま先が地面の高さで止まった瞬間です（左右の脚は骨格の左右ではなく、つま先の位置で判定）。踏切は、長い空中（0.25秒以上）の前の接地です。リズムは、最後の1歩（1歩前の接地→踏切の接地）の時間を、その前の歩の時間で割った値です。踏切接地の脚の角度は、股関節から足首の線と水平がなす角度です。</p>
-          <p>離地の速さと踏切角度は、踏切の離地から後の空中の重心から求めます。前への位置を直線に、高さを重力の放物線（曲がりは縮尺に合わせて固定）に当てはめ、離地の瞬間の向きと速さを出します。空中が0.2秒以上映っていることが条件です。曲がりを自由に当てはめると、空中が0.3秒しか映っていない動画で角度が2.4°ずれたため固定しています。ChromeとSafari系の差は、水平速度で約2%、鉛直速度で0.03 m/秒、角度で0.3°以内でした。</p>
-          <p>出典：助走速度と記録の関係は太田ら（2010、コーチング学研究24(1)：関西学生、踏切前7〜2 mの速さと記録 r = 0.858（男子）・0.811（女子）、女子（記録4.28〜5.88 m）の速さ8.28±0.37 m/秒）、0.1 m/秒あたり約13 cmはHay（1993、高校生〜エリートの横断データ、Bridgett・Linthorne 2006 の記載）。最後の3歩のリズムはTucker・Bissas（2018、世界室内選手権女子決勝：接地0.105・0.113・0.122秒、空中0.112・0.136・0.075秒、比はこれらの平均から計算）。脚の角度はBridgett・Linthorne（2006：61±3°）、Nemtsevら（2016、女子：59.6±2.8°）。踏切の接地時間はNemtsevら（2016、女子：0.133±0.011秒）。離地の速さと角度はNemtsevら（2016、240コマ/秒の真横の撮影、女子（平均5.50 m）：水平7.06・鉛直2.75 m/秒、角度21.3°、記録との相関 鉛直 r = 0.61・水平 r = 0.64（女子））。踏切角度の最適は人ごとに20.9〜25.4°（Linthorneら 2005）で、目標にする値ではありません。</p>
+          <p>離地の速さと踏切角度は、踏切の離地から後の空中の重心から求めます。前への位置を直線に、高さを重力の放物線（曲がりは縮尺に合わせて固定）に当てはめ、離地の瞬間の向きと速さを出します。空中が0.2秒以上映っていることが条件です。曲がりを自由に当てはめると、空中が0.3秒しか映っていない動画で角度が2.4°ずれたため固定しています。ChromeとSafari系の差は、水平速度で約2%、鉛直速度で0.03 m/s、角度で0.3°以内でした。</p>
+          <p>出典：助走速度と記録の関係は太田ら（2010、コーチング学研究24(1)：関西学生、踏切前7〜2 mの速さと記録 r = 0.858（男子）・0.811（女子）、女子（記録4.28〜5.88 m）の速さ8.28±0.37 m/s）、0.1 m/sあたり約13 cmはHay（1993、高校生〜エリートの横断データ、Bridgett・Linthorne 2006 の記載）。最後の3歩のリズムはTucker・Bissas（2018、世界室内選手権女子決勝：接地0.105・0.113・0.122秒、空中0.112・0.136・0.075秒、比はこれらの平均から計算）。脚の角度はBridgett・Linthorne（2006：61±3°）、Nemtsevら（2016、女子：59.6±2.8°）。踏切の接地時間はNemtsevら（2016、女子：0.133±0.011秒）。離地の速さと角度はNemtsevら（2016、240コマ/秒の真横の撮影、女子（平均5.50 m）：水平7.06・鉛直2.75 m/s、角度21.3°、記録との相関 鉛直 r = 0.61・水平 r = 0.64（女子））。踏切角度の最適は人ごとに20.9〜25.4°（Linthorneら 2005）で、目標にする値ではありません。</p>
           <p>骨格：選手を見つけて追うのはMediaPipe、接地の判定・重心・角度と画像・スロー再生の骨格はRTMPose（{measured.refiner === 'webgpu' ? 'WebGPU' : measured.refiner === 'wasm' ? 'WebAssembly' : '今回は未使用'}）です。</p></details>
       </>}
       <button onClick={save}>結果を保存（JSON）</button>
@@ -260,6 +262,7 @@ export default function LongJumpLab() {
       </div>
       {rulerStill && ruler.points ? <RulerSetter key={`${file?.name}-${measured.frames.length}`} still={rulerStill} points={ruler.points}
         foot={{ x: takeoff.x / measured.width, y: takeoff.groundY / measured.height }} onChange={points => setRuler(r => ({ ...r, points }))} />
+        : rulerStill === false ? <p className="sprint10-note" role="alert">踏切のコマを読み込めませんでした。「0.1秒前」「0.1秒後」で別のコマを選ぶか、ページを読み込み直してください。</p>
         : <p role="status">踏切のコマを読み込んでいます…</p>}
       {ruler.use && (sc?.source === 'ruler' && sc.ruler
         ? <p className="sprint10-note" role="status">物差しの縮尺 {sc.pxPerM.toFixed(0)} 画素/m（踏切足は踏切線の{sc.ruler.behind.toFixed(2)} m手前、助走路の奥から{Math.round(sc.ruler.across * 100)}%の位置）。{sc.trunk ? `身長からの縮尺との差 ${Math.round((sc.trunk / sc.pxPerM - 1) * 100)}%。` : ''}上の解析結果はこの物差しで計算しています。</p>
@@ -276,14 +279,14 @@ function StepList({ result: r }: { result: LongJumpResult }) {
   const rows: [string, string, string][] = [...r.steps].reverse().map(s => {
     const v = mps(r, s.speedPx);
     return [`${s.before === 1 ? '最後の1歩' : `${s.before}歩前`}（接地 → 次の接地）`,
-      `${v === null ? '—' : `${v.toFixed(1)} m/秒`}`,
+      `${v === null ? '—' : `${v.toFixed(1)} m/s`}`,
       `接地 ${seconds(s.contact)}・空中 ${seconds(s.flight)}`];
   });
   rows.push(['最後の2歩のリズム（最後の1歩 ÷ その前の歩）', r.rhythm === null ? '—' : `${Math.round(r.rhythm * 100)}%`, `参考 ${Math.round(G.rhythm * 100)}%（世界室内の女子決勝の平均から）`]);
   rows.push(['踏切の接地時間（参考）', seconds(r.takeoffContact), `参考 女子 ${G.takeoffContact}秒`]);
-  const leave = (px: number | undefined) => { const v = px === undefined ? null : mps(r, px); return v === null ? '—' : `${v.toFixed(2)} m/秒`; };
-  rows.push(['離地の水平速度', leave(r.leave?.horizontalPx), `目安・参考 女子（平均5.50 m）${G.leave.horizontal} m/秒`]);
-  rows.push(['離地の鉛直速度', leave(r.leave?.verticalPx), `目安・参考 女子（平均5.50 m）${G.leave.vertical} m/秒`]);
+  const leave = (px: number | undefined) => { const v = px === undefined ? null : mps(r, px); return v === null ? '—' : `${v.toFixed(2)} m/s`; };
+  rows.push(['離地の水平速度', leave(r.leave?.horizontalPx), `目安・参考 女子（平均5.50 m）${G.leave.horizontal} m/s`]);
+  rows.push(['離地の鉛直速度', leave(r.leave?.verticalPx), `目安・参考 女子（平均5.50 m）${G.leave.vertical} m/s`]);
   rows.push(['踏切角度（参考）', r.leave ? `${r.leave.angle.toFixed(1)}°` : '—', `人ごとの最適 ${G.angleRange[0]}〜${G.angleRange[1]}°（目標にしない）`]);
   rows.push(['踏切接地：脚の角度（股関節→足首と水平）', r.posture.legAngle === null ? '—' : `${Math.round(r.posture.legAngle)}°`, `参考 女子${G.legAngle.women}°・男子${G.legAngle.men}°`]);
   const lean = (v: number | null) => v === null ? '—' : v < 0 ? `後ろへ ${Math.round(-v)}°` : `前へ ${Math.round(v)}°`;
@@ -300,8 +303,8 @@ function SpeedChart({ result: r }: { result: LongJumpResult }) {
   if (bars.length < 2) return null;
   const W = 340, H = 170, top = 24, bottom = 30, max = Math.ceil(Math.max(...bars.map(b => b.v)) + .5), min = Math.max(0, Math.floor(Math.min(...bars.map(b => b.v)) - 1.5));
   const bw = (W - 20) / bars.length, y = (v: number) => top + (max - v) / (max - min) * (H - top - bottom);
-  return <figure className="sprint10-chart"><figcaption>踏切に入る速さ<small>（重心の前に進む速さ、m/秒、目安）</small></figcaption>
-    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`踏切に入る速さ：${bars.map(b => `${b.label} ${b.v.toFixed(1)}`).join('、')} m/秒`}>
+  return <figure className="sprint10-chart"><figcaption>踏切に入る速さ<small>（重心の前に進む速さ、m/s、目安）</small></figcaption>
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`踏切に入る速さ：${bars.map(b => `${b.label} ${b.v.toFixed(1)}`).join('、')} m/s`}>
       {bars.map((b, i) => <g key={b.label}>
         <rect x={10 + i * bw + 6} y={y(b.v)} width={bw - 12} height={H - bottom - y(b.v)} rx={4} fill={b.label === '踏切接地' ? '#e08a00' : '#135a48'} />
         <text x={10 + i * bw + bw / 2} y={y(b.v) - 6} textAnchor="middle" className="value">{b.v.toFixed(1)}</text>

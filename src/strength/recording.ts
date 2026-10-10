@@ -11,7 +11,7 @@ import { untilAborted } from '../cmj/session-lifecycle';
 import type { CrouchFrame, CrouchPoint } from '../sprint10/crouch';
 import { readFrames } from '../sprint10/recording';
 import { loadRefiner, type Refiner } from '../sprint10/rtm-refine';
-import { loadFineModel, readFine, type FineModel } from './fine';
+import { forgetFineModel, loadFineModel, readFine, type FineModel } from './fine';
 import { pickAthlete, type Box } from './athlete';
 import { analyzeStrength, type StrengthFrame } from './analysis';
 
@@ -66,7 +66,8 @@ export async function measureStrength(file: File, signal: AbortSignal, progress:
   { const d = await untilAborted(demuxMP4(file), signal); times = d.frames.map(f => ({ frameIndex: f.frameIndex, pts: f.pts })); }
   check();
   const span = times.length > 1 ? times.at(-1)!.pts - times[0].pts : 0;
-  if (!times.length || span > MAX_SECONDS) throw new Error(`${MAX_SECONDS}秒以内の動画を選んでください（1セット分）。`);
+  // A second over the limit allowed: the camera's recording stops on a timer at 90 s or a little after (a busy page).
+  if (!times.length || span > MAX_SECONDS + 1) throw new Error(`${MAX_SECONDS}秒以内の動画を選んでください（1セット分）。`);
   const fps = Math.max(MIN_FPS, Math.min(STRENGTH_FPS, MAX_FRAMES / Math.max(span, 1e-6)));
   const wanted = framesToRead(times, fps), last = Math.max(...wanted);
   const frames: CrouchFrame[] = [];
@@ -101,17 +102,27 @@ export async function measureStrength(file: File, signal: AbortSignal, progress:
     const fine = fm ? fineTargets(frames, width, height) : new Set<number>();
     const targets = new Set([...refineTargets(frames, width, height), ...fine]), byFrame = new Map(frames.map(f => [f.frame, f]));
     const last = Math.max(0, ...targets);
+    // A model that stops working part way (the GPU lost, out of memory) is let go: the angles then come from MediaPipe's
+    // points for every frame (not some from each), as where it could not be made.
+    let failed = false;
     await readFrames(file, signal, i => targets.has(i), async (frame, source) => {
       const f = byFrame.get(frame.frameIndex) as StrengthFrame | undefined;
-      if (f?.pose) {
+      if (f?.pose && !failed) try {
         if (fm) {
           const read = await readFine(fm, source, f.pose, fine.has(frame.frameIndex));
           if (read) { f.refined = read; if (fine.has(frame.frameIndex)) f.fine = true; }
         } else f.refined = await r!.refine(source, f.pose as CrouchPoint[]);
-      }
-      progress(.5 + .5 * frame.frameIndex / Math.max(1, last), '角度を細かく測っています。');
+      } catch (e) { if (signal.aborted) throw e; failed = true; }
+      progress(.5 + .5 * frame.frameIndex / Math.max(1, last), failed ? '骨格モデルが途中で止まったため、MediaPipeの点で測っています。' : '角度を細かく測っています。');
     });
+    if (failed) {
+      for (const f of frames as StrengthFrame[]) { delete f.refined; delete f.fine; }
+      if (fm) forgetFineModel();
+      progress(1, '解析が終わりました（骨格モデルが途中で止まったため、角度はMediaPipeの点で測りました）。');
+      return { frames, width, height, refiner: null, fps, fine: false };
+    }
   }
   progress(1, '解析が終わりました。');
-  return { frames, width, height, refiner: fm?.backend ?? r?.backend ?? null, fps, fine: !!fm };
+  // `fine` only where the 384×288 model read the frames (not when it opened but read none).
+  return { frames, width, height, refiner: fm?.backend ?? r?.backend ?? null, fps, fine: !!fm && frames.some(f => (f as StrengthFrame).refined) };
 }

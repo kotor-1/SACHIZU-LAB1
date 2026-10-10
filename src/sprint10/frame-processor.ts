@@ -32,11 +32,25 @@ export function fromTiles(found: readonly { poses: Point[][]; tile: Region }[], 
   return kept;
 }
 
+/** A caller's own per-frame poses (frame index → pose; `times`: each followed frame's time) revised as the processor
+ * revised its samples: the poses from `retractedFrom` on dropped, the backfilled ones set. Without this the 10 m's
+ * steps came from poses the samples no longer had (a replaced runner's) and missed those they gained (the user's
+ * IMG_0401, a runner there from the first frame: the step at 0.06-0.22 s, inside the section, was not in the table). */
+export function revisePoses<T>(poses: Map<number, T>, times: ReadonlyMap<number, number>, retractedFrom: number | null,
+  backfill: readonly { frameIndex: number; pose: T }[]) {
+  if (retractedFrom !== null) for (const [frame, t] of times) if (t >= retractedFrom) poses.delete(frame);
+  for (const b of backfill) poses.set(b.frameIndex, b.pose);
+}
+
 /** One sprint's frame-by-frame analysis of a recorded video: the subject's crop and pose, the flying start's watch crop,
  * subject selection, and the samples (with backfill and retraction applied).
  * The caller draws each frame into `source` (upright) before `process`. */
 export class SprintFrameProcessor {
   readonly samples: SprintSample[] = [];
+  /** What the last frame changed in earlier frames, as applied to `samples`: the samples from `retractedFrom` (s) on
+   * cleared (a nearer, faster runner replaced the subject), then the backfilled frames given their poses (a flying
+   * runner decided after it was first seen). A caller keeping its own per-frame poses applies the same (revisePoses). */
+  revision: { retractedFrom: number | null; backfill: { frameIndex: number; pts: number; pose: Point[] }[] } = { retractedFrom: null, backfill: [] };
   readonly tracker: SprintTracker;
   private readonly sampleAt = new Map<number, number>();
   private readonly crop: HTMLCanvasElement;
@@ -97,11 +111,12 @@ export class SprintFrameProcessor {
     if (retracted !== null) for (let i = samples.length - 1; i >= 0 && samples[i].pts >= retracted; i--) samples[i] = sprintSample([], samples[i].frame, samples[i].pts, w / h);
     // A flying start is confirmed after the runner has been seen for a while:
     // publish those earlier sightings so the entry gate crossing is measured.
-    const backfill = tracker.takeBackfill();
+    const backfill = tracker.takeBackfill(), filled: { frameIndex: number; pts: number; pose: Point[] }[] = [];
     for (const { pts, pose } of backfill) {
       const i = this.sampleAt.get(pts);
-      if (i !== undefined) samples[i] = sprintSample(pose, samples[i].frame, pts, w / h);
+      if (i !== undefined) { samples[i] = sprintSample(pose, samples[i].frame, pts, w / h); filled.push({ frameIndex: samples[i].frame, pts, pose }); }
     }
+    this.revision = { retractedFrom: retracted, backfill: filled };
     // A newly decided subject may be outside the height band of the previous one.
     if (backfill.length) { this.top = 0; this.bottom = 1; }
     if (selected.length && !this.fromBlocks) {

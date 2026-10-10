@@ -156,12 +156,14 @@ export function analyzeLongJump(frames: readonly CrouchFrame[], options: LongJum
   const ground = Math.max(...raw.map(p => p.y));
   const plants = contactPlants(raw.filter(p => ground - p.y < ABOVE_GROUND * leg), leg, direction);
   const firstSeen = seen[0].pts, lastSeen = seen.at(-1)!.pts;
-  base.contacts = plants.map((p, i) => contactOf(p, i + 1, toes, leg, lastSeen, firstSeen));
-  if (options.edits) base.contacts = editContacts(base.contacts, options.edits, frames);
-  const C = base.contacts;
-  // The takeoff: the contact followed by the long flight.
-  const take = C.findIndex((c, i) => c.toeOff !== null && ((C[i + 1]?.touchdown ?? lastSeen) - c.toeOff) >= TAKEOFF_FLIGHT);
+  const judged = plants.map((p, i) => contactOf(p, i + 1, toes, leg, lastSeen, firstSeen));
+  // The takeoff: the contact followed by the long flight, as judged. The user's frames (確認) move its moments but do not
+  // choose another contact: picked again after a toe-off moved later at the end of a video, no flight of 0.25 s was left
+  // and the whole result gave way to 「踏切…を見つけられませんでした」, its 確認 with it.
+  const take = judged.findIndex((c, i) => c.toeOff !== null && ((judged[i + 1]?.touchdown ?? lastSeen) - c.toeOff) >= TAKEOFF_FLIGHT);
   if (take < 0) return fail('踏切（長い空中の前の接地）を見つけられませんでした。踏切の後の空中が映るように撮影してください。');
+  base.contacts = options.edits ? editContacts(judged, options.edits, frames) : judged;
+  const C = base.contacts;
   base.takeoff = take;
   const T0 = C[take];
   base.takeoffContact = T0.touchdown !== null && T0.toeOff !== null ? T0.toeOff - T0.touchdown : null;

@@ -122,6 +122,19 @@ describe('curve start path and lean', () => {
     expect(Math.abs(r.lean.straight!)).toBeLessThan(2.5);
     expect(r.lean.curve!).toBeLessThan(-LEAN_IN + 2.5); expect(r.lean.curve!).toBeGreaterThan(-LEAN_IN - 2.5);
   });
+  it('reads a 30 fps video as a 60 fps one (every other frame: the iPhone films 30 by default)', () => {
+    const half = athleteFrames().filter(f => f.frame % 2 === 0);
+    const h = analyzeCurveStart(half, { width: W, height: H, mm35: MM, lines: { inner: INNER, outer: OUTER, start: START } });
+    expect(h.reason).toBeNull();
+    expect(h.steps.length).toBeGreaterThanOrEqual(r.steps.length - 1);
+    expect(h.straight.verdict).toBe(r.straight.verdict);
+    expect(Math.abs(h.straight.aim! - r.straight.aim!)).toBeLessThan(.3);
+    // Within the bands the 60 fps run is held to (each footprint's lean is read in the frame nearest its middle, a
+    // frame of 30 fps being twice as long).
+    expect(h.after.median!).toBeGreaterThan(20); expect(h.after.median!).toBeLessThan(31);
+    expect(h.lean.curve!).toBeLessThan(-LEAN_IN + 2.5); expect(h.lean.curve!).toBeGreaterThan(-LEAN_IN - 2.5);
+    expect(Math.abs(h.straight.until! - r.straight.until!)).toBeLessThan(.5);
+  });
   it('turns the result into advice on going straight, the aim, the curve and the lean', () => {
     expect(curveAdvice(r).map(a => a.topic)).toEqual(expect.arrayContaining(['まっすぐ出られたか', '出た向き', 'カーブに沿えたか', 'カーブでの内傾']));
   });

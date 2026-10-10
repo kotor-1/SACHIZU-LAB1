@@ -5,8 +5,19 @@ import { classifyLengthPrefixedHevcSample, getHevcNalLengthSize } from '../frame
 /** One continuous decode pass. Never flush between frames (flush requires a
  * new key chunk). Encoded chunks stay in decode order; output identity is CTS,
  * not callback order. Backpressure bounds retained frames on mobile devices. */
+/** A failure of the video decoder itself (its error callback, its flush, or no output for 15 s): a new decoder may read
+ * the frame (an iPhone's "Decoder failure" passed on a second try). The other failures (data missing, a frame not in the
+ * file, a codec the browser cannot decode) come back on every try and are not tried again. */
+export class DecoderTrouble extends Error {
+  constructor(message: string) { super(message); this.name = 'DecoderTrouble'; }
+}
 export class SequentialRecordingDecoder {
   static readonly MAX_AHEAD = 16;
+  /** Frames decoded ahead (in the decoder and waiting) for this picture size: MAX_AHEAD up to 1080p, fewer for larger
+   * pictures (a 4K 10-bit frame is about 24 MB, and 15 of them waited while one was analysed), not under AHEAD_MIN (the
+   * codec reorders a few frames before it gives one out). */
+  static readonly AHEAD_MIN = 6;
+  private readonly ahead: number;
   static isAvailable() {
     return typeof VideoDecoder !== 'undefined' && typeof VideoDecoder.isConfigSupported === 'function';
   }
@@ -40,6 +51,8 @@ export class SequentialRecordingDecoder {
       this.timestamps.set(ts, f.frameIndex);
     }
     if (this.timestamps.size !== frames.length) throw new Error('動画のフレーム時刻を一意に確認できません。');
+    const pixels = Math.max(1, track.track_width * track.track_height);
+    this.ahead = Math.max(SequentialRecordingDecoder.AHEAD_MIN, Math.min(SequentialRecordingDecoder.MAX_AHEAD, Math.round(SequentialRecordingDecoder.MAX_AHEAD * 1920 * 1080 / pixels)));
     if (/^(hvc1|hev1)\./i.test(track.codec)) {
       if (!description) throw new Error('HEVCの設定情報がありません。');
       this.nalLengthSize = getHevcNalLengthSize(description);
@@ -70,7 +83,7 @@ export class SequentialRecordingDecoder {
         }
         this.wake?.();
       },
-      error: error => { this.failure = error; this.wake?.(); },
+      error: error => { this.failure = new DecoderTrouble(error instanceof Error ? error.message : String(error)); this.wake?.(); },
     });
     this.decoder.configure({ codec: this.track.codec, codedWidth: this.track.track_width,
       codedHeight: this.track.track_height, description: this.description });
@@ -80,7 +93,7 @@ export class SequentialRecordingDecoder {
     // Count both pending codec outputs and retained outputs, not just the
     // browser decodeQueueSize (which excludes internal codec buffers).
     while (this.submitted < this.samples.length &&
-      this.submitted - this.emitted + this.outputs.size < SequentialRecordingDecoder.MAX_AHEAD) {
+      this.submitted - this.emitted + this.outputs.size < this.ahead) {
       this.check();
       const sample = this.samples[this.submitted];
       const data = sample.data ?? await this.file.slice(sample.offset, sample.offset + sample.size).arrayBuffer();
@@ -96,7 +109,7 @@ export class SequentialRecordingDecoder {
     if (this.submitted === this.samples.length && !this.flushing) {
       this.flushing = true;
       void this.decoder!.flush().then(() => { this.flushed = true; this.wake?.(); }, error => {
-        if (!this.disposed) this.failure = error instanceof Error ? error : new Error(String(error));
+        if (!this.disposed) this.failure = new DecoderTrouble(error instanceof Error ? error.message : String(error));
         this.wake?.();
       });
     }
@@ -131,7 +144,7 @@ export class SequentialRecordingDecoder {
       // A stalled codec must not leave the UI waiting forever. Abort/dispose
       // wakes immediately; no polling or long uninterruptible waits.
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => { this.wake = null; reject(new Error('動画の読み出しが停止しました。互換性優先のMP4をお試しください。')); }, 15000);
+        const timeout = setTimeout(() => { this.wake = null; reject(new DecoderTrouble('動画の読み出しが停止しました。互換性優先のMP4をお試しください。')); }, 15000);
         this.wake = () => { clearTimeout(timeout); this.wake = null; resolve(); };
       });
       this.check();

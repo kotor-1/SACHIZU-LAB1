@@ -10,12 +10,15 @@ import { target50, TAU, TAU_RANGE } from './target50';
 import { contactMoments, effectsBetween, relatedValues, type Edits, type ReviewMoment, type ReviewValue } from './moment-edits';
 import { MomentReview } from './MomentReview';
 import { measureSprint } from './recording';
+import { revisePoses } from './frame-processor';
+import { numberInput } from './number-input';
 import { useFirstFrame } from './first-frame';
 import PlayerBar from './PlayerBar';
 import type { SprintStart } from './tracker';
 import StrideResults from './StrideResults';
 import CrouchLab from './CrouchLab';
 import './sprint10.css';
+import { keepAwake } from '../cmj/keep-awake';
 
 type Gate = 'start' | 'finish';
 /** A flying section is entered and left at speed: its gates are the entry and the exit. */
@@ -29,7 +32,11 @@ const MODES: { id: SprintStart | 'crouch'; label: string; hint: string }[] = [
   { id: 'crouch', label: 'クラウチングスタート', hint: 'ブロックから5歩目まで。各歩の接地・滞空・ピッチと姿勢。' },
 ];
 /** A mode's name, allowed to break only after クラウチング when a phone's narrow button wraps it. */
-const wrapped = (label: string) => label.split(/(?<=クラウチング)/).flatMap((part, i) => i ? [<wbr key={i} />, part] : [part]);
+// A break allowed after 「クラウチング」. Not a lookbehind (/(?<=…)/): Safari before iOS 16.4 cannot read one, and the whole
+// screen then failed to load instead of saying the browser cannot analyse videos.
+const BREAK_AFTER = 'クラウチング';
+const wrapped = (label: string) => { const at = label.indexOf(BREAK_AFTER) + BREAK_AFTER.length;
+  return at >= BREAK_AFTER.length && at < label.length ? [label.slice(0, at), <wbr key="b" />, label.slice(at)] : [label]; };
 const DEFAULT_GATES: Record<SprintStart, [number, number]> = { standing: [.12, .88], flying: [.2, .8] };
 /** The gates' lines as on the player (sprint10.css), drawn again in the check. */
 const GATE_COLORS: Record<GateKey, string> = { start: '#68ffbf', finish: '#ffc460' };
@@ -57,14 +64,7 @@ function NumberField({ value, onValue, min, max, whole = false, disabled }: { va
   const [text, setText] = useState(String(value));
   useEffect(() => { setText(t => Number(t) === value && t !== '' ? t : String(value)); }, [value]);
   return <input type="text" inputMode={whole ? 'numeric' : 'decimal'} value={text} disabled={disabled}
-    onChange={e => {
-      const digits = e.target.value.replace(/[^\d.]/g, ''), dot = digits.indexOf('.');
-      // One decimal point at most (none for a whole number), then no leading zeros.
-      const t = (whole ? digits.replace(/\./g, '') : dot < 0 ? digits : digits.slice(0, dot + 1) + digits.slice(dot + 1).replace(/\./g, '')).replace(/^0+(?=\d)/, '');
-      setText(t);
-      const v = Number(t);
-      if (t !== '' && t !== '.' && Number.isFinite(v)) onValue(Math.max(min, Math.min(max, whole ? Math.round(v) : v)));
-    }}
+    onChange={e => { const r = numberInput(e.target.value, min, max, whole); setText(r.text); if (r.value !== null) onValue(r.value); }}
     onBlur={() => setText(String(value))} />;
 }
 
@@ -90,13 +90,13 @@ export default function Sprint10Lab() {
   const [timeline, setTimeline] = useState<{ frames: CrouchFrame[]; width: number; height: number } | null>(null);
   const [edits, setEdits] = useState<Record<string, number>>({}), [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
   const [moment, setMoment] = useState<string | null>(null), [tab, setTab] = useState<Tab>('advice');
-  const tabs = useRef<HTMLDivElement>(null), replay = useRef<HTMLVideoElement>(null), seekTo = useRef<number | null>(null);
+  const tabs = useRef<HTMLDivElement>(null), panels = useRef<HTMLDivElement>(null), replay = useRef<HTMLVideoElement>(null), seekTo = useRef<number | null>(null);
   useEffect(() => { setEdits({}); setChecked(new Set()); setMoment(null); setTab('advice'); }, [samples]);
   const auto = useMemo(() => samples && confirmed && distanceM > 0 ? analyzeSprint(samples, start, finish, distanceM, mode) : null, [samples, start, finish, confirmed, distanceM, mode]);
   // Each step's touchdown and toe-off on the followed poses (sprint-contacts.ts), as judged and with the user's frames.
-  const runAuto = useMemo(() => timeline ? runContacts(timeline.frames, timeline.width, timeline.height) : null, [timeline]);
-  const run = useMemo(() => { const e = contactEdits(edits); return timeline && runAuto && Object.keys(e).length ? runContacts(timeline.frames, timeline.width, timeline.height, e) : runAuto; },
-    [timeline, runAuto, edits]);
+  const runAuto = useMemo(() => timeline ? runContacts(timeline.frames, timeline.width, timeline.height, undefined, mode === 'standing') : null, [timeline, mode]);
+  const run = useMemo(() => { const e = contactEdits(edits); return timeline && runAuto && Object.keys(e).length ? runContacts(timeline.frames, timeline.width, timeline.height, e, mode === 'standing') : runAuto; },
+    [timeline, runAuto, edits, mode]);
   const list = useMemo(() => {
     if (!auto || !samples || !timeline) return [];
     const gates = gateMoments(auto, edits, timeline.frames, samples, { start, finish }, GATE_LABEL, GATE_COLORS);
@@ -124,7 +124,7 @@ export default function Sprint10Lab() {
     const at = (n: number) => { const pts = ptsOf.get(n); if (pts === undefined) return now;
       const moved = gateShifts(list.map(q => q.key === m.key ? { ...q, frame: n, pts } : q), timeline.frames);
       const r = analyzeSprint(samples, start, finish, distanceM, mode, moved);
-      const c = contactKey(m.key) ? runContacts(timeline.frames, timeline.width, timeline.height, contactEdits({ ...edits, [m.key]: n })) : run;
+      const c = contactKey(m.key) ? runContacts(timeline.frames, timeline.width, timeline.height, contactEdits({ ...edits, [m.key]: n }), mode === 'standing') : run;
       return valuesOf(r, sectionLabel, entry, sectionLengthM, c ? sectionTimes(stepTimes(c.contacts, r.start?.pts ?? null, r.finish?.pts ?? null)) : null); };
     return effectsBetween(now, frame === m.frame ? now : at(frame), relatedValues(now, at(m.frame + 2), at(m.frame - 2)));
   }, [samples, timeline, result, list, ptsOf, start, finish, distanceM, mode, sectionLabel, sectionStartM, sectionLengthM, times, edits, run]);
@@ -164,7 +164,8 @@ export default function Sprint10Lab() {
   }
   function changeMode(next: SprintStart | 'crouch') {
     if (busy) return;
-    if (next === 'crouch') { if (!crouch) { cancel(); setCrouch(true); } return; }
+    // Nothing runs here (busy returned above): no 「解析を中止しました。」 waiting for the return from the crouch start.
+    if (next === 'crouch') { if (!crouch) { owner.current?.abort(); owner.current = null; setCrouch(true); } return; }
     setCrouch(false);
     if (next === mode) return;
     setMode(next); setStart(DEFAULT_GATES[next][0]); setFinish(DEFAULT_GATES[next][1]);
@@ -185,19 +186,26 @@ export default function Sprint10Lab() {
   }
   async function analyze() {
     if (!file || !confirmed || busy) return;
-    const control = new AbortController(); owner.current = control;
+    const control = new AbortController(); owner.current = control; let awake = () => {};
     video.current?.pause(); setBusy(true); setSamples(null); setTimeline(null); setProgress(0); setReview(''); setMessage('解析を準備しています。');
     try {
+      awake = await keepAwake();
       // Every frame of the video, and the runner's pose in the frames followed (for each step's touchdown and toe-off).
       let frames: CrouchFrame[] = [], width = 0, height = 0, poses = new Map<number, CrouchPoint[]>();
-      const measure = (tiles: boolean, into: Map<number, CrouchPoint[]>) => measureSprint(file, start, control.signal, (value, text) => {
-        if (owner.current === control) { setProgress(value); setMessage(tiles ? `選手を探し直しています。${text}` : text); }
-      }, finish, mode, distanceM, {
-        tiles,
-        onTimeline: all => { frames = [...all].sort((a, b) => a.pts - b.pts).map(f => ({ frame: f.frameIndex, pts: f.pts, pose: null })); },
-        onSelected: (frame, selected, w, h) => { width = w; height = h;
-          if (selected.length === 33) into.set(frame.frameIndex, selected.map(p => ({ x: p.x, y: p.y, visibility: p.visibility ?? 0 }))); },
-      });
+      const points = (pose: readonly { x: number; y: number; visibility?: number }[]) => pose.map(p => ({ x: p.x, y: p.y, visibility: p.visibility ?? 0 }));
+      const measure = (tiles: boolean, into: Map<number, CrouchPoint[]>) => {
+        const times = new Map<number, number>();
+        return measureSprint(file, start, control.signal, (value, text) => {
+          if (owner.current === control) { setProgress(value); setMessage(tiles ? `選手を探し直しています。${text}` : text); }
+        }, finish, mode, distanceM, {
+          tiles,
+          onTimeline: all => { frames = [...all].sort((a, b) => a.pts - b.pts).map(f => ({ frame: f.frameIndex, pts: f.pts, pose: null })); },
+          // The poses follow the samples' own corrections (frame-processor.ts revisePoses).
+          onRevised: (from, filled) => revisePoses(into, times, from, filled.filter(b => b.pose.length === 33).map(b => ({ frameIndex: b.frameIndex, pose: points(b.pose) }))),
+          onSelected: (frame, selected, w, h) => { width = w; height = h; times.set(frame.frameIndex, frame.pts);
+            if (selected.length === 33) into.set(frame.frameIndex, points(selected)); },
+        });
+      };
       let data = await measure(false, poses);
       // A flying section not measured: looked at again with the search in tiles (frame-processor.ts tilesOf; the user's
       // 240 fps clips, 2026-10-09: a runner a sixth of the picture high, there from the first frame, was never found).
@@ -213,7 +221,7 @@ export default function Sprint10Lab() {
       }
     } catch (error) {
       if (owner.current === control && !control.signal.aborted) setMessage(error instanceof Error ? error.message : String(error));
-    } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
+    } finally { awake(); if (owner.current === control) { owner.current = null; setBusy(false); } }
   }
   /** A crossing set (or confirmed as judged), and on to the other one if not yet checked. */
   function setMomentFrame(key: string, frame: number) {
@@ -223,9 +231,14 @@ export default function Sprint10Lab() {
     const i = list.indexOf(m), next = [...list.slice(i + 1), ...list.slice(0, i)].find(q => !checked.has(q.key));
     setMoment(next ? next.key : key);
   }
+  // The panel shown from its top, under the tab bar (as the hurdle's): the bar sticks to the top of the screen, and once
+  // stuck scrolling it into view did nothing (a step chosen at the foot of the table opened スロー scrolled down).
   function choose(next: Tab) {
     setTab(next);
-    requestAnimationFrame(() => tabs.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    requestAnimationFrame(() => {
+      const top = panels.current?.getBoundingClientRect().top, bar = tabs.current?.offsetHeight ?? 0;
+      if (top !== undefined && top < bar) window.scrollBy({ top: top - bar, behavior: 'smooth' });
+    });
   }
   function openCheck() {
     const first = list.find(q => q.flag && !checked.has(q.key)) ?? list.find(q => !checked.has(q.key));
@@ -247,7 +260,8 @@ export default function Sprint10Lab() {
       gates: { start, finish }, timeBasis: 'SOURCE_PRESENTATION_TIME', crossingBasis: 'PELVIS_MIDPOINT',
       stepBasis: 'LEG_OVERLAP_CYCLES_BETWEEN_GATES_WITH_FRACTIONAL_EDGES', strideBasis: 'PELVIS_DISPLACEMENT_BETWEEN_OVERLAPS',
       calibration: 'TWO_GATE_LINEAR_SCALE_NOT_PERSPECTIVE_CORRECTED', result, ...(target ? { target50: { ...target, tau: TAU, tauRange: TAU_RANGE } } : {}),
-      ...(editedCount ? { edited: { frames: edits, shiftsSeconds: shifts, auto } } : {}), checked: [...checked], samples }, null, 2)], { type: 'application/json' });
+      steps: { contacts: run?.contacts ?? null, table: steps, section: times, leg: run?.leg ?? null },
+      ...(editedCount ? { edited: { frames: edits, shiftsSeconds: shifts, auto, autoContacts: runAuto?.contacts ?? null } } : {}), checked: [...checked], samples }, null, 2)], { type: 'application/json' });
     const link = document.createElement('a'), objectURL = URL.createObjectURL(blob); link.href = objectURL;
     link.download = mode === 'flying' ? `sprint-section-${sectionStartM}-${sectionStartM + sectionLengthM}m-result.json` : 'sprint10-result.json';
     link.click(); setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
@@ -324,7 +338,7 @@ export default function Sprint10Lab() {
       <div ref={tabs} className="sprint10-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
         <button key={id} id={`sprint-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`sprint-panel-${id}`} onClick={() => id === 'check' ? openCheck() : choose(id)}>
           {label}{id === 'check' && waiting > 0 && <span className="sprint10-badge" aria-label={`要確認 ${waiting}か所`}>{waiting}</span>}</button>)}</div>
-      <div className="sprint10-panels">
+      <div ref={panels} className="sprint10-panels">
         <div id="sprint-panel-advice" role="tabpanel" aria-labelledby="sprint-tab-advice" hidden={tab !== 'advice'}>
           {specific.map(w => <p className="sprint10-note" key={w}>{w}</p>)}
           <details className="sprint10-more" open><summary>数値の見方</summary>

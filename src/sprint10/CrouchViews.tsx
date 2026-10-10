@@ -41,7 +41,12 @@ export function PhaseFigures({ url, frames, phases, onShow, guides = {}, overlay
   onShow: (p: Phase) => void; guides?: Record<string, string>; overlay?: FigureOverlay }) {
   const [images, setImages] = useState<Record<string, string>>({}), [failed, setFailed] = useState(false);
   const interval = useMemo(() => frameInterval(frames), [frames]);
+  // Drawn again only when a picture would change (a moment's frame or marks): a new array of the same phases on every
+  // render (a tap in 確認, a key in 身長) started the hidden video over each time, several at once on a phone.
+  const shownKey = phases.map(p => `${p.key}:${p.frame}:${JSON.stringify(p.marks ?? null)}`).join('|');
+  const latest = useRef(phases); latest.current = phases;
   useEffect(() => {
+    const phases = latest.current;
     let closed = false;
     setImages({}); setFailed(false);
     const v = document.createElement('video');
@@ -74,7 +79,7 @@ export function PhaseFigures({ url, frames, phases, onShow, guides = {}, overlay
       } catch { if (!closed) setFailed(true); }
     })();
     return () => { closed = true; v.pause(); v.removeAttribute('src'); v.load(); v.remove(); };
-  }, [url, frames, phases, interval, overlay]);
+  }, [url, frames, shownKey, interval, overlay]);   // eslint-disable-line react-hooks/exhaustive-deps
   // One picture at a time: swiped sideways, or chosen above (six stacked
   // pictures made the phone screen long, the user 2026-10-05: 「縦長で使いにくい」).
   const track = useRef<HTMLOListElement>(null), [at, setAt] = useState(0);

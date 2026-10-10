@@ -1,5 +1,5 @@
 import { demuxMP4 } from '../frame-engine/mp4-demuxer';
-import { SequentialRecordingDecoder } from '../cmj/sequential-decoder';
+import { DecoderTrouble, SequentialRecordingDecoder } from '../cmj/sequential-decoder';
 import { MobileCMJPose } from '../cmj/mobile-pose';
 import { trackRotation } from '../cmj/video-orientation';
 import { untilAborted } from '../cmj/session-lifecycle';
@@ -22,7 +22,8 @@ export { SPRINT_POSES };
 export const DECODE_RETRIES = 2;
 /** The video decoder failed at a frame (index from 0); its own message kept as `reason`. */
 export class DecodeFailure extends Error {
-  constructor(readonly frame: number, readonly reason: string) {
+  /** `transient`: the decoder itself failed (DecoderTrouble), so a new decoder may read on; tried again only then. */
+  constructor(readonly frame: number, readonly reason: string, readonly transient = false) {
     super(`動画の読み出しに失敗しました（${frame + 1}コマ目：${reason}）。もう一度お試しください。`);
   }
 }
@@ -31,7 +32,7 @@ export async function decodeStep<T>(step: Promise<T>, signal: AbortSignal, frame
   try { return await untilAborted(step, signal); }
   catch (e) {
     if (signal.aborted || (e instanceof DOMException && e.name === 'AbortError')) throw e;
-    throw new DecodeFailure(frame, e instanceof Error ? e.message : String(e));
+    throw new DecodeFailure(frame, e instanceof Error ? e.message : String(e), e instanceof DecoderTrouble);
   }
 }
 export const ANALYSIS_FPS = 120;
@@ -47,6 +48,9 @@ interface FrameOptions {
   tiles?: boolean;
   /** Each analysed frame's selected athlete (normalized landmarks; empty when not found) and picture size. */
   onSelected?: (frame: { frameIndex: number; pts: number }, selected: Point[], width: number, height: number) => void;
+  /** Earlier frames changed by this frame (SprintFrameProcessor `revision`), told before onSelected: from
+   * `retractedFrom` (s) on, the poses given are no longer the subject's; the backfilled frames now have these poses. */
+  onRevised?: (retractedFrom: number | null, backfill: readonly { frameIndex: number; pts: number; pose: Point[] }[]) => void;
   /** Awaited after onSelected, with the frame still on `source`. */
   afterSelected?: (source: HTMLCanvasElement) => Promise<void>;
   /** A flying start's watcher already made and initialized (full, SPRINT_POSES, image mode), lent by the caller and
@@ -116,6 +120,8 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
       ctx.translate(w / 2, h / 2); ctx.rotate(rotation * Math.PI / 180);
       ctx.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2); ctx.setTransform(1, 0, 0, 1, 0, 0);
       const selected = await processor.process(w, h, frame);
+      const { retractedFrom, backfill } = processor.revision;
+      if (retractedFrom !== null || backfill.length) options.onRevised?.(retractedFrom, backfill);
       options.onSelected?.(frame, selected, w, h);
       if (options.afterSelected) { await untilAborted(options.afterSelected(source), signal); check(); }
       done = frame.frameIndex;
@@ -130,7 +136,7 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
     }
     break;
     } catch (e) {
-      if (!(e instanceof DecodeFailure) || signal.aborted || attempt >= DECODE_RETRIES) throw e;
+      if (!(e instanceof DecodeFailure) || !e.transient || signal.aborted || attempt >= DECODE_RETRIES) throw e;
       progress((done + 1) / d.frames.length, '動画の読み出しをやり直しています。');
       decoder.dispose(); decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
     }
@@ -139,9 +145,15 @@ export async function measureSprint(file: File, startX: number, signal: AbortSig
 }
 
 /** Reads the frames in order, decoding and drawing upright only those wanted (also the throws' implement). */
+/** The largest file read frame by frame (bytes): the demux holds about twice the file while the frames are read, beside
+ * the pose models, and a phone's Safari closes a page that takes too much. The callers' own limits may be smaller. */
+export const READ_LIMIT_BYTES = 200 * 1024 * 1024;
 export async function readFrames(file: File, signal: AbortSignal, wanted: (index: number) => boolean,
   visit: (frame: { frameIndex: number; pts: number }, source: HTMLCanvasElement, w: number, h: number) => Promise<void>) {
   const check = () => { if (signal.aborted) throw new DOMException('中止', 'AbortError'); };
+  // Said before any reading (without the video decoder, each attempt failed at the first frame and was tried again).
+  if (!SequentialRecordingDecoder.isAvailable()) throw new Error('このブラウザではフレーム解析ができません。対応する最新のブラウザでお試しください。');
+  if (file.size > READ_LIMIT_BYTES) throw new Error('200MB以内のMP4 / MOVを選んでください（写真アプリで、解析する部分だけに短くすると読み込めます）。');
   const d = await untilAborted(demuxMP4(file), signal); check();
   const rotation = trackRotation((d.videoTrack as typeof d.videoTrack & { matrix?: ArrayLike<number> }).matrix);
   let decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
@@ -169,7 +181,7 @@ export async function readFrames(file: File, signal: AbortSignal, wanted: (index
     }
     break;
     } catch (e) {
-      if (!(e instanceof DecodeFailure) || signal.aborted || attempt >= DECODE_RETRIES) throw e;
+      if (!(e instanceof DecodeFailure) || !e.transient || signal.aborted || attempt >= DECODE_RETRIES) throw e;
       decoder.dispose(); decoder = new SequentialRecordingDecoder(file, d.videoTrack, d.frames, d.rawSamples, d.descriptionBuffer);
     }
   } finally { signal.removeEventListener('abort', abort); decoder.dispose(); source.width = 0; }

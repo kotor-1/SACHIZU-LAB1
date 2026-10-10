@@ -40,11 +40,8 @@ export class MobileCMJPose {
     status('姿勢モデルを確認しています。');
     let bytes = verifiedModels.get(this.variant);
     if (!bytes) {
+      // Checked against its SHA-256 by downloadModel.
       bytes = await downloadModel(`${import.meta.env.BASE_URL}models/cmj/pose_landmarker_${this.variant}.task`, signal, status, POSE_MODEL_HASHES[this.variant]);
-      check(); status('受信した姿勢モデルを検証しています。');
-      const digest = await crypto.subtle.digest('SHA-256', bytes);
-      if (Array.from(new Uint8Array(digest), v => v.toString(16).padStart(2, '0')).join('') !== POSE_MODEL_HASHES[this.variant])
-        throw new Error('姿勢モデルの整合性を確認できませんでした。');
       check(); verifiedModels.set(this.variant, bytes);
     }
     const files = { wasmLoaderPath: simd ? loader : noSimdLoader, wasmBinaryPath: simd ? wasm : noSimdWasm };

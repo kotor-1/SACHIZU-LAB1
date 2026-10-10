@@ -38,12 +38,13 @@ export async function stillAt(url: string, at: number, timeoutMs = 15000): Promi
   finally { v.pause(); v.removeAttribute('src'); v.load(); v.remove(); }
 }
 
-/** The still at `at` s (null while it is made, or when it cannot be). */
-export function useStill(url: string, at: number | null): Still | null {
-  const [still, setStill] = useState<Still | null>(null);
+/** The still at `at` s: null while it is made, false when it cannot be (a timeout, a 4K frame over the canvas memory
+ * of a phone): told apart, 「踏切のコマを読み込んでいます…」 stayed on the screen for good. */
+export function useStill(url: string, at: number | null): Still | null | false {
+  const [still, setStill] = useState<Still | null | false>(null);
   useEffect(() => {
     let closed = false; setStill(null);
-    if (url && at !== null) void stillAt(url, at).then(s => { if (!closed) setStill(s); });
+    if (url && at !== null) void stillAt(url, at).then(s => { if (!closed) setStill(s ?? false); });
     return () => { closed = true; };
   }, [url, at]);
   return still;

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, ImagePlus } from 'lucide-react';
 import type { MobileCMJPose } from '../cmj/mobile-pose';
-import { analyzeView, findingsOf, nearEdge, nearEdgeOf, nearOf, VIEW_NAMES, VIEWS, type View, type ViewResult } from './analysis';
+import { analyzeView, disagreedOf, findingsOf, nearEdge, nearEdgeOf, nearOf, VIEW_NAMES, VIEWS, type View, type ViewResult } from './analysis';
 import { findingText, MEASURE_GUIDE, nearText, READING, SHOOTING, SOURCES } from './advice';
 import CameraCapture, { LEVEL } from './CameraCapture';
 import { motionAllowed, Voice } from './live';
@@ -47,12 +47,13 @@ export default function PostureLab() {
     .then(m => { setMade({ size: m.size, backend: m.backend }); return m; })
     .catch(e => { loads.current.model = undefined; throw e; }).finally(() => setStatus(''));
   const finder = () => loads.current.finder ??= photoFinder(new AbortController().signal, setStatus)
-    .catch(e => { loads.current.finder = undefined; throw e; });
+    .catch(e => { loads.current.finder = undefined; throw e; }).finally(() => setStatus(''));
 
   const results = useMemo(() => Object.fromEntries(VIEWS.flatMap(v => {
     const s = shots[v]; return s ? [[v, analyzeView(s.points, v, s.picture.width, s.picture.height, tilts[v] ?? 0)]] : [];
   })) as Partial<Record<View, ViewResult>>, [shots, tilts]);
   const findings = useMemo(() => findingsOf(results), [results]), near = useMemo(() => nearEdgeOf(results), [results]);
+  const disagreed = useMemo(() => disagreedOf(results), [results]);
   const taken = VIEWS.filter(v => results[v]);
   useEffect(() => { if (tab !== 'points' && !results[tab]) setTab('points'); }, [results, tab]);
 
@@ -91,8 +92,10 @@ export default function PostureLab() {
     setCapture(null);
     setTimeout(() => resultCard.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }), 50);
   }
+  /** A view taken again by the camera (as it was, or the camera is the way chosen now), else from a photo. */
+  const byCamera = (view: View) => shots[view]?.source === 'camera' || mode === 'camera';
   function retake(view: View) {
-    if (shots[view]?.source === 'camera' || mode === 'camera') { setMode('camera'); startCamera([view]); }
+    if (byCamera(view)) { setMode('camera'); startCamera([view]); }
     else document.getElementById(`posture-photo-${view}`)?.click();
   }
   function save() {
@@ -160,6 +163,9 @@ export default function PostureLab() {
         {near.length > 0 && <div className="posture-near"><strong>目安の境目</strong>
           <p>境目との差が読み取りの誤差（±{nearOf('shoulderTilt')}°、横の頭の位置は±{nearOf('headForward')}°）より小さく、撮り直すと判定が変わることがあるため、ポイントには入れていません。</p>
           <ul>{near.map(f => <li key={f.key}>{nearText(f)}<small className="posture-where">{f.views.map(v => VIEW_NAMES[v]).join('・')}</small></li>)}</ul></div>}
+        {disagreed.length > 0 && <div className="posture-near"><strong>正面と後ろで向きが逆</strong>
+          <p>2枚で逆の向きに出たため、どちらとも言えず、ポイントには入れていません。撮影のときスマホが左右に傾いていたことがあります。各向きの「写真の傾きを直す」で確かめてください。</p>
+          <ul>{disagreed.map(d => <li key={d.key}>{labelOf(d.key)}：{d.readings.map(r => `${VIEW_NAMES[r.view]} ${r.text}`).join('、')}</li>)}</ul></div>}
         {warned.map(([w, views]) => <p key={w} className="sprint10-note">{views.map(v => VIEW_NAMES[v]).join('・')}：{w}</p>)}
         {made?.size === 'm' && <p className="sprint10-note">この端末では大きい骨格モデルを使えなかったため、軽いモデル（{MODEL_NAMES.m}）で読み取りました。値は少し粗くなります（頭の傾きで1°ほど）。</p>}
         {unknownTilt && <p className="sprint10-note">撮影のときスマホの傾きを確かめられませんでした。背景の柱や壁の縦線が傾いて見えたら、各向きの「写真の傾きを直す」で合わせてください。</p>}
@@ -183,11 +189,11 @@ export default function PostureLab() {
         {s.source === 'photo' && s.roll !== null && s.pitch !== null && <p className="sprint10-hint">撮影のときのスマホの傾き（写真の記録）：左右{Math.abs(s.roll).toFixed(1)}°・{s.pitch >= 0 ? '下' : '上'}向き{Math.abs(s.pitch).toFixed(1)}°</p>}
         {v === 'side' && r.facing && <p className="sprint10-hint">{r.facing === 'right' ? '右' : '左'}向き。カメラに近い側（{r.facing === 'right' ? '右' : '左'}半身）の点で測っています。</p>}
         <table className="sprint10-table posture-table"><thead><tr><th scope="col">項目</th><th scope="col">結果</th><th scope="col">判定</th></tr></thead>
-          <tbody>{r.measures.map(m => <tr key={m.key}><th scope="row">{m.label}{m.reference && <small style={{ whiteSpace: 'nowrap' }}>（参考）</small>}</th><td>{m.text}</td>
+          <tbody>{r.measures.map(m => <tr key={m.key}><th scope="row">{m.label}{m.reference && <small style={{ whiteSpace: 'nowrap' }}>（参考）</small>}</th><td><ResultText text={m.text} /></td>
             <td>{m.level === null ? '—' : <><span className="posture-level-tag" style={{ borderColor: LEVEL_COLORS[m.level] }}>{LEVEL_WORDS[m.level]}</span>
               {nearEdge(m.key, m.value!) && <small className="posture-edge">境目</small>}</>}</td></tr>)}</tbody></table>
         {notesOf(v).map(w => <p key={w} className="sprint10-note">{w}</p>)}
-        <button type="button" onClick={() => retake(v)} disabled={!!capture || busy}>{VIEW_NAMES[v]}を{s.source === 'camera' ? '撮り直す' : '選び直す'}</button>
+        <button type="button" onClick={() => retake(v)} disabled={!!capture || busy}>{VIEW_NAMES[v]}を{byCamera(v) ? '撮り直す' : '選び直す'}</button>
       </div>; })}
       <details className="sprint10-more"><summary>数値の見方</summary>
         <p>どの値も骨格の点を結んだ線の角度で、距離の物差しは使いません。目安の範囲は、理想の姿勢（Kendall）のまわりに、骨格の点のずれ（数度）と、ふつうに見られる小さな左右差の分だけ幅を持たせた、このアプリの基準です。</p>
@@ -195,7 +201,7 @@ export default function PostureLab() {
           <div key={k}><dt>{k === 'kneeLeft' ? '膝の内反・外反（正面・後ろ）' : labelOf(k)}</dt><dd>{MEASURE_GUIDE[k]}</dd></div>)}</dl>
         <p>正面と後ろの両方を撮ったときは、同じ傾きを2回測ることになります。ポイントでは2枚の平均を伝え、2枚で向きが逆のときは（はっきりしないため）伝えません。</p>
         <p>境目との差が読み取りの誤差（±{nearOf('shoulderTilt')}°、横の頭の位置は±{nearOf('headForward')}°）より小さい値は「境目」として、ポイントに入れず別にまとめます。同じ写真でも、ブラウザや端末の画像の読み込みの違いで、この程度は値が動くためです。</p>
-        <p>骨格：人を見つけるのはMediaPipe、測る点はRTMPose-l（Halpe26、入力384×288）です。点は、写真そのままと左右反転の2通り×枠の大きさ3通りで読み取った平均です（カメラは3コマの中央値）。正面・後ろでは、耳と目を頭と肩だけの枠でもう一度読み取ります（頭の傾きが正確になります）。モデルに渡す画像は、各画素の範囲の平均で作ります（どのブラウザでも同じ値になります）。</p>
+        <p>骨格：人を見つけるのはMediaPipe、測る点はRTMPose-l（Halpe26、入力384×288）です。点は、写真そのままと左右反転の2通り×枠の大きさ3通りで読み取った平均です（カメラは3コマの中央値）。正面・後ろでは、耳と目を頭と肩だけの枠でもう一度読み取ります（頭の傾きが正確になります）。モデルに渡す画像は、各画素の範囲の平均で作ります（ブラウザごとの縮小のしかたの違いが値に出ないようにするため）。</p>
         <h3>出典</h3><ul className="posture-sources">{SOURCES.map(s => <li key={s}>{s}</li>)}</ul>
       </details>
       <button type="button" onClick={save}>結果を保存（JSON）</button>
@@ -204,9 +210,15 @@ export default function PostureLab() {
   </main>;
 }
 
-const LABELS: Record<string, string> = { headTilt: '頭部の側方傾斜', shoulderTilt: '肩の高さの左右差', pelvisTilt: '骨盤の側方傾斜（参考）', bodyAxis: '体幹の側方傾斜',
-  headForward: '頭部の前方偏位（横）', trunkLean: '体幹の前傾・後傾（横）', pelvisForward: '骨盤の前後の偏位（横）', knee: '膝関節の屈曲・過伸展（横）', bodyLean: '全身の前傾・後傾（横）' };
+const LABELS: Record<string, string> = { headTilt: '頭部の側方傾斜', shoulderTilt: '肩の高さの左右差', pelvisTilt: '骨盤の側方傾斜（参考）', bodyAxis: '全身の側方傾斜',
+  kneeLeft: '左膝の内反・外反', kneeRight: '右膝の内反・外反',
+  headForward: '頭部の前方偏位（横）', trunkLean: '体幹の前傾・後傾（横）', pelvisForward: '骨盤の前後の偏位（横）', knee: '膝の屈曲・過伸展（横）', bodyLean: '全身の前傾・後傾（横）' };
 const labelOf = (k: string) => LABELS[k] ?? k;
+/** A result: its word whole (posture.css keep-all) and its value whole, the line breaking only at the space between. */
+function ResultText({ text }: { text: string }) {
+  const i = text.lastIndexOf(' ');
+  return i < 0 ? <>{text}</> : <>{text.slice(0, i)} <span style={{ whiteSpace: 'nowrap' }}>{text.slice(i + 1)}</span></>;
+}
 
 function Shooting() {
   return <details className="sprint10-more"><summary>撮り方</summary><ul className="posture-reading">{SHOOTING.map(s => <li key={s}>{s}</li>)}</ul></details>;

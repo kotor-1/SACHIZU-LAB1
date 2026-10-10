@@ -8,6 +8,7 @@ import * as ort from 'onnxruntime-web';
 import { downloadModel } from '../cmj/model-download';
 import { cropAround, decode, headCrop, IH, IW, meanOf, resized, withHead, type Crop, type Keypoint } from './keypoints';
 import { areaInput, widen } from './model-input';
+import { inTurn } from './turn';
 
 export const POSTURE_MODEL = 'rtmpose-l-halpe26-384x288';
 /** When the large model cannot be made on a device: RTMPose-m at the same input (288x384), one plain float32 file
@@ -127,11 +128,14 @@ function pixelsOf(picture: Picture): ImageData {
 
 export async function loadPostureModel(signal: AbortSignal, status: (text: string) => void): Promise<PostureModel> {
   const { session, backend, size } = await open(signal, status), input = new Float32Array(3 * IW * IH);
-  return { backend, size, async read(picture, c, mirrored) {
+  return { backend, size, read(picture, c, mirrored) {
     const p = pixelsOf(picture);
-    areaInput(p.data, p.width, p.height, c, mirrored, input);
-    const out = await session.run({ input: new ort.Tensor('float32', input, [1, 3, IH, IW]) });
-    return decode(out.simcc_x.data as Float32Array, out.simcc_y.data as Float32Array, c, mirrored);
+    // One run at a time (turn.ts): the camera's reading and a photo's must not overlap on the runtime.
+    return inTurn(async () => {
+      areaInput(p.data, p.width, p.height, c, mirrored, input);
+      const out = await session.run({ input: new ort.Tensor('float32', input, [1, 3, IH, IW]) });
+      return decode(out.simcc_x.data as Float32Array, out.simcc_y.data as Float32Array, c, mirrored);
+    });
   } };
 }
 

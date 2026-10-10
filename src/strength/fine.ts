@@ -28,30 +28,76 @@ export interface FineModel {
   /** The keypoints (pixels of `pixels`) in a window, as it is or mirrored. */
   read(pixels: ImageData, crop: Crop, mirrored: boolean): Promise<Keypoint[]>;
 }
+/** An iPhone or iPad (iPadOS says it is a Mac with a touch screen), as src/posture/rtm.ts tells it. */
+const appleMobile = () => typeof navigator !== 'undefined'
+  && (/iP(hone|ad|od)/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
 let opening: Promise<FineModel> | null = null;
-/** The model, opened once a page. */
-export function loadFineModel(signal: AbortSignal, status: (text: string) => void): Promise<FineModel> {
-  opening ??= open(signal, status).catch(e => { opening = null; throw e; });
-  return opening;
+/** Forgets the model (a run that failed, e.g. the GPU lost): the next analysis opens it again. */
+export function forgetFineModel() { opening = null; }
+/** The model, opened once a page (a load cancelled with another analysis is begun again, as rtm-refine.ts's). */
+export async function loadFineModel(signal: AbortSignal, status: (text: string) => void): Promise<FineModel> {
+  for (let attempt = 0; ; attempt++) {
+    const mine = opening ??= open(signal, status).catch(e => { opening = null; throw e; });
+    try { return await mine; }
+    catch (e) { if (signal.aborted || attempt > 0 || !(e instanceof DOMException && e.name === 'AbortError')) throw e; }
+  }
 }
 async function open(signal: AbortSignal, status: (text: string) => void): Promise<FineModel> {
-  const bytes = await downloadModel(`${import.meta.env.BASE_URL}models/rtmpose/${FINE_MODEL}`, signal, text => status(text.replace('姿勢モデル', '角度用の骨格モデル')), FINE_SHA256);
-  const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('');
-  if (digest !== FINE_SHA256) throw new Error('角度用の骨格モデルのファイルが正しくありません。');
+  // Checked against its SHA-256 by downloadModel.
+  const url = `${import.meta.env.BASE_URL}models/rtmpose/${FINE_MODEL}`;
+  // Let go once the session is made: kept by the reader's closure, its 56 MB stayed for the page.
+  let bytes: Uint8Array<ArrayBuffer> | null = await downloadModel(url, signal, text => status(text.replace('姿勢モデル', '角度用の骨格モデル')), FINE_SHA256);
   status('角度用の骨格モデルを準備しています…');
   ort.env.wasm.wasmPaths = { wasm: ORT_WASM }; ort.env.wasm.numThreads = 1;
-  const gpu = typeof navigator !== 'undefined' && !!(navigator as Navigator & { gpu?: unknown }).gpu;
-  for (const ep of (gpu ? ['webgpu', 'wasm'] : ['wasm']) as FineModel['backend'][]) {
+  const gpu = typeof navigator !== 'undefined' && !!(navigator as Navigator & { gpu?: unknown }).gpu, apple = appleMobile();
+  // On an iPhone or iPad WebAssembly first, with the posture check's lighter session (the way WebKit made this model in
+  // every test there; WebGPU there could start and fail): src/posture/rtm.ts.
+  const options = (ep: FineModel['backend']): ort.InferenceSession.SessionOptions => apple
+    ? { executionProviders: [ep], graphOptimizationLevel: 'basic', extra: { session: { disable_prepacking: '1' } } }
+    : { executionProviders: [ep], graphOptimizationLevel: 'all' };
+  for (const ep of (!gpu ? ['wasm'] : apple ? ['wasm', 'webgpu'] : ['webgpu', 'wasm']) as FineModel['backend'][]) {
     let session: ort.InferenceSession;
-    try { session = await ort.InferenceSession.create(bytes, { executionProviders: [ep], graphOptimizationLevel: 'all' }); } catch { continue; }
+    try { session = await ort.InferenceSession.create(bytes!, options(ep)); } catch { continue; }
+    bytes = null;
     const input = new Float32Array(3 * IW * IH);
-    return { backend: ep, async read(pixels, crop, mirrored) {
+    let current = ep, wasm: Promise<ort.InferenceSession | null> | null = null;
+    // WebGPU failing while it runs (the device lost, its memory full): on WebAssembly from then on, made from the copy kept
+    // on the device; only if that fails too does the analysis fall back to MediaPipe's points (recording.ts).
+    const toWasm = () => wasm ??= (async () => {
+      try { return await ort.InferenceSession.create(await downloadModel(url, new AbortController().signal, () => undefined, FINE_SHA256), options('wasm')); }
+      catch { return null; }
+    })();
+    return { get backend() { return current; }, async read(pixels, crop, mirrored) {
       areaInput(pixels.data, pixels.width, pixels.height, crop, mirrored, input);
-      const out = await session.run({ input: new ort.Tensor('float32', input, [1, 3, IH, IW]) });
+      const run = () => session.run({ input: new ort.Tensor('float32', input, [1, 3, IH, IW]) });
+      let out: ort.InferenceSession.OnnxValueMapType;
+      try { out = await run(); }
+      catch (e) {
+        if (current !== 'webgpu') throw e;
+        const next = await toWasm(); if (!next) throw e;
+        const old = session; session = next; current = 'wasm'; void old.release().catch(() => undefined);
+        out = await run();
+      }
       return decode(out.simcc_x.data as Float32Array, out.simcc_y.data as Float32Array, crop, mirrored);
     } };
   }
   throw new Error('角度用の骨格モデルを開始できませんでした。');
+}
+
+/** Halpe26's left/right pairs of the legs (hips to heels and toes) and of the head and arms. */
+const LEG_PAIRS = [[11, 12], [13, 14], [15, 16], [20, 21], [22, 23], [24, 25]] as const;
+const ARM_PAIRS = [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]] as const;
+/** `other` with its left and right swapped, for each chain (the legs; the head and arms) where that brings it nearer
+ * `first`. From the side the two readings may name the legs the other way round: averaged as they are, left and right
+ * would both become the midpoint of the near and far leg, the error nearPose (analysis.ts) removes. */
+export function matched(first: readonly Keypoint[], other: readonly Keypoint[]): Keypoint[] {
+  const out = [...other], d = (a: Keypoint, b: Keypoint) => Math.hypot(a.x - b.x, a.y - b.y);
+  for (const pairs of [LEG_PAIRS, ARM_PAIRS]) {
+    let same = 0, swapped = 0;
+    for (const [l, r] of pairs) { same += d(first[l], other[l]) + d(first[r], other[r]); swapped += d(first[l], other[r]) + d(first[r], other[l]); }
+    if (swapped < same) for (const [l, r] of pairs) { out[l] = other[r]; out[r] = other[l]; }
+  }
+  return out;
 }
 
 let part: HTMLCanvasElement | null = null;
@@ -75,7 +121,7 @@ export async function readFine(model: FineModel, source: HTMLCanvasElement, arou
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(source, x0, y0, x1 - x0, y1 - y0, 0, 0, w, h);
   const pixels = ctx.getImageData(0, 0, w, h), inPart = { cx: (crop.cx - x0) * f, cy: (crop.cy - y0) * f, scale: crop.scale * f };
-  const first = await model.read(pixels, inPart, false), k = both ? meanOf([first, await model.read(pixels, inPart, true)]) : first;
+  const first = await model.read(pixels, inPart, false), k = both ? meanOf([first, matched(first, await model.read(pixels, inPart, true))]) : first;
   const at = (q: Keypoint, visibility: number) => ({ x: (q.x / f + x0) / W, y: (q.y / f + y0) / H, visibility });
   return Array.from({ length: 33 }, (_, i) => i in FROM_HALPE ? at(k[FROM_HALPE[i]], k[FROM_HALPE[i]].score) : at(k[0], 0));
 }

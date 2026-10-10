@@ -114,6 +114,20 @@ describe('continuous recorded decode without frame thinning', () => {
     await vi.advanceTimersByTimeAsync(15001); await assertion; d.dispose();
     expect(chunks).toHaveLength(SequentialRecordingDecoder.MAX_AHEAD);
   });
+  it('keeps fewer frames ahead for a 4K picture, and calls a stall the decoder\'s own trouble (tried again)', async () => {
+    vi.useFakeTimers(); behavior = 'stall';
+    const { DecoderTrouble } = await import('../src/cmj/sequential-decoder');
+    const d = new SequentialRecordingDecoder(new Blob(), { ...track, track_width: 3840, track_height: 2160 } as MP4VideoTrack, frames(), samples());
+    const assertion = expect(d.decodeExactFrame(0)).rejects.toBeInstanceOf(DecoderTrouble);
+    await vi.advanceTimersByTimeAsync(15001); await assertion; d.dispose();
+    expect(chunks).toHaveLength(SequentialRecordingDecoder.AHEAD_MIN);
+  });
+  it('does not call a frame missing from the file the decoder\'s trouble (it would fail again)', async () => {
+    const { DecoderTrouble } = await import('../src/cmj/sequential-decoder');
+    const s = samples(4); s[0].is_sync = false; const bad = decoder(frames(4), s);
+    const e = await bad.decodeExactFrame(0).catch((x: unknown) => x); bad.dispose();
+    expect(e).toBeInstanceOf(Error); expect(e).not.toBeInstanceOf(DecoderTrouble);
+  });
   it('rejects nonsequential requests and an unproven first key sample', async () => {
     const d = decoder(); await expect(d.decodeExactFrame(1)).rejects.toThrow('順番'); d.dispose();
     const s = samples(4); s[0].is_sync = false; const bad = decoder(frames(4), s);

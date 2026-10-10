@@ -7,11 +7,17 @@ export interface LiveFrame { poses: NormalizedLandmark[][]; width: number; heigh
 /** The frames MediaPipe reads are made at most this size (pixels): enough to find a standing athlete, and fast. */
 const READ_SIDE = 640;
 
-/** What the camera is asked for: the way it faces, and a steady frame rate; the size is the camera's own (asking a
- * phone's browser for a portrait size can crop the picture, camera-geometry.ts). */
-export function postureCamera(facing: 'user' | 'environment'): MediaStreamConstraints {
-  return { audio: false, video: { facingMode: { ideal: facing }, frameRate: { ideal: 30 } } };
+/** What the camera is asked for: the way it faces, a steady frame rate, and HD frames named the sensor's way round
+ * (1280 x 720: a phone held upright gives 720 x 1280 of them). Without a size Safari gives 480 x 640, in which the head
+ * is some 60 px for the ears' line; a size named portrait-wise can crop the picture (camera-geometry.ts), and the browser
+ * is asked not to scale the frames when it can be. */
+export function postureCamera(facing: 'user' | 'environment', supported: MediaTrackSupportedConstraints & { resizeMode?: boolean } = {}): MediaStreamConstraints {
+  return { audio: false, video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 },
+    ...(supported.resizeMode ? { resizeMode: 'none' } : {}) } };
 }
+/** What became of the camera's picture: its track ended (another app took the camera, the page was away too long),
+ * stopped for the moment (the page in the background), or running again. */
+export type TrackState = 'ended' | 'muted' | 'live';
 
 export class PostureCamera {
   private finder: MobileCMJPose | null = null;
@@ -23,14 +29,26 @@ export class PostureCamera {
   private frame = 0;
   private empty = 0;
   private found = false;
-  constructor(private video: HTMLVideoElement, private onFrame: (f: LiveFrame) => void) {}
+  constructor(private video: HTMLVideoElement, private onFrame: (f: LiveFrame) => void, private onTrack: (state: TrackState) => void = () => undefined) {}
+  /** Back from the background: the browser may have paused the picture (iOS does); the track may have ended. */
+  private readonly onVisible = () => {
+    if (this.stopped || document.visibilityState !== 'visible') return;
+    if (this.stream?.getVideoTracks().some(t => t.readyState === 'ended')) { this.onTrack('ended'); return; }
+    void this.video.play().catch(() => undefined);
+  };
 
   async start(facing: 'user' | 'environment', signal: AbortSignal, status: (text: string) => void) {
     if (!navigator.mediaDevices?.getUserMedia) throw new Error('カメラを利用できません。HTTPSで開いているか確かめるか、写真を選んでください。');
     status('カメラを起動しています…');
-    const stream = await navigator.mediaDevices.getUserMedia(postureCamera(facing));
+    const stream = await navigator.mediaDevices.getUserMedia(postureCamera(facing, navigator.mediaDevices.getSupportedConstraints?.() ?? {}));
     if (signal.aborted || this.stopped) { stream.getTracks().forEach(t => t.stop()); throw new DOMException('中止', 'AbortError'); }
     this.stream = stream; this.video.srcObject = stream; this.video.muted = true; this.video.playsInline = true;
+    for (const track of stream.getVideoTracks()) {
+      track.addEventListener('ended', () => { if (!this.stopped) this.onTrack('ended'); });
+      track.addEventListener('mute', () => { if (!this.stopped) this.onTrack('muted'); });
+      track.addEventListener('unmute', () => { if (!this.stopped) this.onTrack('live'); });
+    }
+    document.addEventListener('visibilitychange', this.onVisible);
     await this.video.play();
     this.finder = await this.open('GPU', signal, status).catch(() => this.open('CPU', signal, status));
     if (signal.aborted || this.stopped) throw new DOMException('中止', 'AbortError');
@@ -69,18 +87,24 @@ export class PostureCamera {
   }
   private async toCpu() {
     const old = this.finder; this.finder = null;
-    try { this.finder = await this.open('CPU', new AbortController().signal, () => undefined); old?.dispose(); }
-    catch { this.finder = old; }
+    let cpu: MobileCMJPose | null = null;
+    try { cpu = await this.open('CPU', new AbortController().signal, () => undefined); } catch { /* the GPU one stays */ }
+    // Stopped meanwhile: stop() found no finder to dispose of, so both are let go here.
+    if (this.stopped) { cpu?.dispose(); old?.dispose(); return; }
+    if (cpu) { this.finder = cpu; old?.dispose(); } else this.finder = old;
   }
   /** The frame on the camera now, full size (not mirrored), with the poses last read. */
   grab(): { picture: HTMLCanvasElement; poses: NormalizedLandmark[][] } {
     const v = this.video, picture = document.createElement('canvas');
     picture.width = v.videoWidth; picture.height = v.videoHeight;
-    picture.getContext('2d')!.drawImage(v, 0, 0);
+    const ctx = picture.getContext('2d');
+    if (!ctx) throw new Error('画像処理を開始できません。');
+    ctx.drawImage(v, 0, 0);
     return { picture, poses: this.last };
   }
   stop() {
     this.stopped = true;
+    document.removeEventListener('visibilitychange', this.onVisible);
     if (this.video.cancelVideoFrameCallback) this.video.cancelVideoFrameCallback(this.callback); else cancelAnimationFrame(this.callback);
     this.stream?.getTracks().forEach(t => t.stop()); this.stream = null;
     this.video.pause(); this.video.srcObject = null;
@@ -108,6 +132,8 @@ export class Voice {
   on = true;
   private context: AudioContext | null = null;
   unlock() {
+    // iPhone: the tones and the voice are heard with the ring/silent switch on silent (iOS 17's audio session).
+    try { const s = (navigator as Navigator & { audioSession?: { type: string } }).audioSession; if (s) s.type = 'playback'; } catch { /* no session */ }
     try { if (typeof speechSynthesis !== 'undefined') speechSynthesis.speak(new SpeechSynthesisUtterance('')); } catch { /* no speech */ }
     try { const A = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext; if (A) this.context ??= new A(); void this.context?.resume(); } catch { /* no sound */ }
   }

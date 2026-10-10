@@ -12,6 +12,7 @@ import { applyEdits, moments } from './crouch-edit';
 import { refineByPixels, regionsOf, type PixelRegion, type RegionPictures } from './crouch-pixels';
 import { readPictures } from './crouch-pixels-read';
 import { CrouchReview } from './CrouchReview';
+import { keepAwake } from '../cmj/keep-awake';
 
 /** One ◀/▶ tap moves the line by 0.2% of the frame width. */
 const NUDGE = .002;
@@ -93,10 +94,11 @@ export default function CrouchLab() {
   }
   async function analyze() {
     if (!file || busy) return;
-    const control = new AbortController(); owner.current = control;
+    const control = new AbortController(); owner.current = control; let awake = () => {};
     setBusy(true); setMeasured(null); setProgress(0); setMessage('');
     try {
-      const data = await measureCrouchStart(file, start, control.signal, (fraction, text) => { setProgress(fraction); setMessage(text); });
+      awake = await keepAwake();
+      const data = await measureCrouchStart(file, start, control.signal, (fraction, text) => { if (control.signal.aborted) return; setProgress(fraction); setMessage(text); });
       if (control.signal.aborted) return;
       // The video once more, only round the feet near the judged moments; without these pictures the pose's moments stay.
       const regions = regionsOf(analyzeCrouchStart(data.frames, { width: data.width, height: data.height }), data.frames, data.width, data.height);
@@ -108,7 +110,7 @@ export default function CrouchLab() {
       setMeasured({ ...data, regions, pictures }); setMessage('解析が終わりました。');
     } catch (e) {
       if (!control.signal.aborted) setMessage(e instanceof Error ? e.message : String(e));
-    } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
+    } finally { awake(); if (owner.current === control) { owner.current = null; setBusy(false); } }
   }
   /** Another tab; when the page is scrolled past the top of the tabs' content,
    * back to that top, so the new part starts just under the tabs. */

@@ -6,15 +6,19 @@ import { MobileCMJPose } from '../cmj/mobile-pose';
 const scope = self as unknown as { postMessage: (value: unknown) => void; onmessage: ((event: MessageEvent) => void) | null };
 let pose: MobileCMJPose | null = null, warmed = false, seenPerson = false, emptyGpu = 0;
 const status = (message: string) => scope.postMessage({ status: message });
-async function initialize(delegate: 'CPU' | 'GPU') {
+/** A model on `delegate`. `warmed` is cleared only for a new session ('init'): a model made again during a session (the
+ * CPU after the GPU) is warmed and run at once where it is made, and a second warm-up at time 0 after that frame's time
+ * stopped the camera (MediaPipe refuses a time going back; the athlete walking into place for 15 frames was enough). */
+async function initialize(delegate: 'CPU' | 'GPU', quiet = false) {
   pose?.dispose(); pose = new MobileCMJPose('full', undefined, delegate, 2);
-  await pose.initialize(new AbortController().signal, status); warmed = false;
+  // Made again during the set: quiet (its 「映像処理を準備しています。」 stayed on the screen in place of the count's line).
+  await pose.initialize(new AbortController().signal, quiet ? () => undefined : status);
 }
 scope.onmessage = async ({ data }) => {
   const { id } = data;
   try {
     if (data.type === 'init') {
-      seenPerson = false; emptyGpu = 0;
+      seenPerson = false; emptyGpu = 0; warmed = false;
       try { await initialize('GPU'); } catch { await initialize('CPU'); }
       scope.postMessage({ id, result: { ready: true, backend: pose!.backend } }); return;
     }
@@ -26,12 +30,12 @@ scope.onmessage = async ({ data }) => {
       catch (error) {
         // A GPU task may start but fail offscreen: fall back to the CPU before anyone is found.
         if (warmed || pose.backend !== 'GPU') throw error;
-        await initialize('CPU'); pose.warm(image); r = pose.estimate(image, data.frame, data.pts);
+        await initialize('CPU', true); pose.warm(image); r = pose.estimate(image, data.frame, data.pts);
       }
       warmed = true;
       if (r.landmarks.length) { seenPerson = true; emptyGpu = 0; }
       else if (pose.backend === 'GPU' && !seenPerson && ++emptyGpu >= 15) {
-        emptyGpu = 0; await initialize('CPU'); pose.warm(image); r = pose.estimate(image, data.frame, data.pts);
+        emptyGpu = 0; await initialize('CPU', true); pose.warm(image); r = pose.estimate(image, data.frame, data.pts);
       }
       scope.postMessage({ id, result: { landmarks: r.landmarks.map(p => p.map(q => ({ x: q.x, y: q.y, visibility: q.visibility ?? 0 }))),
         inferenceMs: r.inferenceMs, backend: pose.backend } });

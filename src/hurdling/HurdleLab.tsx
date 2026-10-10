@@ -14,6 +14,7 @@ import { footDown } from '../sprint10/crouch-edit';
 import { contactMoments, effectsBetween, poseFlags, relatedValues, type ReviewMoment, type ReviewValue } from '../sprint10/moment-edits';
 import { MomentReview } from '../sprint10/MomentReview';
 import '../sprint10/sprint10.css';
+import { keepAwake } from '../cmj/keep-awake';
 
 /** One ◀/▶ (▲/▼) tap moves a line by 0.2% of the frame width (height). */
 const NUDGE = .002;
@@ -56,7 +57,9 @@ export default function HurdleLab() {
   // The judged moments the user set (frames by moment key), those confirmed, and the one being checked; everything shown
   // uses the result with them (the user, 2026-10-07: 「他のモードにも同じように自動解析と微調整モード追加しましょう」).
   const [edits, setEdits] = useState<Record<string, number>>({}), [checked, setChecked] = useState<ReadonlySet<string>>(new Set()), [moment, setMoment] = useState<string | null>(null);
-  useEffect(() => { setEdits({}); setChecked(new Set()); setMoment(null); }, [measured, used]);
+  // Reset for a new analysis only: the moments are the contacts (td{n} / to{n}), the same whatever lines and heights are
+  // used; 「計算し直す」 discarded every correction made.
+  useEffect(() => { setEdits({}); setChecked(new Set()); setMoment(null); }, [measured]);
   const options = useMemo(() => measured && used ? { width: measured.width, height: measured.height,
     hurdleX: used.x, barY: used.barY, groundY: used.groundY, hurdleHeight: used.height ?? undefined } : null, [measured, used]);
   const auto: HurdleResult | null = useMemo(() => measured && options ? analyzeHurdle(measured.frames, options) : null, [measured, options]);
@@ -142,15 +145,16 @@ export default function HurdleLab() {
   });
   async function analyze() {
     if (!file || busy) return;
-    const control = new AbortController(); owner.current = control;
+    const control = new AbortController(); owner.current = control; let awake = () => {};
     setBusy(true); setMeasured(null); setProgress(0); setMessage('');
     try {
-      const data = await measureHurdle(file, control.signal, (fraction, text) => { setProgress(fraction); setMessage(text); });
+      awake = await keepAwake();
+      const data = await measureHurdle(file, control.signal, (fraction, text) => { if (control.signal.aborted) return; setProgress(fraction); setMessage(text); });
       if (control.signal.aborted) return;
       setMeasured(data); setUsed(setting); setMessage('解析が終わりました。');
     } catch (e) {
       if (!control.signal.aborted) setMessage(e instanceof Error ? e.message : String(e));
-    } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
+    } finally { awake(); if (owner.current === control) { owner.current = null; setBusy(false); } }
   }
   function choose(next: Tab) {
     setTab(next);

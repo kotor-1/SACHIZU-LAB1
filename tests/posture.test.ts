@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeView, findingsOf, frontal, levelOf, nearEdgeOf, sagittal, sided, turned, viewWarnings, type Measure, type ViewResult } from '../src/posture/analysis';
+import { analyzeView, disagreedOf, EYES_NOTE, findingsOf, frontal, levelOf, nearEdgeOf, sagittal, sided, turned, viewWarnings, type Measure, type ViewResult } from '../src/posture/analysis';
+import { inTurn } from '../src/posture/turn';
 import { findingText, MEASURE_GUIDE, nearText } from '../src/posture/advice';
 import { boxOf, fitOf, Stillness, type Landmark } from '../src/posture/fit';
 import { cropAround, decode, FACE, headCrop, IH, IW, K, meanOf, medianOf, peak, withHead, type Keypoint } from '../src/posture/keypoints';
 import { areaInput, PIXEL_MEAN, PIXEL_STD, widen } from '../src/posture/model-input';
-import { tiltOf } from '../src/posture/live';
+import { postureCamera, tiltOf } from '../src/posture/live';
 import { appleGravity, phoneTiltOf } from '../src/posture/still';
 
 const W = 1200, H = 1600;
@@ -120,7 +121,7 @@ describe('posture measures', () => {
     p[K.rightShoulder] = at(510, 380 + Math.tan(3 / 180 * Math.PI) * 180);   // the picture's left shoulder 3° lower
     const f = frontal(p, 'front'), b = frontal(p, 'back');
     // From the front the picture's left is the person's right; from behind, the person's left.
-    expect(value(f, 'shoulderTilt')).toBeCloseTo(-3, 6); expect(f.find(q => q.key === 'shoulderTilt')!.text).toBe('右が低い\u00a03.0°');
+    expect(value(f, 'shoulderTilt')).toBeCloseTo(-3, 6); expect(f.find(q => q.key === 'shoulderTilt')!.text).toBe('右が低い 3.0°');
     expect(value(b, 'shoulderTilt')).toBeCloseTo(3, 6); expect(levelOf('shoulderTilt', 3)).toBe(2);
     // The model's left and right crossed (seen from behind): the same answer.
     const crossed = p.map(q => ({ ...q }));
@@ -182,6 +183,27 @@ describe('posture findings', () => {
     expect(findingsOf({ front: result('front', { shoulderTilt: 2.4 }), back: result('back', { shoulderTilt: -.5 }) })).toEqual([]);
     expect(findingsOf({ front: result('front', { shoulderTilt: 4.6 }), back: result('back', { shoulderTilt: -.4 }) })[0].value).toBeCloseTo(2.1, 9);
   });
+  it('lists what the front and the back disagree on, with each picture\'s reading, apart from the findings', () => {
+    const apart = disagreedOf({ front: result('front', { shoulderTilt: 2.4, kneeLeft: 5 }), back: result('back', { shoulderTilt: -2.4, kneeLeft: 6 }) });
+    expect(apart.map(d => [d.key, d.readings.map(r => r.view)])).toEqual([['shoulderTilt', ['front', 'back']]]);
+    expect(disagreedOf({ front: result('front', { shoulderTilt: 2.4 }), back: result('back', { shoulderTilt: -.5 }) })).toEqual([]);
+    expect(disagreedOf({ front: result('front', { shoulderTilt: 2.4 }) })).toEqual([]);
+  });
+  it('says when the head\'s tilt is the eyes\' line, the ears not seen', () => {
+    const noEars = front().map((q, i) => i === K.leftEar || i === K.rightEar ? { ...q, score: .1 } : q);
+    const r = analyzeView(noEars, 'front', W, H);
+    expect(r.measures.find(m => m.key === 'headTilt')!.value).toBeCloseTo(0, 6); expect(r.warnings).toContain(EYES_NOTE);
+    expect(analyzeView(front(), 'front', W, H).warnings).not.toContain(EYES_NOTE);
+  });
+  it('runs the model\'s readings one after another, a failed one not holding up the next', async () => {
+    const log: string[] = [];
+    const slow = inTurn(async () => { log.push('a starts'); await new Promise(r => setTimeout(r, 20)); log.push('a ends'); return 'a'; });
+    const failing = inTurn(async () => { log.push('b starts'); throw new Error('b'); });
+    const quick = inTurn(async () => { log.push('c starts'); return 'c'; });
+    await expect(failing).rejects.toThrow('b');
+    expect(await Promise.all([slow, quick])).toEqual(['a', 'c']);
+    expect(log).toEqual(['a starts', 'a ends', 'b starts', 'c starts']);
+  });
   it('keeps a value too near the guide\'s edge to call apart from the findings, on either side of the edge', () => {
     // The same side photo read in Safari and in Chrome: 10.4° and 9.7°, both near the head's edge (10°, ±1°).
     for (const headForward of [10.4, 9.73]) {
@@ -197,7 +219,7 @@ describe('posture findings', () => {
     expect(findingsOf(tilt)).toEqual([]);
     expect(nearEdgeOf(tilt).map(f => [f.key, f.value.toFixed(2), f.views.join()])).toEqual([['bodyAxis', '-1.12', 'front,back'], ['kneeLeft', '3.86', 'front,back']]);
     expect(nearEdgeOf({ front: result('front', { shoulderTilt: 3.6 }), back: result('back', { shoulderTilt: -.4 }) })[0].value).toBeCloseTo(1.6, 9);
-    expect(nearEdgeOf(tilt).map(nearText)).toEqual(['体幹の側方傾斜 右1.1°', '左膝 内反（O脚傾向）3.9°']);
+    expect(nearEdgeOf(tilt).map(nearText)).toEqual(['全身の側方傾斜 右1.1°', '左膝 内反（O脚傾向）3.9°']);
     expect(nearText({ key: 'headTilt', level: 0, value: -1.87, views: ['front'] })).toBe('頭部の側方傾斜 右1.9°');
     expect(nearText({ key: 'headForward', level: 1, value: 10.4, views: ['side'] })).toBe('頭部 前方偏位10.4°');
     expect(nearText({ key: 'knee', level: 0, value: -4.6, views: ['side'] })).toBe('膝関節 過伸展4.6°');
@@ -244,6 +266,11 @@ describe('posture photos: the phone\'s tilt from the photo\'s record', () => {
 });
 
 describe('posture camera: standing in the frame', () => {
+  it('asks the camera for HD frames named the sensor\'s way round, unscaled where the browser can', () => {
+    const video = postureCamera('user', { resizeMode: true }).video as MediaTrackConstraints & { resizeMode?: string };
+    expect(video).toMatchObject({ facingMode: { ideal: 'user' }, width: { ideal: 1280 }, height: { ideal: 720 }, resizeMode: 'none' });
+    expect((postureCamera('environment').video as MediaTrackConstraints & { resizeMode?: string }).resizeMode).toBeUndefined();
+  });
   /** MediaPipe's 33 points of a person square to the camera, normalized; `h` tall from the top of the head, `cx` across,
    * the shoulders `spread` of the picture's width either side at 0.75 tall (wider when taller). */
   function pose(h = .8, cx = .5, wide = .1, nose = .9): Landmark[] {

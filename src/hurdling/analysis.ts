@@ -166,9 +166,11 @@ export function analyzeHurdle(frames: readonly CrouchFrame[], options: HurdleOpt
     return fail('選手がハードルの線を越える様子が映っていません。線をハードルに合わせ、ハードルの前後が映る動画を使ってください。');
 
   // Contacts on the ground, in time order.
-  const toes = toesOf(seen, W, H), plants = contactPlants(plantsOf(plantedToes(toes, leg), leg), leg, direction);
-  const ground = Math.max(...plants.map(p => p.y));
-  const onGround = plants.filter(p => ground - p.y < GROUND_SPREAD * leg);
+  // Plants off the ground (a foot held still in the air over the hurdle) are dropped before the contacts are put in order,
+  // as in the high and long jumps: kept in the chain, one could hold off the next real contact (each must be ahead).
+  const toes = toesOf(seen, W, H), all = plantsOf(plantedToes(toes, leg), leg);
+  const ground = Math.max(...all.map(p => p.y));
+  const onGround = contactPlants(all.filter(p => ground - p.y < GROUND_SPREAD * leg), leg, direction);
   const firstSeen = seen[0].pts, lastSeen = seen.at(-1)!.pts;
   base.contacts = onGround.map((p, i) => contactOf(p, i + 1, toes, leg, lastSeen, firstSeen));
   if (options.edits) base.contacts = editContacts(base.contacts, options.edits, frames);

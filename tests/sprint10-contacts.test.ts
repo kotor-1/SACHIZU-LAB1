@@ -53,3 +53,64 @@ describe('the 10 m steps as the crouch start\'s', () => {
     expect(sectionTimes(stepTimes([], null, null))).toEqual({ contact: null, flight: null, steps: 0 });
   });
 });
+
+describe('a standing start and the tracker\'s corrections', () => {
+  // The runner stands still for 0.5 s with both feet down (staggered), then runs as above.
+  const T0 = .5;
+  function standing(): CrouchFrame[] {
+    const run = frames(1.4);
+    const still: CrouchFrame[] = [];
+    for (let frame = 0; frame / 120 < T0; frame++) {
+      const pose = run[0].pose!.map(p => ({ ...p }));
+      const put = (k: number, x: number, y: number) => { pose[k] = { x: x / W, y: y / H, visibility: .9 }; };
+      for (const [side, dx] of [[0, -40], [1, 50]] as const) {
+        put(27 + side, 100 + dx - 25, GROUND - 25); put(29 + side, 100 + dx - 45, GROUND - 5); put(31 + side, 100 + dx, GROUND);
+      }
+      still.push({ frame, pts: frame / 120, pose });
+    }
+    return [...still, ...run.map(f => ({ frame: f.frame + still.length, pts: f.pts + T0, pose: f.pose }))];
+  }
+  it('leaves the stance out of a standing start\'s steps', () => {
+    const all = runContacts(standing(), W, H)!, steps = runContacts(standing(), W, H, undefined, true)!;
+    expect(all.contacts[0].touchdown).toBeNull();   // down from the first frame: the stance, listed as a step
+    expect(steps.contacts[0].touchdown).not.toBeNull();
+    expect(steps.contacts[0].touchdown!).toBeGreaterThan(T0);
+    expect(steps.contacts.every(c => c.touchdown === null || c.toeOff === null || c.toeOff - c.touchdown < .4)).toBe(true);
+  });
+  it('revises the poses kept beside the samples as the tracker revised them', async () => {
+    const { revisePoses } = await import('../src/sprint10/frame-processor');
+    const poses = new Map([[1, 'jogger'], [2, 'jogger'], [3, 'jogger']]), times = new Map([[0, 0], [1, .1], [2, .2], [3, .3]]);
+    revisePoses(poses, times, .2, [{ frameIndex: 0, pose: 'runner' }, { frameIndex: 2, pose: 'runner' }]);
+    expect([...poses.entries()].sort()).toEqual([[0, 'runner'], [1, 'jogger'], [2, 'runner']]);
+  });
+});
+
+describe('the number boxes', () => {
+  it('takes what is typed as a number within its range', async () => {
+    const { numberInput } = await import('../src/sprint10/number-input');
+    expect(numberInput('０５０', 0, 400, true)).toEqual({ text: '50', value: 50 });   // full-width, a leading zero
+    expect(numberInput('50.5', 0, 400, true)).toEqual({ text: '50', value: 50 });     // a whole number stops at the point
+    expect(numberInput('10,5', 1, 100, false)).toEqual({ text: '10.5', value: 10.5 }); // a comma as the decimal point
+    expect(numberInput('1.2.3', 1, 100, false)).toEqual({ text: '1.23', value: 1.23 });
+    expect(numberInput('1000', 1, 100, false)).toEqual({ text: '100', value: 100 });  // past the largest: what is used
+    expect(numberInput('', 1, 100, false)).toEqual({ text: '', value: null });
+    expect(numberInput('.', 1, 100, false)).toEqual({ text: '.', value: null });
+  });
+});
+
+describe('a stretch where the runner was not followed', () => {
+  it('gives no touchdown time for a step set down while the runner was lost', () => {
+    // The runner not followed from 0.68 s to 0.80 s: the step set down at 0.70 s is first seen at 0.80 s.
+    const lost = frames().map(f => f.pts > .68 && f.pts < .8 ? { ...f, pose: null } : f);
+    const all = runContacts(frames(), W, H)!, gapped = runContacts(lost, W, H)!;
+    const at = (r: typeof all, t: number) => r.contacts.find(c => (c.toeOff ?? 0) > t && (c.touchdown ?? -1) < t + .2);
+    expect(at(all, .7)!.touchdown).not.toBeNull();
+    expect(at(gapped, .7)!.touchdown).toBeNull();   // not a late time
+    expect(gapped.contacts.filter(c => c.touchdown !== null).length).toBe(all.contacts.filter(c => c.touchdown !== null).length - 1);
+  });
+  it('gives no 50 m time for a section run faster than anyone has run', async () => {
+    const { target50 } = await import('../src/sprint10/target50');
+    expect(target50(50, 10, .55)).toBeNull();
+    expect(target50(50, 10, 1.909)?.time).toBeCloseTo(10.64, 1);
+  });
+});
