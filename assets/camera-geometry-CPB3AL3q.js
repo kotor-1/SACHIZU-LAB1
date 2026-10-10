@@ -1,1 +1,0 @@
-function i(e={}){return{audio:!1,video:{facingMode:{ideal:"environment"},frameRate:{ideal:60},...e.resizeMode?{resizeMode:"none"}:{}}}}function n(e){return e.videoWidth>0&&e.videoHeight>0?{w:e.videoWidth,h:e.videoHeight}:null}export{i as a,n as c};
