@@ -165,6 +165,17 @@
 .force-summary-head strong{font-size:16px}
 .force-average{margin:4px 0 0;font-size:13px;font-weight:700;color:#284b40}
 .force-weight-note{display:block;margin:0 0 8px;font-size:12px;color:#526b61}
+.force-direction{margin:12px 0;padding:12px;border:1px solid #e3ece8;border-radius:10px;background:#fff}
+.force-direction figcaption{font-size:15px;font-weight:800;color:#123b31}
+.force-direction svg{display:block;width:100%;max-width:360px;height:auto;margin:0 auto}
+.force-direction-axis{fill:none;stroke:#a2b7ae;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.force-direction-label{fill:#3f5f55;font-size:13px;font-family:inherit}
+.force-direction-vector{fill:#e9ac16;stroke:#926300;stroke-linejoin:round}
+.force-direction-vector line{stroke:#e9ac16;stroke-width:7;stroke-linecap:round}
+.force-direction-origin{fill:#123b31}
+.force-direction p{margin:0;font-size:13px;color:#284b40;line-height:1.6}
+.force-direction .force-direction-note{margin-top:4px;font-size:12px;color:#526b61}
+.force-direction-unavailable{margin:12px 0;font-size:13px;color:#526b61}
 .force-mean-values dd{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums;color:#123b31}
 .force-details{margin-top:8px;border-top:1px solid #d9e5df}.force-details summary{display:flex;align-items:center;min-height:44px;font-size:13px;cursor:pointer;list-style:none;color:#3f5f55}
 .force-details summary::-webkit-details-marker{display:none}.force-details summary::after{content:'＋';margin-left:auto;padding-left:10px}.force-details[open] summary::after{content:'－'}

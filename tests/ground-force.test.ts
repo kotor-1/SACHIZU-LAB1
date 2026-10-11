@@ -148,6 +148,30 @@ describe('ground reaction force from the video and the body mass', () => {
 });
 
 describe('contact-period force display', () => {
+  it.each([[3, 4], [-3, 4], [0, 4], [4, 0], [3, -4]])('draws the direction of the mean components (%s, %s), with a fixed length', async (horizontal, vertical) => {
+    const { MeanForceDirection } = await import('../src/sprint10/ForceView');
+    const draw = (factor: number) => renderToStaticMarkup(createElement(MeanForceDirection, { horizontal: horizontal * factor, vertical: vertical * factor }));
+    const html = draw(1), tip = html.match(/<polygon points="([^ ]+)/)![1].split(',').map(Number);
+    const dx = tip[0] - 160, dy = (vertical < 0 ? 56 : 172) - tip[1];
+    expect(Math.hypot(dx, dy)).toBeCloseTo(108, 9);
+    expect(dx / 108).toBeCloseTo(horizontal / Math.hypot(horizontal, vertical), 9);
+    expect(dy / 108).toBeCloseTo(vertical / Math.hypot(horizontal, vertical), 9);
+    expect(draw(10)).toBe(html); // No magnitude is encoded by an independently scaled arrow.
+    expect(html).toContain('平均の力の向き');
+    expect(html).toContain('矢印の長さは一定');
+    expect(html).toContain('前へ（走る方向）');
+    expect(html).not.toMatch(/<img|<canvas|一流|目安|°/);
+  });
+  it.each([[null, 1], [1, null], [NaN, 1], [1, Infinity], [0, 0]])('does not invent a direction for missing or zero components (%s, %s)', async (horizontal, vertical) => {
+    const { MeanForceDirection } = await import('../src/sprint10/ForceView');
+    const html = renderToStaticMarkup(createElement(MeanForceDirection, { horizontal, vertical }));
+    expect(html).not.toContain('<svg');
+    expect(html).toMatch(/両方の力が求まると|平均の力が0/);
+  });
+  it('labels the block diagram as including support from the hands', async () => {
+    const { MeanForceDirection } = await import('../src/sprint10/ForceView');
+    expect(renderToStaticMarkup(createElement(MeanForceDirection, { horizontal: 1, vertical: 1.1, block: true }))).toContain('手で支えた分も含みます');
+  });
   it('keeps the published mean forward-force references', async () => {
     const { FORCE_STUDY } = await import('../src/sprint10/ForceView');
     // Graham-Smith et al. 2020: elite men 3.36 m/s in 0.365 s → 0.94 body weights; juniors 3.16 in 0.412 → 0.78.

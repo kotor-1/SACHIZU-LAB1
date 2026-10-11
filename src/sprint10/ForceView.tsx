@@ -23,6 +23,41 @@ interface ForcePeriod {
   extra: [string, string][]; study: string | null;
 }
 
+/** Direction of the contact mean, in running-relative coordinates. A fixed length deliberately encodes no magnitude. */
+export function MeanForceDirection({ horizontal, vertical, block = false }: { horizontal: number | null; vertical: number | null; block?: boolean }) {
+  if (horizontal === null || vertical === null || !Number.isFinite(horizontal) || !Number.isFinite(vertical)) {
+    return <p className="force-direction-unavailable">前向きと上向きの両方の力が求まると、平均の向きを表示できます。</p>;
+  }
+  const magnitude = Math.hypot(horizontal, vertical);
+  if (!magnitude) return <p className="force-direction-unavailable">平均の力が0のため、矢印の向きはありません。</p>;
+  const dx = horizontal / magnitude, dy = -vertical / magnitude;
+  const originY = vertical < 0 ? 56 : 172, endX = 160 + dx * 108, endY = originY + dy * 108;
+  const head = `${endX},${endY} ${endX - dx * 18 - dy * 8},${endY - dy * 18 + dx * 8} ${endX - dx * 18 + dy * 8},${endY - dy * 18 - dx * 8}`;
+  return <figure className="force-direction">
+    <figcaption>平均の力の向き</figcaption>
+    <svg viewBox="0 0 320 228" role="img" aria-label="区間全体の平均の力の向き。図の右が走る方向、上が上向きです。">
+      <g className="force-direction-axis">
+        <path d={`M32 ${originY} H288 M160 36 V196`} />
+        <path d={`M38 ${originY - 4} L32 ${originY} L38 ${originY + 4} M282 ${originY - 4} L288 ${originY} L282 ${originY + 4} M156 42 L160 36 L164 42`} />
+        {vertical < 0 && <path d="M156 190 L160 196 L164 190" />}
+      </g>
+      <g className="force-direction-label">
+        <text x="160" y="23" textAnchor="middle">上へ</text>
+        <text x="32" y={vertical < 0 ? originY - 12 : originY + 25}>後ろへ</text>
+        <text x="288" y={vertical < 0 ? originY - 12 : originY + 25} textAnchor="end">前へ（走る方向）</text>
+        {vertical < 0 && <text x="160" y="219" textAnchor="middle">下へ</text>}
+      </g>
+      <g className="force-direction-vector">
+        <line x1="160" y1={originY} x2={endX - dx * 10} y2={endY - dy * 10} />
+        <polygon points={head} />
+      </g>
+      <circle cx="160" cy={originY} r="4" className="force-direction-origin" />
+    </svg>
+    <p>地面が体を押し返す向きです。{block && '手で支えた分も含みます。'}</p>
+    <p className="force-direction-note">矢印の長さは一定です。力の大きさは下の数値で確認できます。</p>
+  </figure>;
+}
+
 /** A box for the weight or the height: it shows what is typed (number-input.ts), and gives the value only once the
  * typing is a number within the range (a 5 on the way to 55 gives nothing, not the smallest 20). The text is set from
  * the value only when the box is not being typed in (at the start, from the device's stored value) and on leaving it. */
@@ -98,6 +133,7 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
       {shown && <div ref={summary} className="force-summary" aria-live="polite">
         <div className="force-summary-head"><strong>{shown.label}</strong></div>
         <p className="force-average">{shown.key === 'block' ? '押し始めからブロックを離れるまでの平均' : '接地から離地までの平均'}（動画から推定）</p>
+        <MeanForceDirection horizontal={shown.horizontal} vertical={shown.vertical} block={shown.key === 'block'} />
         <dl className="force-values force-mean-values">
           <dt>前向きの平均</dt><dd>{shown.horizontal !== null ? times(shown.horizontal, forces!.mass) : '—'}</dd>
           <dt>上向きの平均</dt><dd>{shown.vertical !== null ? times(shown.vertical, forces!.mass) : '—'}</dd>
