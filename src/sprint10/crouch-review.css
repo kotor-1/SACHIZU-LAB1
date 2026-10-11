@@ -41,3 +41,14 @@
 .sprint10 .crouch-check-note button{flex:0 0 auto;min-height:40px;padding:6px 12px;background:#2a62d8;border:0;color:#fff;font-weight:700}
 .crouch-review-done{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:10px;background:#e1f4ea;color:#11663f;font-size:13px;line-height:1.5}
 .sprint10 .crouch-review-done button{flex:0 0 auto;min-height:40px;padding:6px 12px;background:#11663f;border:0;color:#fff;font-weight:700}
+/* A frame chosen and not decided (the user, 2026-10-11: people forgot to press it): the button blinks once a second (well
+   under three flashes a second), a line says so, and leaving first asks. Without motion, the button stays yellow. */
+.sprint10 .crouch-review-actions .sprint10-primary.pending{animation:review-pending 1s ease-in-out infinite}
+@keyframes review-pending{0%,100%{background:#135a48;color:#fff;box-shadow:0 0 0 0 rgba(255,212,0,0)}50%{background:#ffd400;color:#14231f;box-shadow:0 0 0 4px rgba(255,212,0,.45)}}
+@media (prefers-reduced-motion:reduce){.sprint10 .crouch-review-actions .sprint10-primary.pending{animation:none;background:#ffd400;color:#14231f}}
+.crouch-review-pending{margin:0;padding:8px 12px;border-radius:10px;background:#fff6c7;color:#6b4e00;font-size:13px;font-weight:700;line-height:1.5}
+.crouch-review-ask{display:grid;gap:8px;padding:10px 12px;border-radius:10px;background:#fff6c7;border:2px solid #ffd400}
+.crouch-review-ask p{margin:0;color:#6b4e00;font-size:14px;font-weight:700;line-height:1.5}
+.crouch-review-ask div{display:grid;grid-template-columns:repeat(2,minmax(0,1fr)) auto;gap:6px}
+.sprint10 .crouch-review-ask button{min-width:0;min-height:44px;padding:4px 10px;font-size:14px;white-space:nowrap}
+.sprint10 .crouch-review-ask button:not(.sprint10-primary){background:#fff;border:1px solid #cfdcd6;color:#3f5f55}

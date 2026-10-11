@@ -13,7 +13,7 @@ import { LiftChart, RhythmTable } from './HighJumpCharts';
 import { legLength } from '../sprint10/contacts';
 import { footDown } from '../sprint10/crouch-edit';
 import { contactMoments, effectsBetween, poseFlags, relatedValues, type ReviewMoment, type ReviewValue } from '../sprint10/moment-edits';
-import { MomentReview } from '../sprint10/MomentReview';
+import { leaveReview, MomentReview } from '../sprint10/MomentReview';
 import '../sprint10/sprint10.css';
 import './highjump.css';
 import { keepAwake } from '../cmj/keep-awake';
@@ -241,7 +241,7 @@ export default function HighJumpLab() {
           {waiting > 0 && ` 要確認 ${waiting}か所。`}</span>
           {tab !== 'check' && <button type="button" onClick={openCheck}>確認する</button>}</p>}
         <div ref={tabs} className="sprint10-tabs crouch-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
-          <button key={id} id={`highjump-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`highjump-panel-${id}`} onClick={() => id === 'check' ? openCheck() : choose(id)}>
+          <button key={id} id={`highjump-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`highjump-panel-${id}`} onClick={() => leaveReview(() => id === 'check' ? openCheck() : choose(id))}>
             {label}{id === 'advice' && checks > 0 && <span className="sprint10-badge" aria-label={`確かめたい点 ${checks}件`}>{checks}</span>}
             {id === 'check' && waiting > 0 && <span className="sprint10-badge" aria-label={`要確認 ${waiting}か所`}>{waiting}</span>}</button>)}</div>
         <div ref={panels} className="sprint10-panels">

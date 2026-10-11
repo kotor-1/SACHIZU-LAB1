@@ -88,13 +88,18 @@ describe('a standing start and the tracker\'s corrections', () => {
 describe('the number boxes', () => {
   it('takes what is typed as a number within its range', async () => {
     const { numberInput } = await import('../src/sprint10/number-input');
-    expect(numberInput('０５０', 0, 400, true)).toEqual({ text: '50', value: 50 });   // full-width, a leading zero
-    expect(numberInput('50.5', 0, 400, true)).toEqual({ text: '50', value: 50 });     // a whole number stops at the point
-    expect(numberInput('10,5', 1, 100, false)).toEqual({ text: '10.5', value: 10.5 }); // a comma as the decimal point
-    expect(numberInput('1.2.3', 1, 100, false)).toEqual({ text: '1.23', value: 1.23 });
-    expect(numberInput('1000', 1, 100, false)).toEqual({ text: '100', value: 100 });  // past the largest: what is used
-    expect(numberInput('', 1, 100, false)).toEqual({ text: '', value: null });
-    expect(numberInput('.', 1, 100, false)).toEqual({ text: '.', value: null });
+    expect(numberInput('０５０', 0, 400, true)).toEqual({ text: '50', value: 50, low: false });   // full-width, a leading zero
+    expect(numberInput('50.5', 0, 400, true)).toEqual({ text: '50', value: 50, low: false });     // a whole number stops at the point
+    expect(numberInput('10,5', 1, 100, false)).toEqual({ text: '10.5', value: 10.5, low: false }); // a comma as the decimal point
+    expect(numberInput('1.2.3', 1, 100, false)).toEqual({ text: '1.23', value: 1.23, low: false });
+    expect(numberInput('1000', 1, 100, false)).toEqual({ text: '100', value: 100, low: false });  // past the largest: what is used
+    expect(numberInput('', 1, 100, false)).toEqual({ text: '', value: null, low: false });
+    expect(numberInput('.', 1, 100, false)).toEqual({ text: '.', value: null, low: false });
+    // Below the smallest the typing is kept and marked low, so a box does not take the smallest for it (a weight's 5 on
+    // the way to 55 became 20).
+    expect(numberInput('5', 20, 150, false)).toEqual({ text: '5', value: 20, low: true });
+    expect(numberInput('55', 20, 150, false)).toEqual({ text: '55', value: 55, low: false });
+    expect(numberInput('1', 1, 100, false)).toEqual({ text: '1', value: 1, low: false });
   });
 });
 

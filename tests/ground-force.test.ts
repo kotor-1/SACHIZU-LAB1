@@ -62,10 +62,11 @@ describe('ground reaction force from the video and the body mass', () => {
     expect(s4).toMatchObject({ vertical: null, horizontal: null, ratio: null });
   });
   it('is little moved by a pixel or two of noise in the hips', () => {
-    // ±1.5 px on every frame (300 px a metre): the block's forward force within 5%, each gain within 0.1 m/s.
+    // ±1.5 px on every frame (300 px a metre): the flights' speeds fitted on every frame keep the block's forward force
+    // within 2% and each gain within 0.03 m/s (each flight's own frames alone: 5% and 0.1 m/s).
     const r = groundForces({ mass: MASS, contacts, track: track(3), pxPerM: PX, direction: 1, block: { moveStart: 0, clearance: .36 } });
-    expect(Math.abs(r.block!.horizontal / (MASS * 3.36 / .36) - 1)).toBeLessThan(.05);
-    [1.24, .88, .62].forEach((g, i) => { expect(Math.abs(r.steps[i].gained! - g)).toBeLessThan(.1); });
+    expect(Math.abs(r.block!.horizontal / (MASS * 3.36 / .36) - 1)).toBeLessThan(.02);
+    [1.24, .88, .62].forEach((g, i) => { expect(Math.abs(r.steps[i].gained! - g)).toBeLessThan(.03); });
   });
   it('without a block gives no forward force to the first contact (no flight seen before it), and the next from their flights', () => {
     const r = groundForces({ mass: MASS, contacts, track: track(), pxPerM: PX, direction: 1 });
@@ -81,10 +82,41 @@ describe('ground reaction force from the video and the body mass', () => {
     const noisy = groundForces({ mass: MASS, contacts, track: track(3), pxPerM: PX, direction: 1, speeds: 'steps' });
     expect(Math.abs(noisy.steps[1].gained! - r.steps[1].gained!)).toBeLessThan(.05); expect(Math.abs(noisy.steps[2].gained! - r.steps[2].gained!)).toBeLessThan(.05);
   });
+  it('fits every flight\'s speed at once, steady when a touchdown or toe-off is a frame out', async () => {
+    const { flightSpeeds } = await import('../src/sprint10/ground-force');
+    const v = flightSpeeds(track(), .36, contacts.map(c => ({ touchdown: c.touchdown!, toeOff: c.toeOff! })))!.map(x => x / PX);
+    [3.36, 4.60, 5.48, 6.10].forEach((s, i) => expect(v[i]).toBeCloseTo(s, 2));
+    // A toe-off read a frame late: the gains move by under 0.05 m/s.
+    const late = groundForces({ mass: MASS, contacts: contacts.map((c, i) => i === 1 ? { ...c, toeOff: c.toeOff! + 1 / FPS } : c), track: track(), pxPerM: PX, direction: 1, block: { moveStart: 0, clearance: .36 } });
+    [1.24, .88, .62].forEach((g, i) => expect(Math.abs(late.steps[i].gained! - g)).toBeLessThan(.05));
+    // Out of order, or no contact: nothing.
+    expect(flightSpeeds(track(), .5, [{ touchdown: .41, toeOff: .605 }])).toBeNull(); expect(flightSpeeds(track(), .36, [])).toBeNull();
+  });
+  it('reads the flights\' speeds when each contact brakes first and pushes after, as on the user\'s starts', async () => {
+    const { flightSpeeds } = await import('../src/sprint10/ground-force');
+    // Each contact's forward force: braking (a fifth of the push's impulse) for its first quarter, then the push, both half
+    // sines; the speed holds in the flights. Changing evenly through the contacts read these flights 0.2-0.3 m/s low.
+    const share = (u: number) => {
+      let acc = 0, total = 0;
+      for (let i = 0; i < 400; i++) { const w = (i + .5) / 400, f = w < .25 ? -.2 * 3 * Math.sin(Math.PI * w / .25) : Math.sin(Math.PI * (w - .25) / .75); total += f; if (w <= u) acc += f; }
+      return acc / total;
+    };
+    const braking = (t: number) => {
+      let v = 3.36;
+      for (const [td, to, after] of CONTACTS) { if (t < td) return v; if (t <= to) return v + (after - v) * share((t - td) / (to - td)); v = after; }
+      return v;
+    };
+    const pts: TrackPoint[] = [];
+    for (let i = 0, x = 0; i / FPS <= 1.3; i++) { for (let k = 0; i > 0 && k < 20; k++) x += braking((i - 1 + (k + .5) / 20) / FPS) / FPS / 20; pts.push({ t: i / FPS, x: 500 + x * PX, y: 0 }); }
+    const v = flightSpeeds(pts.filter(p => p.t >= .36), .36, contacts.map(c => ({ touchdown: c.touchdown!, toeOff: c.toeOff! })))!.map(x => x / PX);
+    [3.36, 4.60, 5.48, 6.10].forEach((s, i) => expect(Math.abs(v[i] - s)).toBeLessThan(.06));
+  });
   it('traces the push back to its start from the move first seen', () => {
     // Seen 1 cm out at 0.0463 s; the push began at 0.
     expect(Math.abs(pushStart(track(), .0463, 1)!)).toBeLessThan(.005);
     expect(Math.abs(pushStart(track(2), .0463, 1)!)).toBeLessThan(.02);
+    // Never more than 0.05 s before it (the iPhone's 0.465 s push on the user's start ran back 0.1 s).
+    expect(pushStart(track(), .2, 1)!).toBeGreaterThanOrEqual(.15 - 1e-9);
   });
   it('gives the vertical forces alone without a scale, and works running left', () => {
     const none = groundForces({ mass: MASS, contacts, track: track(), pxPerM: null, direction: 1, block: { moveStart: 0, clearance: .36 } });
@@ -121,5 +153,19 @@ describe('the studies the forces are set against', () => {
     expect(against(.98, .938)).toBe('一流男子並み'); expect(against(1.2, .938)).toBe('一流男子より大きい');
     expect(against(.7, .938)).toBe('一流男子よりやや小さい'); expect(against(.13, .648)).toBe('一流男子より小さい');
     expect(against(-.1, .648)).toBe('ブレーキの方が大きい');
+  });
+  it('sets the push\'s direction against the elite men\'s for the phase, in neutral words, alike within the one-frame spread', async () => {
+    const { DIRECTION_STUDY, DIRECTION_SAME, directionAgainst } = await import('../src/sprint10/ForceView');
+    // The block's from the study (forward 0.94, upward (9.81 + 0.60 ÷ 0.365) ÷ 9.81 = 1.17 body weights): 51°.
+    expect(DIRECTION_STUDY.block).toMatchObject({ provisional: false }); expect(DIRECTION_STUDY.block.angle).toBeCloseTo(51.2, 1);
+    // The first and second contacts' are provisional until a study's.
+    expect(DIRECTION_STUDY.steps).toEqual([{ angle: 63, provisional: true }, { angle: 70, provisional: true }]);
+    // Up to 2° (as shown, whole degrees) alike: a frame's shift moved the angles by 1.4° at most on three starts.
+    expect(DIRECTION_SAME).toBe(2);
+    expect(directionAgainst(64.6, 63)).toBe('一流男子と同じくらいの向き'); expect(directionAgainst(60.6, 63)).toBe('一流男子と同じくらいの向き');
+    expect(directionAgainst(66, 63)).toBe('一流男子より3°鉛直寄り'); expect(directionAgainst(59.6, 63)).toBe('一流男子より3°水平寄り');
+    expect(directionAgainst(81, 70)).toBe('一流男子より11°鉛直寄り'); expect(directionAgainst(49.6, DIRECTION_STUDY.block.angle)).toBe('一流男子と同じくらいの向き');
+    expect(directionAgainst(47.4, DIRECTION_STUDY.block.angle)).toBe('一流男子より4°水平寄り');
+    for (const a of [40, 55, 63, 70, 85]) expect(directionAgainst(a, 63)).not.toMatch(/できて|足りな|良い|悪い/);
   });
 });

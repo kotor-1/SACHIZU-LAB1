@@ -19,6 +19,26 @@ export const FORCE_STUDY = {
   block: { elite: 3.36 / .365 / G, junior: 3.16 / .412 / G, power: { elite: 15.5, junior: 12.4 } },
   steps: [{ elite: (4.60 - 3.36) / .195 / G, junior: (4.39 - 3.16) / .202 / G }, { elite: (5.48 - 4.60) / .173 / G, junior: (5.27 - 4.39) / .173 / G }],
 } as const;
+/** The elite men's mean push direction (degrees from the ground), to set the athlete's against (the user, 2026-10-11:
+ * even elite sprinters push at 60-70° from the ground early in the acceleration, so the direction is read against the
+ * phase's elite value, not as horizontal or vertical). The block's from the same study: forward as above, upward
+ * g + the upward exit speed (0.60 m/s, Graham-Smith et al. 2020) ÷ the push, so 51°. The first and second contacts'
+ * are PROVISIONAL (暫定): the study gives no upward forces there (no flight times); 63° and 70° as the user set them,
+ * until a study's values replace them. None for later contacts. */
+export const DIRECTION_STUDY = {
+  block: { angle: Math.atan2(G + .60 / .365, 3.36 / .365) * 180 / Math.PI, provisional: false },
+  steps: [{ angle: 63, provisional: true }, { angle: 70, provisional: true }],
+} as const;
+/** Directions up to this many degrees from the elite value (both shown in whole degrees) read as alike: shifting every
+ * touchdown and toe-off of the first three contacts a frame either way (729 ways) moved the angles by 1.4° at most on
+ * three starts (the user's IMG_0433 and しゅん, 2026-10-11, and IMG_0291; the block's 0.6°), and two browsers differed
+ * by 1° at most; with the rounding to whole degrees, a difference of 2° can come from a frame. */
+export const DIRECTION_SAME = 2;
+/** The athlete's direction against the elite value, both as shown (whole degrees), in neutral words. */
+export function directionAgainst(angle: number, elite: number): string {
+  const d = Math.round(angle) - Math.round(elite);
+  return Math.abs(d) <= DIRECTION_SAME ? '一流男子と同じくらいの向き' : `一流男子より${Math.abs(d)}°${d < 0 ? '水平' : '鉛直'}寄り`;
+}
 /** Where a forward force stands against the elite men's: within 15% alike. */
 export function against(v: number, elite: number): string {
   const q = v / elite;
@@ -27,15 +47,20 @@ export function against(v: number, elite: number): string {
 const times = (v: number, mass: number) => `${(v / (mass * G)).toFixed(2)}倍`;
 
 interface Moment { key: string; label: string; frame: number; pts: number; origin: { x: number; y: number } | null;
-  horizontal: number | null; vertical: number | null; angle: number | null; ratio: number | null; extra: [string, string][]; against: string | null; study: string | null }
+  horizontal: number | null; vertical: number | null; angle: number | null; ratio: number | null; extra: [string, string][]; against: string | null; study: string | null;
+  /** The elite men's direction for this phase (degrees from the ground), when there is one. */
+  elite: number | null }
 
-/** A number typed in, as the 10 m screen's (number-input.ts): the text kept while typing, the value within min-max. */
+/** A box for the weight or the height: it shows what is typed (number-input.ts), and gives the value only once the
+ * typing is a number within the range (a 5 on the way to 55 gives nothing, not the smallest 20). The text is set from
+ * the value only when the box is not being typed in (at the start, from the device's stored value) and on leaving it. */
 function NumberBox({ label, unit, value, onValue, min, max, example }: { label: string; unit: string; value: number | null; onValue: (v: number | null) => void; min: number; max: number; example: string }) {
-  const [text, setText] = useState(value === null ? '' : String(value));
-  useEffect(() => { setText(t => Number(t) === value ? t : value === null ? '' : String(value)); }, [value]);
+  const [text, setText] = useState(value === null ? '' : String(value)), typing = useRef(false);
+  useEffect(() => { if (!typing.current) setText(value === null ? '' : String(value)); }, [value]);
   return <label>{label}<input type="text" inputMode="decimal" value={text} placeholder={example}
-    onChange={e => { const r = numberInput(e.target.value, min, max, false); setText(r.text); onValue(r.text === '' ? null : r.value !== null && r.value >= min ? r.value : value); }}
-    onBlur={() => setText(value === null ? '' : String(value))} />{unit}</label>;
+    onFocus={() => { typing.current = true; }}
+    onChange={e => { const r = numberInput(e.target.value, min, max, false); setText(r.text); onValue(r.value === null || r.low ? null : r.value); }}
+    onBlur={() => { typing.current = false; setText(value === null ? '' : String(value)); }} />{unit}</label>;
 }
 
 /** The ground's push (ground-force.ts) on the crouch start or a run: the weight (and, for the crouch start, the height)
@@ -67,7 +92,7 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
       const f = nearest(b.pushStart + b.pushSeconds / 2), pose = f ? anglePose(f) : null, toe = pose && block.side !== null ? pose[31 + block.side] : null;
       const S = FORCE_STUDY.block;
       out.push({ key: 'block', label: 'ブロック', frame: f?.frame ?? 0, pts: f?.pts ?? 0, origin: toe ? { x: toe.x * W, y: toe.y * H } : null,
-        horizontal: b.horizontal, vertical: b.vertical, angle: b.angle, ratio: b.ratio, against: against(b.horizontal / (m * G), S.elite),
+        horizontal: b.horizontal, vertical: b.vertical, angle: b.angle, ratio: b.ratio, against: against(b.horizontal / (m * G), S.elite), elite: DIRECTION_STUDY.block.angle,
         study: `一流男子 ${S.elite.toFixed(2)}倍・ジュニア男子 ${S.junior.toFixed(2)}倍`,
         extra: [['押した時間', `${b.pushSeconds.toFixed(3)}秒`], ['押す強さ', `${b.power.toFixed(1)} W/kg（平均の前向きパワー。一流男子 ${S.power.elite}・ジュニア男子 ${S.power.junior}）`],
           ['縦の力', '手で支えた分も含みます']] });
@@ -79,6 +104,7 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
       out.push({ key: `step${i + 1}`, label: `${i + 1}歩目`, frame: f?.frame ?? 0, pts: f?.pts ?? 0, origin: { x: c.x, y: c.groundY },
         horizontal: s.horizontal, vertical: s.vertical, angle: s.angle, ratio: s.ratio,
         against: S && s.horizontal !== null ? against(s.horizontal / (m * G), S.elite) : null,
+        elite: kind === 'crouch' ? DIRECTION_STUDY.steps[i]?.angle ?? null : null,
         study: S ? `一流男子 約${S.elite.toFixed(2)}倍・ジュニア男子 約${S.junior.toFixed(2)}倍` : null,
         extra: [...(top ? [['研究（縦）', '速い選手ほど大きく、速い選手で約2〜2.5倍（Weyandら 2000）'] as [string, string]] : []),
           ...(s.verticalPeak !== null ? [['縦の最大（目安）', times(s.verticalPeak, m)] as [string, string]] : []),
@@ -96,7 +122,8 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
   const overlay = useCallback<FigureOverlay>((p, ctx, to, unit) => {
     if (!shown?.origin || shown.vertical === null) return;
     const f = frames.find(q => q.frame === p.frame), pose = f ? anglePose(f) : null;
-    drawForceArrow(ctx, to, { x: shown.origin.x / W, y: shown.origin.y / H }, pose, shown.horizontal ?? 0, shown.vertical, bw, direction || 1, unit, shown.horizontal !== null);
+    drawForceArrow(ctx, to, { x: shown.origin.x / W, y: shown.origin.y / H }, pose, shown.horizontal ?? 0, shown.vertical, bw, direction || 1, unit, shown.horizontal !== null,
+      shown.horizontal !== null ? shown.elite : null);
   }, [shown, frames, W, H, bw, direction]);
   const { images, failed } = usePhasePictures(url, frames, phases, overlay);
 
@@ -119,9 +146,11 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
           {shown.horizontal !== null && <span>前へ {times(shown.horizontal, forces!.mass)}</span>}{shown.vertical !== null && <span>縦 {times(shown.vertical, forces!.mass)}</span>}</div>
         {shown.origin && (images[shown.key] ? <img src={images[shown.key]} alt={`${shown.label}の押す力の矢印`} />
           : <div className="sprint10-phase-wait">{failed ? '画像を作れませんでした' : '画像を作成しています…'}</div>)}
-        <p className="cr-key" aria-hidden="true"><span><i style={{ background: ARROW_COLOR }} />押す力（平均）</span>{shown.horizontal !== null && <span><i className="white" />前向き・縦</span>}</p>
+        <p className="cr-key" aria-hidden="true"><span><i style={{ background: ARROW_COLOR }} />押す力（平均）</span>{shown.horizontal !== null && <span><i className="white" />前向き・縦</span>}
+          {shown.angle !== null && shown.elite !== null && <span><i style={{ background: ELITE_COLOR }} />一流男子の目安の向き</span>}</p>
         <dl className="force-values">
-          {shown.angle !== null && <><dt>向き</dt><dd>地面から {Math.round(shown.angle)}°</dd></>}
+          {shown.angle !== null && <><dt>向き</dt><dd>地面から {Math.round(shown.angle)}°{shown.elite !== null && <>（一流男子の目安 約{Math.round(shown.elite)}°）
+            <span className="force-direction">{directionAgainst(shown.angle, shown.elite)}</span></>}</dd></>}
           {shown.ratio !== null && <><dt>前向きの割合</dt><dd>{Math.round(shown.ratio * 100)}%</dd></>}
           {shown.study && <><dt>研究（前向き）</dt><dd>{shown.study}</dd></>}
           {shown.extra.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}
@@ -132,11 +161,13 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
   </section>;
 }
 
-export const ARROW_COLOR = '#ffd23f';
+export const ARROW_COLOR = '#ffd23f', ELITE_COLOR = 'rgba(150,215,255,.85)';
 /** The mean push as an arrow from the foot: forward along the run, up; its length a body weight to 0.8 of the leg
- * (hip to ankle at that moment) on the picture; with `parts`, its forward and upward parts dashed. */
+ * (hip to ankle at that moment) on the picture; with `parts`, its forward and upward parts dashed; with `elite`, the
+ * elite men's direction as a thin dashed line over it, a fifth longer (a few degrees apart, a line beside the arrow hid
+ * behind it). */
 function drawForceArrow(ctx: CanvasRenderingContext2D, to: (q: { x: number; y: number }) => { x: number; y: number }, origin: { x: number; y: number },
-  pose: { x: number; y: number }[] | null, horizontal: number, vertical: number, weight: number, dir: number, unit: number, parts: boolean) {
+  pose: { x: number; y: number }[] | null, horizontal: number, vertical: number, weight: number, dir: number, unit: number, parts: boolean, elite: number | null = null) {
   const o = to(origin);
   const hip = pose ? to({ x: (pose[23].x + pose[24].x) / 2, y: (pose[23].y + pose[24].y) / 2 }) : null;
   const leg = hip ? Math.max(unit * 12, Math.hypot(hip.x - o.x, hip.y - o.y)) : unit * 20;
@@ -154,6 +185,12 @@ function drawForceArrow(ctx: CanvasRenderingContext2D, to: (q: { x: number; y: n
     ctx.beginPath(); ctx.moveTo(o.x + dx, o.y + dy);
     ctx.lineTo(o.x + dx - head * Math.cos(a - .45), o.y + dy - head * Math.sin(a - .45)); ctx.lineTo(o.x + dx - head * Math.cos(a + .45), o.y + dy - head * Math.sin(a + .45));
     ctx.closePath(); ctx.fill();
+  }
+  if (elite !== null) {
+    const length = 1.2 * Math.hypot(dx, dy), e = elite * Math.PI / 180;
+    ctx.setLineDash([unit * 1.1, unit * .7]); ctx.strokeStyle = ELITE_COLOR; ctx.lineWidth = unit * .5;
+    ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x + dir * Math.cos(e) * length, o.y - Math.sin(e) * length); ctx.stroke();
+    ctx.setLineDash([]);
   }
   ctx.restore();
 }

@@ -13,6 +13,14 @@ const FOOT_LEGS = 1.6, FOOT_AT = .62;
 const CROSS_LEGS = 2.4;
 type View = 'foot' | 'all';
 
+/** While a frame is chosen and not decided, leaving the check asks first: people forgot to press 「このコマに決める」, and
+ * the frame they had chosen was dropped without a word on going to another moment or tab (the user, 2026-10-11:
+ * 「それを押すのを忘れるっていう意見が出た…忘れないように点滅させるとか」). The check shown sets it. */
+let leaveGuard: ((go: () => void) => boolean) | null = null;
+/** Leave the check by `go` (another tab, or the check opened again): at once, or once the user has answered the check's
+ * question about a frame chosen and not decided. */
+export function leaveReview(go: () => void): void { if (!leaveGuard?.(go)) go(); }
+
 /** The judged moments one at a time, with the foot enlarged: OK as judged, or another frame chosen (◀▶ or the strip)
  * and set; the values change at once. Made so a check of a whole start is a few taps (the user, 2026-10-06:
  * 「デザインUIも含めて操作が面倒に感じないように工夫してほしい」): the moments worth a look are marked, the buttons
@@ -91,6 +99,18 @@ export function MomentReview({ url, frames, width: W, height: H, list, edits, ch
   // What the frame under the cursor would change.
   const effects = useMemo(() => m ? preview(m, cursor) : [], [preview, m, cursor]);
   const candidate = !!m && cursor !== m.frame;
+  // A frame chosen and not decided: the button blinks with a line under the values, and going elsewhere (another moment,
+  // another tab, the values) first asks whether to decide it. `leaving` is where the user was going.
+  const [leaving, setLeaving] = useState<{ go: () => void } | null>(null), ask = useRef<HTMLDivElement>(null);
+  useEffect(() => { setLeaving(null); }, [m?.key, candidate]);
+  useEffect(() => {
+    if (!candidate) return;
+    const guard = (go: () => void) => { setLeaving({ go }); return true; };
+    leaveGuard = guard;
+    return () => { if (leaveGuard === guard) leaveGuard = null; };
+  }, [candidate]);
+  useEffect(() => { if (leaving) ask.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' }); }, [leaving]);
+  const away = (go: () => void) => { if (candidate) setLeaving({ go }); else go(); };
 
   if (!m) return <p>確かめられる瞬間がありません。</p>;
   const judged = source?.(m) ?? null, crossing = m.kind === 'crossing', mark = crossing ? point?.(m, cursor) ?? null : null;
@@ -114,10 +134,10 @@ export function MomentReview({ url, frames, width: W, height: H, list, edits, ch
       {Object.keys(edits).length > 0 && <span className="edited">直した {Object.keys(edits).length}</span>}
     </div>
     {done === list.length && <div className="crouch-review-done"><span>{doneText ?? 'すべての瞬間を確認しました。値は結果のすべての表示に反映されています。'}</span>
-      <button type="button" onClick={onDone}>{doneLabel ?? '歩ごとの値を見る'}</button></div>}
+      <button type="button" onClick={() => away(onDone)}>{doneLabel ?? '歩ごとの値を見る'}</button></div>}
     <div ref={chips} className="sprint10-chips crouch-review-moments" role="group" aria-label="確かめる瞬間">{list.map(q => {
       const state = q.frame !== q.autoFrame ? 'edited' : checked.has(q.key) ? 'ok' : q.flag ? 'warn' : '';
-      return <button key={q.key} type="button" aria-pressed={q.key === m.key} className={state} onClick={() => onAt(q.key)}
+      return <button key={q.key} type="button" aria-pressed={q.key === m.key} className={state} onClick={() => q.key === m.key ? undefined : away(() => onAt(q.key))}
         aria-label={`${q.label}${state === 'edited' ? '（直した）' : state === 'ok' ? '（確認済み）' : state === 'warn' ? '（要確認）' : ''}`}>
         {state && <i aria-hidden="true">{state === 'edited' ? '✎' : state === 'ok' ? '✓' : '!'}</i>}{q.short}</button>;
     })}</div>
@@ -162,9 +182,15 @@ export function MomentReview({ url, frames, width: W, height: H, list, edits, ch
     {effects.length > 0 && <ul className="crouch-review-effect" aria-live="polite">{effects.map(e => <li key={e.label}>
       <span>{e.label}</span>{candidate ? <><s>{fixed(e.from, e.digits)}</s>→<b>{fixed(e.to, e.digits)}</b></> : <b>{fixed(e.from, e.digits)}</b>}<small>{e.unit}</small></li>)}</ul>}
     {note?.(m)}
+    {candidate && (leaving
+      ? <div ref={ask} className="crouch-review-ask"><p role="alert">選んだコマをまだ決めていません。決めてから移りますか？</p>
+        <div><button type="button" className="sprint10-primary" onClick={() => { const { go } = leaving; decide(); go(); }}>決めて移る</button>
+          <button type="button" onClick={() => { const { go } = leaving; setLeaving(null); go(); }}>決めずに移る</button>
+          <button type="button" onClick={() => setLeaving(null)}>キャンセル</button></div></div>
+      : <p className="crouch-review-pending" role="status">まだ決めていません。「このコマに決める」を押すと数値に入ります。</p>)}
     <div className="crouch-review-actions">
       <button type="button" aria-label="1コマ戻る" onClick={() => step(-1)}>◀</button>
-      <button type="button" className="sprint10-primary" onClick={decide}>{cursor === m.frame ? 'OK・次へ' : 'このコマに決める'}</button>
+      <button type="button" className={candidate ? 'sprint10-primary pending' : 'sprint10-primary'} onClick={decide}>{cursor === m.frame ? 'OK・次へ' : 'このコマに決める'}</button>
       <button type="button" aria-label="1コマ進む" onClick={() => step(1)}>▶</button>
     </div>
     <div className="crouch-review-more">

@@ -12,7 +12,7 @@ import { ComPathChart, ReferenceTable, TimeTable } from './HurdleCharts';
 import { legLength } from '../sprint10/contacts';
 import { footDown } from '../sprint10/crouch-edit';
 import { contactMoments, effectsBetween, poseFlags, relatedValues, type ReviewMoment, type ReviewValue } from '../sprint10/moment-edits';
-import { MomentReview } from '../sprint10/MomentReview';
+import { leaveReview, MomentReview } from '../sprint10/MomentReview';
 import '../sprint10/sprint10.css';
 import { keepAwake } from '../cmj/keep-awake';
 
@@ -250,7 +250,7 @@ export default function HurdleLab() {
           {tab !== 'check' && <button type="button" onClick={openCheck}>確認する</button>}</p>}
         {measured && !measured.refiner && <p className="sprint10-note">高精度の骨格モデル（RTMPose）を読み込めなかったため、接地・離地の判定、角度・重心と骨格の表示はMediaPipeの骨格を使っています。</p>}
         <div ref={tabs} className="sprint10-tabs crouch-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
-          <button key={id} id={`hurdle-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`hurdle-panel-${id}`} onClick={() => id === 'check' ? openCheck() : choose(id)}>
+          <button key={id} id={`hurdle-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`hurdle-panel-${id}`} onClick={() => leaveReview(() => id === 'check' ? openCheck() : choose(id))}>
             {label}{id === 'advice' && checks > 0 && <span className="sprint10-badge" aria-label={`確かめたい点 ${checks}件`}>{checks}</span>}
             {id === 'check' && waiting > 0 && <span className="sprint10-badge" aria-label={`要確認 ${waiting}か所`}>{waiting}</span>}</button>)}</div>
         <div ref={panels} className="sprint10-panels">

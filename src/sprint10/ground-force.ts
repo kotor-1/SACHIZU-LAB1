@@ -7,11 +7,11 @@
  *   as a half sine: × π/2. In the first steps the body also rises, so these read a little low there.
  * - Horizontal, each contact: body mass × the speed gained in the contact ÷ the contact time. The speed gained: the
  *   body's forward speed in the flight after the contact less that in the flight before it (no forward force in the air,
- *   so the speed holds there). Not from a speed rising evenly through the contact: the practice start IMG_0291 braked at
- *   its first touchdown (3.5 → 3.3 m/s, then up to 4.3), and an even rise read that contact as losing speed. On a 10 m
- *   run (`speeds: 'steps'`), the step's mean speed (touchdown to touchdown) after the contact less the one before, as
- *   the summary the user brought gives it (「その1歩で増えた速度」): steadier there, though it shares a gain between
- *   neighbouring contacts (a step of 1.24 then 0.88 m/s reads about 0.75 then 1.03).
+ *   so the speed holds there), the flights' speeds fitted at once to every frame, each contact's speed a broken line
+ *   (flightSpeeds). On a 10 m run
+ *   (`speeds: 'steps'`), the step's mean speed (touchdown to touchdown) after the contact less the one before, as the
+ *   summary the user brought gives it (「その1歩で増えた速度」): there the contacts' times are a few frames out (the athlete
+ *   small, often 120 fps), and it shares a gain between neighbouring contacts (1.24 then 0.88 m/s read 0.75 then 1.03).
  * - The block: body mass × the forward speed in the first flight ÷ the push (from the body's first movement); upward,
  *   body mass × (g + the upward speed at the clearance ÷ the push), which includes what the hands bear early in the push.
  * - The arrow: its size √(horizontal² + vertical²), its angle from the ground, and the horizontal share (the ratio of
@@ -24,16 +24,17 @@ export const G = 9.81;
 /** A position at a moment: a straight line through the body within ±POSITION_SECONDS (two or three frames either side at
  * 240 fps). */
 const POSITION_SECONDS = .0125;
-/** A flight's speed: a line through the body inside the flight, FLIGHT_INSIDE s clear of the touchdown and the toe-off;
- * a flight shorter than FLIGHT_SHORT s is taken FLIGHT_OVER s into the contacts either side (where the force is small),
- * so as to have FLIGHT_FRAMES. */
-const FLIGHT_INSIDE = .004, FLIGHT_SHORT = .03, FLIGHT_OVER = .01, FLIGHT_FRAMES = 5;
 /** The upward speed at the block clearance: one curve through the body from EXIT_BEFORE s before it to the first
  * touchdown (at most EXIT_AFTER s): a parabola while pushing, gravity in the flight, one speed where they meet. */
 const EXIT_BEFORE = .08, EXIT_AFTER = .06;
 /** The push's start: the body's forward move from the set, d, rises as (t − start)² while the push begins, so √d is a
- * line in time; one through the PUSH_FIT s after the first movement seen, its start at most PUSH_BACK s before it. */
-const PUSH_FIT = .1, PUSH_BACK = .1;
+ * line in time; one through the PUSH_FIT s after the first movement seen, its start at most PUSH_BACK s before it. The
+ * user's female start (IMG_0433, 2026-10-11) gave a push of 0.465 s on the iPhone where the body was still until 6.47 s
+ * (0.37 s on two browsers here): the start had run back to the old 0.1 s limit; the body moving 1 cm takes 0.02-0.05 s
+ * from its first movement on the starts seen (IMG_0433, しゅん, IMG_0291). */
+const PUSH_FIT = .1, PUSH_BACK = .05;
+/** Where each contact's speed may bend (fractions of the contact): see flightSpeeds. */
+const BENDS = [1 / 3, 2 / 3];
 /** A step's mean speed (touchdown to touchdown, the 10 m's way) is used only within these step times (s): beyond, a
  * contact was missed. */
 const STEP_MIN = .12, STEP_MAX = .5;
@@ -68,9 +69,9 @@ export interface ForceInput {
   contacts: readonly { touchdown: number | null; toeOff: number | null }[];
   /** The body's centre of mass (pixels) frame by frame (bodyTrack). */
   track: readonly TrackPoint[]; pxPerM: number | null; scaleSource?: 'height' | 'lines'; direction: number;
-  /** The speeds before and after each contact: the flights' ('flights', the crouch start: near camera, 240 fps), or each
-   * step's mean from touchdown to touchdown ('steps', a 10 m run: the athlete small and often 120 fps, where the contacts'
-   * times are a few frames out and a flight's own speed scattered ±0.3 m/s on IMG_4802; the steps' means rose smoothly). */
+  /** The speeds before and after each contact: the flights' ('flights', fitted at once to every frame: the crouch start),
+   * or each step's mean from touchdown to touchdown ('steps', a 10 m run: the athlete small and often 120 fps, the
+   * contacts' times a few frames out; the steps' means rose smoothly on IMG_4802). */
   speeds?: 'flights' | 'steps';
   /** The crouch start: the body's first movement as seen (the crouch analysis' moveStart) and the front foot's clearance. */
   block?: { moveStart: number; clearance: number } | null;
@@ -121,11 +122,63 @@ export function positionAt(track: readonly TrackPoint[], t: number): number | nu
   const closest = track.reduce<TrackPoint | null>((best, h) => !best || Math.abs(h.t - t) < Math.abs(best.t - t) ? h : best, null);
   return closest && Math.abs(closest.t - t) <= POSITION_SECONDS ? closest.x : null;
 }
-/** The body's forward speed (pixels/s along x) in a flight from `from` (a toe-off or the clearance) to `to` (a touchdown). */
-export function flightSpeed(track: readonly TrackPoint[], from: number, to: number): number | null {
-  const pad = to - from >= FLIGHT_SHORT ? -FLIGHT_INSIDE : FLIGHT_OVER;
-  const pts = within(track, from - pad, to + pad);
-  return pts.length >= FLIGHT_FRAMES ? fit(pts, 'x', (from + to) / 2)?.slope ?? null : null;
+/** Every flight's forward speed at once (pixels/s, along x): one motion through the body from `start` (in a flight) to
+ * the touchdown of the last contact given, the speed holding in each flight and, through each contact, a broken line
+ * from the speed before to the speed after that bends at BENDS (its values there free), the position continuous; fitted
+ * to every frame by least squares. Speeds[0] is the flight before contacts[0], speeds[k] the flight after
+ * contacts[k − 1]; the last contact only ends the motion. Null without enough frames.
+ * Fitted on every frame, not each flight's own dozen: on the user's starts (IMG_0433, しゅん, 2026-10-11) the body's
+ * position wobbles 2-3 pixels over a few hundredths of a second (its speed ±1 m/s frame to frame, even in the air), and a
+ * flight's own frames moved a contact's forward force by up to 0.15 body weights for one frame's shift of a touchdown or
+ * toe-off, and from one device to another (0.18 against 0.33). Bending, not changing evenly through the contact: on
+ * those starts the speed hardly rose in the first half of the first contact, and an even change read the speed off the
+ * blocks 0.15-0.3 m/s low (2.88 against 3.15 m/s from the flight's own frames); on synthetic contacts from an even
+ * push to braking for 40% of the contact, the even change read the flights up to 0.4 m/s low, one bend at the middle
+ * 0.2, the two bends within 0.05 (with a wobble of 4 pixels too), and a frame's shift moved a contact's forward force by
+ * up to 0.05 body weights on the user's starts (three bends: 0.07). */
+export function flightSpeeds(track: readonly TrackPoint[], start: number, contacts: readonly { touchdown: number; toeOff: number }[]): number[] | null {
+  const m = contacts.length - 1;
+  if (m < 0 || !(contacts[0].touchdown > start) || contacts.some((c, k) => k < m && !(c.toeOff > c.touchdown && contacts[k + 1].touchdown > c.toeOff))) return null;
+  const end = contacts[m].touchdown, K = m + 1, J = BENDS.length, knots = [0, ...BENDS, 1];
+  // The unknowns: the position at `start`, the K flights' speeds, then each contact's speeds at its bends. A row: each
+  // unknown's share of the position at t (a flight counts its time; within a contact, each piece of the broken line
+  // shares its distance between the speeds at its ends).
+  const P = 1 + K + m * J;
+  const row = (t: number) => {
+    const out = new Array<number>(P).fill(0);
+    out[0] = 1;
+    let from = start;
+    for (let k = 0; k <= m; k++) {
+      const td = contacts[k].touchdown;
+      out[1 + k] += Math.max(0, Math.min(t, td) - from);
+      if (k === m || t <= td) break;
+      const tc = contacts[k].toeOff - td, u = (Math.min(t, contacts[k].toeOff) - td) / tc;
+      const node = (j: number) => j === 0 ? 1 + k : j === J + 1 ? 2 + k : 1 + K + k * J + j - 1;
+      for (let j = 0; j <= J && u > knots[j]; j++) {
+        const L = knots[j + 1] - knots[j], w = Math.min(u, knots[j + 1]) - knots[j];
+        out[node(j)] += tc * (w - w * w / (2 * L)); out[node(j + 1)] += tc * w * w / (2 * L);
+      }
+      if (t <= contacts[k].toeOff) break;
+      from = contacts[k].toeOff;
+    }
+    return out;
+  };
+  const pts = within(track, start, end);
+  if (pts.length < 2 * P) return null;
+  const A = Array.from({ length: P }, () => new Array<number>(P).fill(0)), b = new Array<number>(P).fill(0);
+  for (const p of pts) {
+    const r = row(p.t);
+    for (let i = 0; i < P; i++) { b[i] += r[i] * p.x; for (let j = 0; j < P; j++) A[i][j] += r[i] * r[j]; }
+  }
+  for (let i = 0; i < P; i++) {   // Gaussian elimination with partial pivoting
+    let piv = i; for (let k = i + 1; k < P; k++) if (Math.abs(A[k][i]) > Math.abs(A[piv][i])) piv = k;
+    [A[i], A[piv]] = [A[piv], A[i]]; [b[i], b[piv]] = [b[piv], b[i]];
+    if (Math.abs(A[i][i]) < 1e-12) return null;
+    for (let k = i + 1; k < P; k++) { const f = A[k][i] / A[i][i]; for (let j = i; j < P; j++) A[k][j] -= f * A[i][j]; b[k] -= f * b[i]; }
+  }
+  const x = new Array<number>(P).fill(0);
+  for (let i = P - 1; i >= 0; i--) { let s = b[i]; for (let j = i + 1; j < P; j++) s -= A[i][j] * x[j]; x[i] = s / A[i][i]; }
+  return x.slice(1, 1 + K);
 }
 /** When the push began: √(the forward move from the set) as a line in time, back to zero (see PUSH_FIT). */
 export function pushStart(track: readonly TrackPoint[], moveStart: number, dir: number): number | null {
@@ -153,11 +206,17 @@ const arrow = (horizontal: number, vertical: number) => {
 export function groundForces(input: ForceInput): GroundForces {
   const { mass, contacts, track, pxPerM, direction } = input, dir = direction || 1;
   const out: GroundForces = { mass, scale: pxPerM ? { pxPerM, source: input.scaleSource ?? 'lines' } : null, block: null, steps: [] };
-  const speed = (from: number | null | undefined, to: number | null | undefined) => {
-    if (!pxPerM || from == null || to == null || !(to > from)) return null;
-    const v = flightSpeed(track, from, to);
-    return v === null ? null : v * dir / pxPerM;
-  };
+  // The flights' speeds (m/s) before and after each contact: one motion fitted to every frame, from the block's clearance
+  // (the crouch start) or the first contact's toe-off (a run), through the complete contacts that follow.
+  const flightBefore = contacts.map((): number | null => null), flightAfter = contacts.map((): number | null => null);
+  const first = input.block ? contacts.findIndex(c => c.touchdown !== null && c.touchdown > input.block!.clearance) : 1;
+  const start = input.block ? input.block.clearance : contacts[0]?.toeOff ?? null;
+  if (pxPerM && start !== null && first >= 0) {
+    const used: number[] = [];
+    for (let i = first; i < contacts.length && contacts[i].touchdown !== null; i++) { used.push(i); if (contacts[i].toeOff === null) break; }
+    const v = used.length ? flightSpeeds(track, start, used.map(i => ({ touchdown: contacts[i].touchdown!, toeOff: contacts[i].toeOff ?? contacts[i].touchdown! }))) : null;
+    if (v) used.forEach((ci, k) => { flightBefore[ci] = v[k] * dir / pxPerM; if (k + 1 < v.length) flightAfter[ci] = v[k + 1] * dir / pxPerM; });
+  }
   const stepMean = (k: number) => {
     const a = contacts[k]?.touchdown, b = contacts[k + 1]?.touchdown;
     if (!pxPerM || a == null || b == null || b - a < STEP_MIN || b - a > STEP_MAX) return null;
@@ -171,7 +230,7 @@ export function groundForces(input: ForceInput): GroundForces {
   if (input.block && pxPerM && firstTouchdown !== null) {
     const { moveStart, clearance } = input.block;
     const start = pushStart(track, moveStart, dir) ?? moveStart, push = clearance - start;
-    const exit = speed(clearance, firstTouchdown), rise = exitRise(track, clearance, firstTouchdown, G * pxPerM);
+    const exit = first >= 0 ? flightBefore[first] : null, rise = exitRise(track, clearance, firstTouchdown, G * pxPerM);
     if (push > .1 && push < .8 && exit !== null && exit > 0 && rise !== null) {
       const exitRiseMs = rise / pxPerM, horizontal = mass * exit / push, vertical = mass * (G + exitRiseMs / push);
       out.block = { pushStart: start, pushSeconds: push, exitSpeed: exit, exitRise: exitRiseMs, horizontal, vertical, ...arrow(horizontal, vertical), power: exit * exit / 2 / push };
@@ -188,11 +247,7 @@ export function groundForces(input: ForceInput): GroundForces {
     // or the steps' means either side (a step: this touchdown to the next).
     let after: number | null;
     if (input.speeds === 'steps') { before = stepMean(i - 1); after = stepMean(i); }
-    else {
-      if (i > 0) before = speed(contacts[i - 1].toeOff, c.touchdown);
-      else if (!out.block) before = null;
-      after = speed(c.toeOff, next?.touchdown);
-    }
+    else { before = flightBefore[i]; after = flightAfter[i]; }
     const gained = before !== null && after !== null ? after - before : null;
     const horizontal = gained !== null && contactSeconds ? mass * gained / contactSeconds : null;
     const step: ForceStep = { step: i + 1, contactSeconds, flightSeconds, vertical, verticalPeak: vertical === null ? null : vertical * Math.PI / 2,

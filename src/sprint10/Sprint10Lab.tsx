@@ -8,7 +8,7 @@ import { runContacts, sectionTimes, stepTimes, type StepTime } from './sprint-co
 import { gateMoments, gateShifts, legPixels, pelvisAt, type GateKey } from './gate-check';
 import { target50, TAU, TAU_RANGE } from './target50';
 import { contactMoments, effectsBetween, relatedValues, type Edits, type ReviewMoment, type ReviewValue } from './moment-edits';
-import { MomentReview } from './MomentReview';
+import { leaveReview, MomentReview } from './MomentReview';
 import { measureSprint } from './recording';
 import { revisePoses } from './frame-processor';
 import { numberInput } from './number-input';
@@ -61,12 +61,16 @@ const NUDGE = .002;
 /** A number typed in, kept as the text typed: a box emptied to type anew stayed "0" and became "020" (a number box shows
  * what was typed while its number is unchanged; the user's screenshot, 2026-10-09: 「数値入れたら０が残るのやかましい」).
  * Leading zeros are dropped; the number is taken (within min-max) as it is typed, and the text set back to it on leaving. */
+/** A number box that shows what is typed (number-input.ts) and gives the value once the typing is within the range; a
+ * number below the smallest (a 1 on the way to 10) changes nothing yet. The text follows the value only when the box is
+ * not being typed in (the sliders move the same values) and on leaving it. */
 function NumberField({ value, onValue, min, max, whole = false, disabled }: { value: number; onValue: (v: number) => void; min: number; max: number; whole?: boolean; disabled?: boolean }) {
-  const [text, setText] = useState(String(value));
-  useEffect(() => { setText(t => Number(t) === value && t !== '' ? t : String(value)); }, [value]);
+  const [text, setText] = useState(String(value)), typing = useRef(false);
+  useEffect(() => { if (!typing.current) setText(String(value)); }, [value]);
   return <input type="text" inputMode={whole ? 'numeric' : 'decimal'} value={text} disabled={disabled}
-    onChange={e => { const r = numberInput(e.target.value, min, max, whole); setText(r.text); if (r.value !== null) onValue(r.value); }}
-    onBlur={() => setText(String(value))} />;
+    onFocus={() => { typing.current = true; }}
+    onChange={e => { const r = numberInput(e.target.value, min, max, whole); setText(r.text); if (r.value !== null && !r.low) onValue(r.value); }}
+    onBlur={() => { typing.current = false; setText(String(value)); }} />;
 }
 
 export default function Sprint10Lab() {
@@ -339,7 +343,7 @@ export default function Sprint10Lab() {
         {tab !== 'check' && <button type="button" onClick={openCheck}>確認する</button>}</p>}
       {!result.reason && <>
       <div ref={tabs} className="sprint10-tabs sprint-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
-        <button key={id} id={`sprint-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`sprint-panel-${id}`} onClick={() => id === 'check' ? openCheck() : choose(id)}>
+        <button key={id} id={`sprint-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`sprint-panel-${id}`} onClick={() => leaveReview(() => id === 'check' ? openCheck() : choose(id))}>
           {label}{id === 'check' && waiting > 0 && <span className="sprint10-badge" aria-label={`要確認 ${waiting}か所`}>{waiting}</span>}</button>)}</div>
       <div ref={panels} className="sprint10-panels">
         <div id="sprint-panel-advice" role="tabpanel" aria-labelledby="sprint-tab-advice" hidden={tab !== 'advice'}>

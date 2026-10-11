@@ -4,7 +4,8 @@ import { analyzeSprint, sprintSample, type SprintSample } from '../src/sprint10/
 import type { CrouchFrame } from '../src/sprint10/crouch';
 import { crossingFrame, gateMoments, gateShifts, legPixels, pelvisAt } from '../src/sprint10/gate-check';
 import type { ReviewMoment } from '../src/sprint10/moment-edits';
-import { MomentReview } from '../src/sprint10/MomentReview';
+import { readFileSync } from 'node:fs';
+import { leaveReview, MomentReview } from '../src/sprint10/MomentReview';
 
 /** A run at 0.3 picture widths a second, its legs crossing every 0.25 s, analysed at `fps` (the video at `video` fps). */
 const run = (fps = 120, video = 240) => {
@@ -117,5 +118,17 @@ describe('the check view at a gate crossing', () => {
     const html = view({ ...crossing, key: 'td1', kind: 'touchdown', short: '踏切接地', label: '踏切の接地', ground: .9, color: undefined });
     expect(html).toContain('足元'); expect(html).toContain('点線は床、▲は足が着く場所。'); expect(html).toContain('（足が着いている）');
     expect(html).not.toContain('腰まわり'); expect(html).not.toContain('fill="#ffd400"');
+  });
+});
+
+describe('a frame chosen in the check and not decided (the user, 2026-10-11: people forgot 「このコマに決める」)', () => {
+  it('leaves at once when no check waits for a decision', () => {
+    let went = 0; leaveReview(() => { went++; }); expect(went).toBe(1);
+  });
+  it('asks before every event\'s tabs leave the check', () => {
+    for (const f of ['sprint10/CrouchLab', 'sprint10/Sprint10Lab', 'hurdling/HurdleLab', 'throws/ThrowLab', 'longjump/LongJumpLab', 'highjump/HighJumpLab']) {
+      const source = readFileSync(new URL(`../src/${f}.tsx`, import.meta.url), 'utf8');
+      expect(source, f).toContain("onClick={() => leaveReview(() => id === 'check' ? openCheck() : choose(id))}");
+    }
   });
 });

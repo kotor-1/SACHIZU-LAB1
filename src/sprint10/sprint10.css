@@ -166,3 +166,4 @@
 .force-pic img{display:block;width:100%;margin:8px 0 6px;border-radius:8px}
 .force-values{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:8px 0 0;font-size:13.5px}.force-values dt{font-weight:700;color:#3f5f55}.force-values dd{margin:0}
 .sprint10-tabs.sprint-tabs{grid-template-columns:1.35fr .7fr 1fr 1fr 1fr}.sprint10 .sprint-tabs button{font-size:14px}
+.force-direction{display:block;margin-top:2px;font-weight:700;color:#284b40}
