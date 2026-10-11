@@ -46,6 +46,9 @@ export function against(v: number, elite: number): string {
   return v < 0 ? 'ブレーキの方が大きい' : q >= 1.15 ? '一流男子より大きい' : q >= .85 ? '一流男子並み' : q >= .6 ? '一流男子よりやや小さい' : '一流男子より小さい';
 }
 const times = (v: number, mass: number) => `${(v / (mass * G)).toFixed(2)}倍`;
+/** The same comparison in words an athlete can read before opening the numbers. */
+const directionSummary = (angle: number, elite: number) => directionAgainst(angle, elite)
+  .replace('一流男子', '一流男子の目安').replace(/より\d+°水平寄り/, 'より前向き').replace(/より\d+°鉛直寄り/, 'より上向き');
 
 interface Moment { key: string; label: string; frame: number; pts: number; origin: { x: number; y: number } | null;
   picture: NonNullable<ReturnType<typeof forcePicture>> | null;
@@ -140,7 +143,7 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
   const { images, failed } = usePhasePictures(url, frames, phases, overlay);
 
   return <section className="force-view" aria-label="床反力">
-    <h3>床反力（地面が押し返す力）</h3>
+    <h3>地面が体を押し返す力</h3>
     <div className="force-inputs">
       <NumberBox label="体重" unit="kg" value={weight} onValue={setWeight} min={20} max={150} example="例 55" />
       {kind === 'crouch' && <NumberBox label="身長" unit="cm" value={height} onValue={setHeight} min={100} max={220} example="例 160" />}
@@ -151,28 +154,32 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
       {top && <p className="sprint10-note">最高速度の区間では前向きの力はほぼ0になるのがふつうで、1歩ごとの前向きの値は測定のぶれ（体重の±0.2倍ほど）の範囲です。この区間では縦の力を見てください。</p>}
       <ul className="force-list">{moments.map(m => <li key={m.key}><button type="button" aria-pressed={shown?.key === m.key} onClick={() => pick(m.key)}>
         <strong>{m.label}</strong>
-        <span>{m.horizontal !== null ? <>前へ <b>{times(m.horizontal, forces!.mass)}</b></> : '前へ —'}　縦 <b>{m.vertical !== null ? times(m.vertical, forces!.mass) : '—'}</b></span>
+        <span>{m.horizontal !== null ? <>前へ <b>{times(m.horizontal, forces!.mass)}</b></> : '前へ —'}　上へ <b>{m.vertical !== null ? times(m.vertical, forces!.mass) : '—'}</b></span>
         {m.against && <em className={m.against.includes('小さい') || m.against.includes('ブレーキ') ? 'low' : 'ok'}>{m.against}</em>}</button></li>)}</ul>
       {shown && <div ref={picture} className="force-pic" aria-live="polite">
         <div className="force-pic-head"><strong>{shown.label}</strong>
-          {shown.horizontal !== null && <span>前へ {times(shown.horizontal, forces!.mass)}</span>}{shown.vertical !== null && <span>縦 {times(shown.vertical, forces!.mass)}</span>}</div>
+          {shown.horizontal !== null && <span>前へ {times(shown.horizontal, forces!.mass)}</span>}{shown.vertical !== null && <span>上へ {times(shown.vertical, forces!.mass)}</span>}</div>
+        <small className="force-weight-note">数値は、体重を1とした力の大きさです。</small>
         <p className="force-average">{shown.key === 'block' ? '押し始めからブロックを離れるまでの平均' : '接地から離地までの平均'}</p>
         {shown.picture && (images[shown.key] ? <img src={images[shown.key]} alt={`${shown.label}：区間の真ん中のコマに平均の力の矢印${showPoses ? `、${shown.key === 'block' ? '押し始めとブロックを離れる瞬間' : '接地と離地'}の骨格` : ''}`} />
           : <div className="sprint10-phase-wait">{failed ? '画像を作れませんでした' : '画像を作成しています…'}</div>)}
-        <div className="force-picture-caption"><span className="cr-key"><span><i style={{ background: ARROW_COLOR }} />平均の力</span></span><span>背景：区間の真ん中</span></div>
-        <label className="force-pose-toggle"><input type="checkbox" checked={showPoses} onChange={e => setShowPoses(e.target.checked)} />
-          {shown.key === 'block' ? '押し始め・離れる瞬間の骨格を重ねる' : '接地・離地の骨格を重ねる'}</label>
-        {showPoses && <p className="cr-key force-pose-key">
-          <span><i style={{ background: CONTACT_COLOR }} />{shown.key === 'block' ? '接地（押し始め）' : '接地'}</span>
-          <span><i style={{ background: RELEASE_COLOR }} />{shown.key === 'block' ? '離地（ブロックを離れる瞬間）' : '離地'}</span>
-        </p>}
+        <p className="force-picture-caption"><i style={{ background: ARROW_COLOR }} />矢印は、地面が体を押し返す向きです。<small>背景は区間の真ん中のコマです。</small></p>
+        {shown.angle !== null && shown.elite !== null && <p className="force-reading"><span>力の向きを比べると</span><strong>{directionSummary(shown.angle, shown.elite)}</strong></p>}
+        <details className="force-details" onToggle={e => { if (!e.currentTarget.open) setShowPoses(false); }}><summary>詳しい数値・骨格</summary>
+          <label className="force-pose-toggle"><input type="checkbox" checked={showPoses} onChange={e => setShowPoses(e.target.checked)} />
+            {shown.key === 'block' ? '押し始め・離れる瞬間の骨格を重ねる' : '接地・離地の骨格を重ねる'}</label>
+          {showPoses && <p className="cr-key force-pose-key">
+            <span><i style={{ background: CONTACT_COLOR }} />{shown.key === 'block' ? '接地（押し始め）' : '接地'}</span>
+            <span><i style={{ background: RELEASE_COLOR }} />{shown.key === 'block' ? '離地（ブロックを離れる瞬間）' : '離地'}</span>
+          </p>}
         <dl className="force-values">
           {shown.angle !== null && <><dt>向き</dt><dd>地面から {Math.round(shown.angle)}°{shown.elite !== null && <>（一流男子の目安 約{Math.round(shown.elite)}°）
-            <span className="force-direction">{directionAgainst(shown.angle, shown.elite)}</span></>}</dd></>}
+            <span className="force-direction">{directionAgainst(shown.angle, shown.elite).replace('水平寄り', '前向き').replace('鉛直寄り', '上向き')}</span></>}</dd></>}
           {shown.ratio !== null && <><dt>前向きの割合</dt><dd>{Math.round(shown.ratio * 100)}%</dd></>}
           {shown.study && <><dt>研究（前向き）</dt><dd>{shown.study}</dd></>}
           {shown.extra.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}
         </dl>
+        </details>
       </div>}
       <p className="sprint10-hint">体重の何倍の力で地面を押したか（1回の接地の平均）。研究は男子の値です（出し方は「数値の見方」）。</p>
     </>}
