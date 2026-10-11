@@ -47,14 +47,15 @@ export function against(v: number, elite: number): string {
 }
 const times = (v: number, mass: number) => `${(v / (mass * G)).toFixed(2)}倍`;
 /** The same comparison in words an athlete can read before opening the numbers. */
-const directionSummary = (angle: number, elite: number) => directionAgainst(angle, elite)
-  .replace('一流男子', '一流男子の目安').replace(/より\d+°水平寄り/, 'より前向き').replace(/より\d+°鉛直寄り/, 'より上向き');
+const directionSummary = (angle: number, elite: number, provisional: boolean) => directionAgainst(angle, elite)
+  .replace('一流男子', provisional ? '仮の目安' : '一流男子の目安').replace('水平寄り', '前向き').replace('鉛直寄り', '上向き');
 
 interface Moment { key: string; label: string; frame: number; pts: number; origin: { x: number; y: number } | null;
   picture: NonNullable<ReturnType<typeof forcePicture>> | null;
   horizontal: number | null; vertical: number | null; angle: number | null; ratio: number | null; extra: [string, string][]; against: string | null; study: string | null;
   /** The elite men's direction for this phase (degrees from the ground), when there is one. */
-  elite: number | null }
+  elite: number | null; eliteProvisional: boolean }
+type PictureStage = 'start' | 'middle' | 'end';
 
 /** A box for the weight or the height: it shows what is typed (number-input.ts), and gives the value only once the
  * typing is a number within the range (a 5 on the way to 55 gives nothing, not the smallest 20). The text is set from
@@ -98,7 +99,7 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
       const picture = forcePicture(frames, b.pushStart, block.clearance, W, H, toe ? { x: toe.x * W, y: toe.y * H } : null);
       const S = FORCE_STUDY.block;
       out.push({ key: 'block', label: 'ブロック', frame: picture?.frame ?? 0, pts: picture?.pts ?? 0, origin: picture?.origin ?? null, picture,
-        horizontal: b.horizontal, vertical: b.vertical, angle: b.angle, ratio: b.ratio, against: against(b.horizontal / (m * G), S.elite), elite: DIRECTION_STUDY.block.angle,
+        horizontal: b.horizontal, vertical: b.vertical, angle: b.angle, ratio: b.ratio, against: against(b.horizontal / (m * G), S.elite), elite: DIRECTION_STUDY.block.angle, eliteProvisional: false,
         study: `一流男子 ${S.elite.toFixed(2)}倍・ジュニア男子 ${S.junior.toFixed(2)}倍`,
         extra: [['押した時間', `${b.pushSeconds.toFixed(3)}秒`], ['押す強さ', `${b.power.toFixed(1)} W/kg（平均の前向きパワー。一流男子 ${S.power.elite}・ジュニア男子 ${S.power.junior}）`],
           ['縦の力', '手で支えた分も含みます']] });
@@ -112,6 +113,7 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
         horizontal: s.horizontal, vertical: s.vertical, angle: s.angle, ratio: s.ratio,
         against: S && s.horizontal !== null ? against(s.horizontal / (m * G), S.elite) : null,
         elite: kind === 'crouch' ? DIRECTION_STUDY.steps[i]?.angle ?? null : null,
+        eliteProvisional: kind === 'crouch' && (DIRECTION_STUDY.steps[i]?.provisional ?? false),
         study: S ? `一流男子 約${S.elite.toFixed(2)}倍・ジュニア男子 約${S.junior.toFixed(2)}倍` : null,
         extra: [...(top ? [['研究（縦）', '速い選手ほど大きく、速い選手で約2〜2.5倍（Weyandら 2000）'] as [string, string]] : []),
           ...(s.verticalPeak !== null ? [['縦の最大（目安）', times(s.verticalPeak, m)] as [string, string]] : []),
@@ -119,27 +121,39 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
     });
     return out;
   }, [forces, block, contacts, kind, frames, W, H, top]);
-  const [picked, setPicked] = useState<string | null>(null), [showPoses, setShowPoses] = useState(false), picture = useRef<HTMLDivElement>(null);
+  const [picked, setPicked] = useState<string | null>(null), [stage, setStage] = useState<PictureStage>('middle'), picture = useRef<HTMLDivElement>(null);
   const shown = moments.find(m => m.key === picked) ?? moments.find(m => m.horizontal !== null) ?? moments[0] ?? null;
-  const pick = (k: string) => { setPicked(k); requestAnimationFrame(() => picture.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })); };
+  const pick = (k: string) => { setPicked(k); setStage('middle'); requestAnimationFrame(() => picture.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })); };
+  useEffect(() => setStage('middle'), [shown?.key, url]);
   const bw = (forces?.mass ?? 1) * G;
+  const startLabel = shown?.key === 'block' ? '押し始め' : '接地', endLabel = shown?.key === 'block' ? '離れる瞬間' : '離地';
+  const imageKey = shown ? `${shown.key}-${stage}` : '';
 
   // The arrow on the picture: from the foot on the ground, its length a body weight per LEG_PER_WEIGHT of the leg.
   const phases: Phase[] = useMemo(() => {
     if (!shown?.picture) return [];
     const middle = frames.find(f => f.frame === shown.frame), pose = middle ? anglePose(middle) : null;
-    return [{ key: shown.key, label: shown.label, frame: shown.frame, pts: shown.pts,
-      marks: [], skeleton: false, bounds: showPoses ? shown.picture.bounds : pose ?? shown.picture.bounds }];
-  }, [shown, frames, showPoses]);
+    const phases: Phase[] = [{ key: `${shown.key}-middle`, label: shown.label, frame: shown.frame, pts: shown.pts,
+      marks: [], skeleton: false, bounds: pose ?? shown.picture.bounds }];
+    for (const stage of ['start', 'end'] as const) {
+      const endpoint = shown.picture[stage], pose = stage === 'start' ? shown.picture.startPose : shown.picture.endPose;
+      if (endpoint) phases.push({ key: `${shown.key}-${stage}`, label: shown.label, ...endpoint,
+        marks: [], skeleton: false, bounds: pose ?? shown.picture.bounds });
+    }
+    return phases;
+  }, [shown, frames]);
   const overlay = useCallback<FigureOverlay>((p, ctx, to, unit) => {
-    if (showPoses && shown?.picture) {
-      drawForcePose(ctx, shown.picture.startPose, to, unit, CONTACT_COLOR);
-      drawForcePose(ctx, shown.picture.endPose, to, unit, RELEASE_COLOR);
+    if (p.key.endsWith('-start') || p.key.endsWith('-end')) {
+      if (shown?.picture) {
+        const start = p.key.endsWith('-start');
+        drawForcePose(ctx, start ? shown.picture.startPose : shown.picture.endPose, to, unit, start ? CONTACT_COLOR : RELEASE_COLOR);
+      }
+      return;
     }
     if (!shown?.origin || shown.vertical === null) return;
     const f = frames.find(q => q.frame === p.frame), pose = f ? anglePose(f) : null;
     drawForceArrow(ctx, to, { x: shown.origin.x / W, y: shown.origin.y / H }, pose, shown.horizontal ?? 0, shown.vertical, bw, direction || 1, unit);
-  }, [shown, frames, W, H, bw, direction, showPoses]);
+  }, [shown, frames, W, H, bw, direction]);
   const { images, failed } = usePhasePictures(url, frames, phases, overlay);
 
   return <section className="force-view" aria-label="床反力">
@@ -161,20 +175,20 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
           {shown.horizontal !== null && <span>前へ {times(shown.horizontal, forces!.mass)}</span>}{shown.vertical !== null && <span>上へ {times(shown.vertical, forces!.mass)}</span>}</div>
         <small className="force-weight-note">数値は、体重を1とした力の大きさです。</small>
         <p className="force-average">{shown.key === 'block' ? '押し始めからブロックを離れるまでの平均' : '接地から離地までの平均'}</p>
-        {shown.picture && (images[shown.key] ? <img src={images[shown.key]} alt={`${shown.label}：区間の真ん中のコマに平均の力の矢印${showPoses ? `、${shown.key === 'block' ? '押し始めとブロックを離れる瞬間' : '接地と離地'}の骨格` : ''}`} />
+        {shown.picture && <div className="force-photo-choices" role="group" aria-label="写真の瞬間">
+          <button type="button" aria-pressed={stage === 'start'} onClick={() => setStage('start')}>{startLabel}</button>
+          <button type="button" aria-pressed={stage === 'middle'} onClick={() => setStage('middle')}>真ん中<small>平均の力</small></button>
+          <button type="button" aria-pressed={stage === 'end'} onClick={() => setStage('end')}>{endLabel}</button>
+        </div>}
+        {shown.picture && (images[imageKey] ? <img src={images[imageKey]} alt={`${shown.label}：${stage === 'middle' ? '区間の真ん中のコマに平均の力の矢印' : `${stage === 'start' ? startLabel : endLabel}の写真と骨格`}`} />
           : <div className="sprint10-phase-wait">{failed ? '画像を作れませんでした' : '画像を作成しています…'}</div>)}
-        <p className="force-picture-caption"><i style={{ background: ARROW_COLOR }} />矢印は、地面が体を押し返す向きです。<small>背景は区間の真ん中のコマです。</small></p>
-        {shown.angle !== null && shown.elite !== null && <p className="force-reading"><span>力の向きを比べると</span><strong>{directionSummary(shown.angle, shown.elite)}</strong></p>}
-        <details className="force-details" onToggle={e => { if (!e.currentTarget.open) setShowPoses(false); }}><summary>詳しい数値・骨格</summary>
-          <label className="force-pose-toggle"><input type="checkbox" checked={showPoses} onChange={e => setShowPoses(e.target.checked)} />
-            {shown.key === 'block' ? '押し始め・離れる瞬間の骨格を重ねる' : '接地・離地の骨格を重ねる'}</label>
-          {showPoses && <p className="cr-key force-pose-key">
-            <span><i style={{ background: CONTACT_COLOR }} />{shown.key === 'block' ? '接地（押し始め）' : '接地'}</span>
-            <span><i style={{ background: RELEASE_COLOR }} />{shown.key === 'block' ? '離地（ブロックを離れる瞬間）' : '離地'}</span>
-          </p>}
+        <p className="force-picture-caption">{stage === 'middle' ? <><i style={{ background: ARROW_COLOR }} />地面が体を押し返す向き<small>矢印は動画から推定した平均の力です。{shown.key === 'block' && '手で支えた分も含みます。'}</small></>
+          : <><i style={{ background: stage === 'start' ? CONTACT_COLOR : RELEASE_COLOR }} />{stage === 'start' ? startLabel : endLabel}の姿勢<small>この瞬間の写真に、同じ瞬間の骨格を表示しています。</small></>}</p>
+        {shown.angle !== null && shown.elite !== null && <p className="force-reading"><span>平均の力の向き</span><strong>{directionSummary(shown.angle, shown.elite, shown.eliteProvisional)}</strong>
+          {shown.eliteProvisional && <small>比較に使う{Math.round(shown.elite)}°は仮の目安です。</small>}</p>}
+        <details className="force-details"><summary>詳しい数値</summary>
         <dl className="force-values">
-          {shown.angle !== null && <><dt>向き</dt><dd>地面から {Math.round(shown.angle)}°{shown.elite !== null && <>（一流男子の目安 約{Math.round(shown.elite)}°）
-            <span className="force-direction">{directionAgainst(shown.angle, shown.elite).replace('水平寄り', '前向き').replace('鉛直寄り', '上向き')}</span></>}</dd></>}
+          {shown.angle !== null && <><dt>向き</dt><dd>地面から {Math.round(shown.angle)}°{shown.elite !== null && <small>{shown.eliteProvisional ? '仮の目安' : '一流男子の目安'} 約{Math.round(shown.elite)}°</small>}</dd></>}
           {shown.ratio !== null && <><dt>前向きの割合</dt><dd>{Math.round(shown.ratio * 100)}%</dd></>}
           {shown.study && <><dt>研究（前向き）</dt><dd>{shown.study}</dd></>}
           {shown.extra.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}

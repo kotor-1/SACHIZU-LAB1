@@ -18,6 +18,8 @@ describe('the picture for an average force', () => {
     expect(picture.pts).toBe(1.101);
     expect(picture.startPose).toBe(start);
     expect(picture.endPose).toBe(end);
+    expect(picture.start).toEqual({ frame: 10, pts: 1 });
+    expect(picture.end).toEqual({ frame: 14, pts: 1.2 });
     expect(picture.origin).toEqual(anchor);
     expect(forcePicture([], 1, 1.2, W, H, anchor)).toBeNull();
   });
@@ -31,6 +33,9 @@ describe('the picture for an average force', () => {
     expect(picture.frame).toBe(110);
     expect(picture.startPose).toBe(start);
     expect(picture.endPose).toBe(end);
+    // The separate endpoint photos must use exactly the frame that supplies their skeleton.
+    expect(picture.start).toEqual({ frame: 101, pts: 2.01 });
+    expect(picture.end).toEqual({ frame: 119, pts: 2.39 });
     // The endpoint outlines must retain their video positions instead of being
     // aligned to the middle pose, and neither outline may be cropped away.
     for (const point of [...start, ...middle, ...end]) expect(picture.bounds).toContain(point);
