@@ -116,24 +116,27 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
     });
     return out;
   }, [forces, block, contacts, kind, frames, W, H, top]);
-  const [picked, setPicked] = useState<string | null>(null), picture = useRef<HTMLDivElement>(null);
+  const [picked, setPicked] = useState<string | null>(null), [showPoses, setShowPoses] = useState(false), picture = useRef<HTMLDivElement>(null);
   const shown = moments.find(m => m.key === picked) ?? moments.find(m => m.horizontal !== null) ?? moments[0] ?? null;
   const pick = (k: string) => { setPicked(k); requestAnimationFrame(() => picture.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })); };
   const bw = (forces?.mass ?? 1) * G;
 
   // The arrow on the picture: from the foot on the ground, its length a body weight per LEG_PER_WEIGHT of the leg.
-  const phases: Phase[] = useMemo(() => shown?.picture ? [{ key: shown.key, label: shown.label, frame: shown.frame, pts: shown.pts,
-    marks: [], skeleton: false, bounds: shown.picture.bounds }] : [], [shown]);
+  const phases: Phase[] = useMemo(() => {
+    if (!shown?.picture) return [];
+    const middle = frames.find(f => f.frame === shown.frame), pose = middle ? anglePose(middle) : null;
+    return [{ key: shown.key, label: shown.label, frame: shown.frame, pts: shown.pts,
+      marks: [], skeleton: false, bounds: showPoses ? shown.picture.bounds : pose ?? shown.picture.bounds }];
+  }, [shown, frames, showPoses]);
   const overlay = useCallback<FigureOverlay>((p, ctx, to, unit) => {
-    if (shown?.picture) {
+    if (showPoses && shown?.picture) {
       drawForcePose(ctx, shown.picture.startPose, to, unit, CONTACT_COLOR);
       drawForcePose(ctx, shown.picture.endPose, to, unit, RELEASE_COLOR);
     }
     if (!shown?.origin || shown.vertical === null) return;
     const f = frames.find(q => q.frame === p.frame), pose = f ? anglePose(f) : null;
-    drawForceArrow(ctx, to, { x: shown.origin.x / W, y: shown.origin.y / H }, pose, shown.horizontal ?? 0, shown.vertical, bw, direction || 1, unit, shown.horizontal !== null,
-      shown.horizontal !== null ? shown.elite : null);
-  }, [shown, frames, W, H, bw, direction]);
+    drawForceArrow(ctx, to, { x: shown.origin.x / W, y: shown.origin.y / H }, pose, shown.horizontal ?? 0, shown.vertical, bw, direction || 1, unit);
+  }, [shown, frames, W, H, bw, direction, showPoses]);
   const { images, failed } = usePhasePictures(url, frames, phases, overlay);
 
   return <section className="force-view" aria-label="床反力">
@@ -154,13 +157,15 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
         <div className="force-pic-head"><strong>{shown.label}</strong>
           {shown.horizontal !== null && <span>前へ {times(shown.horizontal, forces!.mass)}</span>}{shown.vertical !== null && <span>縦 {times(shown.vertical, forces!.mass)}</span>}</div>
         <p className="force-average">{shown.key === 'block' ? '押し始めからブロックを離れるまでの平均' : '接地から離地までの平均'}</p>
-        {shown.picture && (images[shown.key] ? <img src={images[shown.key]} alt={`${shown.label}：区間の真ん中のコマに、${shown.key === 'block' ? '押し始めとブロックを離れる瞬間' : '接地と離地'}の骨格と平均の力の矢印`} />
+        {shown.picture && (images[shown.key] ? <img src={images[shown.key]} alt={`${shown.label}：区間の真ん中のコマに平均の力の矢印${showPoses ? `、${shown.key === 'block' ? '押し始めとブロックを離れる瞬間' : '接地と離地'}の骨格` : ''}`} />
           : <div className="sprint10-phase-wait">{failed ? '画像を作れませんでした' : '画像を作成しています…'}</div>)}
-        <p className="cr-key"><span><i style={{ background: ARROW_COLOR }} />押す力（平均）</span>{shown.horizontal !== null && <span><i className="white" />前向き・縦</span>}
+        <div className="force-picture-caption"><span className="cr-key"><span><i style={{ background: ARROW_COLOR }} />平均の力</span></span><span>背景：区間の真ん中</span></div>
+        <label className="force-pose-toggle"><input type="checkbox" checked={showPoses} onChange={e => setShowPoses(e.target.checked)} />
+          {shown.key === 'block' ? '押し始め・離れる瞬間の骨格を重ねる' : '接地・離地の骨格を重ねる'}</label>
+        {showPoses && <p className="cr-key force-pose-key">
           <span><i style={{ background: CONTACT_COLOR }} />{shown.key === 'block' ? '接地（押し始め）' : '接地'}</span>
           <span><i style={{ background: RELEASE_COLOR }} />{shown.key === 'block' ? '離地（ブロックを離れる瞬間）' : '離地'}</span>
-          {shown.angle !== null && shown.elite !== null && <span><i style={{ background: ELITE_COLOR }} />一流男子の目安の向き</span>}</p>
-        <p className="force-picture-note">背景は{shown.key === 'block' ? '押し始めからブロックを離れるまで' : '接地から離地まで'}の真ん中のコマです。薄い線は区間の始めと終わりの姿勢です。</p>
+        </p>}
         <dl className="force-values">
           {shown.angle !== null && <><dt>向き</dt><dd>地面から {Math.round(shown.angle)}°{shown.elite !== null && <>（一流男子の目安 約{Math.round(shown.elite)}°）
             <span className="force-direction">{directionAgainst(shown.angle, shown.elite)}</span></>}</dd></>}
@@ -174,36 +179,23 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
   </section>;
 }
 
-export const ARROW_COLOR = '#ffd23f', ELITE_COLOR = 'rgba(150,215,255,.85)';
+export const ARROW_COLOR = '#ffd23f';
 /** The mean push as an arrow from the foot: forward along the run, up; its length a body weight to 0.8 of the leg
- * (hip to ankle at that moment) on the picture; with `parts`, its forward and upward parts dashed; with `elite`, the
- * elite men's direction as a thin dashed line over it, a fifth longer (a few degrees apart, a line beside the arrow hid
- * behind it). */
+ * (hip to ankle at that moment) on the picture. Keep the photo to one arrow; the components and comparison are text. */
 function drawForceArrow(ctx: CanvasRenderingContext2D, to: (q: { x: number; y: number }) => { x: number; y: number }, origin: { x: number; y: number },
-  pose: { x: number; y: number }[] | null, horizontal: number, vertical: number, weight: number, dir: number, unit: number, parts: boolean, elite: number | null = null) {
+  pose: { x: number; y: number }[] | null, horizontal: number, vertical: number, weight: number, dir: number, unit: number) {
   const o = to(origin);
   const hip = pose ? to({ x: (pose[23].x + pose[24].x) / 2, y: (pose[23].y + pose[24].y) / 2 }) : null;
   const leg = hip ? Math.max(unit * 12, Math.hypot(hip.x - o.x, hip.y - o.y)) : unit * 20;
   const k = .8 * leg / weight, dx = dir * horizontal * k, dy = -vertical * k;
   ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  if (parts) {
-    ctx.setLineDash([unit * .8, unit * .6]); ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = unit * .35;
-    ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x + dx, o.y); ctx.lineTo(o.x + dx, o.y + dy); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x, o.y + dy); ctx.lineTo(o.x + dx, o.y + dy); ctx.stroke();
-    ctx.setLineDash([]);
-  }
-  const head = unit * 2.2, a = Math.atan2(dy, dx);
-  for (const [color, width] of [['rgba(8,18,16,.75)', unit * 1.5], [ARROW_COLOR, unit * .9]] as const) {
+  const head = unit * 1.8, a = Math.atan2(dy, dx);
+  for (const [color, width] of [['rgba(8,18,16,.7)', unit * .95], [ARROW_COLOR, unit * .6]] as const) {
     ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = width;
     ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x + dx - Math.cos(a) * head * .6, o.y + dy - Math.sin(a) * head * .6); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(o.x + dx, o.y + dy);
     ctx.lineTo(o.x + dx - head * Math.cos(a - .45), o.y + dy - head * Math.sin(a - .45)); ctx.lineTo(o.x + dx - head * Math.cos(a + .45), o.y + dy - head * Math.sin(a + .45));
     ctx.closePath(); ctx.fill();
-  }
-  if (elite !== null) {
-    const length = 1.2 * Math.hypot(dx, dy), e = elite * Math.PI / 180;
-    ctx.setLineDash([unit * 1.1, unit * .7]); ctx.strokeStyle = ELITE_COLOR; ctx.lineWidth = unit * .5;
-    ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x + dir * Math.cos(e) * length, o.y - Math.sin(e) * length); ctx.stroke();
-    ctx.setLineDash([]);
   }
   ctx.restore();
 }
