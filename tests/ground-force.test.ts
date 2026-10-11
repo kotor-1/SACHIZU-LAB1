@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import type { Contact } from '../src/sprint10/contacts';
 import { bodyTrack, G, groundForces, positionAt, pushStart, scaleFromHeight, type TrackPoint } from '../src/sprint10/ground-force';
 import type { CrouchFrame, CrouchPoint } from '../src/sprint10/crouch';
 
@@ -144,28 +147,25 @@ describe('ground reaction force from the video and the body mass', () => {
   });
 });
 
-describe('the studies the forces are set against', () => {
-  it('works the forward forces out of the published speeds and times, and puts a value against the elite men\'s in words', async () => {
-    const { FORCE_STUDY, against } = await import('../src/sprint10/ForceView');
+describe('contact-period force display', () => {
+  it('keeps the published mean forward-force references', async () => {
+    const { FORCE_STUDY } = await import('../src/sprint10/ForceView');
     // Graham-Smith et al. 2020: elite men 3.36 m/s in 0.365 s → 0.94 body weights; juniors 3.16 in 0.412 → 0.78.
     expect(FORCE_STUDY.block.elite).toBeCloseTo(.938, 2); expect(FORCE_STUDY.block.junior).toBeCloseTo(.782, 2);
     expect(FORCE_STUDY.steps[0].elite).toBeCloseTo(.648, 2); expect(FORCE_STUDY.steps[1].elite).toBeCloseTo(.519, 2);
-    expect(against(.98, .938)).toBe('一流男子並み'); expect(against(1.2, .938)).toBe('一流男子より大きい');
-    expect(against(.7, .938)).toBe('一流男子よりやや小さい'); expect(against(.13, .648)).toBe('一流男子より小さい');
-    expect(against(-.1, .648)).toBe('ブレーキの方が大きい');
   });
-  it('sets the push\'s direction against the elite men\'s for the phase, in neutral words, alike within the one-frame spread', async () => {
-    const { DIRECTION_STUDY, DIRECTION_SAME, directionAgainst } = await import('../src/sprint10/ForceView');
-    // The block's from the study (forward 0.94, upward (9.81 + 0.60 ÷ 0.365) ÷ 9.81 = 1.17 body weights): 51°.
-    expect(DIRECTION_STUDY.block).toMatchObject({ provisional: false }); expect(DIRECTION_STUDY.block.angle).toBeCloseTo(51.2, 1);
-    // The first and second contacts' are provisional until a study's.
-    expect(DIRECTION_STUDY.steps).toEqual([{ angle: 63, provisional: true }, { angle: 70, provisional: true }]);
-    // Up to 2° (as shown, whole degrees) alike: a frame's shift moved the angles by 1.4° at most on three starts.
-    expect(DIRECTION_SAME).toBe(2);
-    expect(directionAgainst(64.6, 63)).toBe('一流男子と同じくらいの向き'); expect(directionAgainst(60.6, 63)).toBe('一流男子と同じくらいの向き');
-    expect(directionAgainst(66, 63)).toBe('一流男子より3°鉛直寄り'); expect(directionAgainst(59.6, 63)).toBe('一流男子より3°水平寄り');
-    expect(directionAgainst(81, 70)).toBe('一流男子より11°鉛直寄り'); expect(directionAgainst(49.6, DIRECTION_STUDY.block.angle)).toBe('一流男子と同じくらいの向き');
-    expect(directionAgainst(47.4, DIRECTION_STUDY.block.angle)).toBe('一流男子より4°水平寄り');
-    for (const a of [40, 55, 63, 70, 85]) expect(directionAgainst(a, 63)).not.toMatch(/できて|足りな|良い|悪い/);
+  it('shows the same contact mean without claiming a force at a pictured instant', async () => {
+    const { default: ForceView } = await import('../src/sprint10/ForceView');
+    vi.stubGlobal('localStorage', { getItem: (key: string) => key === 'sachizu-body-weight' ? String(MASS) : null });
+    try {
+      const html = renderToStaticMarkup(createElement(ForceView, {
+        kind: 'run', contacts: contacts as Contact[], frames: [], width: 1920, height: 1080, direction: 1, url: 'video.mov', pxPerM: PX,
+      }));
+      expect(html).toContain('接地から離地までの平均（動画から推定）');
+      expect(html).toContain('接地中のどの瞬間に、どちらへ力を出したかは、この結果では判断できません。');
+      expect(html).toContain('1.26倍'); // (0.05 / 0.195 + 1), unchanged from groundForces.
+      expect(html).toContain('0.195秒');
+      expect(html).not.toMatch(/<img|<canvas|写真の瞬間|真ん中|仮の目安|鉛直寄り|水平寄り|縦の最大/);
+    } finally { vi.unstubAllGlobals(); }
   });
 });

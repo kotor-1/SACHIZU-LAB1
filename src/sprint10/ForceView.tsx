@@ -1,11 +1,8 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { numberInput } from './number-input';
-import { anglePose, type CrouchFrame } from './crouch';
+import type { CrouchFrame } from './crouch';
 import type { Contact } from './contacts';
 import { bodyTrack, G, groundForces, scaleFromHeight, type GroundForces } from './ground-force';
-import { usePhasePictures, type FigureOverlay } from './CrouchViews';
-import type { Phase } from './crouch-figure';
-import { CONTACT_COLOR, RELEASE_COLOR, drawForcePose, forcePicture } from './force-figure';
 
 /** The body's weight and height, kept on this device only (the user enters them once). */
 const WEIGHT_KEY = 'sachizu-body-weight', HEIGHT_KEY = 'sachizu-body-height';
@@ -20,42 +17,11 @@ export const FORCE_STUDY = {
   block: { elite: 3.36 / .365 / G, junior: 3.16 / .412 / G, power: { elite: 15.5, junior: 12.4 } },
   steps: [{ elite: (4.60 - 3.36) / .195 / G, junior: (4.39 - 3.16) / .202 / G }, { elite: (5.48 - 4.60) / .173 / G, junior: (5.27 - 4.39) / .173 / G }],
 } as const;
-/** The elite men's mean push direction (degrees from the ground), to set the athlete's against (the user, 2026-10-11:
- * even elite sprinters push at 60-70° from the ground early in the acceleration, so the direction is read against the
- * phase's elite value, not as horizontal or vertical). The block's from the same study: forward as above, upward
- * g + the upward exit speed (0.60 m/s, Graham-Smith et al. 2020) ÷ the push, so 51°. The first and second contacts'
- * are PROVISIONAL (暫定): the study gives no upward forces there (no flight times); 63° and 70° as the user set them,
- * until a study's values replace them. None for later contacts. */
-export const DIRECTION_STUDY = {
-  block: { angle: Math.atan2(G + .60 / .365, 3.36 / .365) * 180 / Math.PI, provisional: false },
-  steps: [{ angle: 63, provisional: true }, { angle: 70, provisional: true }],
-} as const;
-/** Directions up to this many degrees from the elite value (both shown in whole degrees) read as alike: shifting every
- * touchdown and toe-off of the first three contacts a frame either way (729 ways) moved the angles by 1.4° at most on
- * three starts (the user's IMG_0433 and しゅん, 2026-10-11, and IMG_0291; the block's 0.6°), and two browsers differed
- * by 1° at most; with the rounding to whole degrees, a difference of 2° can come from a frame. */
-export const DIRECTION_SAME = 2;
-/** The athlete's direction against the elite value, both as shown (whole degrees), in neutral words. */
-export function directionAgainst(angle: number, elite: number): string {
-  const d = Math.round(angle) - Math.round(elite);
-  return Math.abs(d) <= DIRECTION_SAME ? '一流男子と同じくらいの向き' : `一流男子より${Math.abs(d)}°${d < 0 ? '水平' : '鉛直'}寄り`;
-}
-/** Where a forward force stands against the elite men's: within 15% alike. */
-export function against(v: number, elite: number): string {
-  const q = v / elite;
-  return v < 0 ? 'ブレーキの方が大きい' : q >= 1.15 ? '一流男子より大きい' : q >= .85 ? '一流男子並み' : q >= .6 ? '一流男子よりやや小さい' : '一流男子より小さい';
-}
 const times = (v: number, mass: number) => `${(v / (mass * G)).toFixed(2)}倍`;
-/** The same comparison in words an athlete can read before opening the numbers. */
-const directionSummary = (angle: number, elite: number, provisional: boolean) => directionAgainst(angle, elite)
-  .replace('一流男子', provisional ? '仮の目安' : '一流男子の目安').replace('水平寄り', '前向き').replace('鉛直寄り', '上向き');
-
-interface Moment { key: string; label: string; frame: number; pts: number; origin: { x: number; y: number } | null;
-  picture: NonNullable<ReturnType<typeof forcePicture>> | null;
-  horizontal: number | null; vertical: number | null; angle: number | null; ratio: number | null; extra: [string, string][]; against: string | null; study: string | null;
-  /** The elite men's direction for this phase (degrees from the ground), when there is one. */
-  elite: number | null; eliteProvisional: boolean }
-type PictureStage = 'start' | 'middle' | 'end';
+interface ForcePeriod {
+  key: string; label: string; horizontal: number | null; vertical: number | null; ratio: number | null;
+  extra: [string, string][]; study: string | null;
+}
 
 /** A box for the weight or the height: it shows what is typed (number-input.ts), and gives the value only once the
  * typing is a number within the range (a 5 on the way to 55 gives nothing, not the smallest 20). The text is set from
@@ -69,9 +35,8 @@ function NumberBox({ label, unit, value, onValue, min, max, example }: { label: 
     onBlur={() => { typing.current = false; setText(value === null ? '' : String(value)); }} />{unit}</label>;
 }
 
-/** The ground's push (ground-force.ts) on the crouch start or a run: the weight (and, for the crouch start, the height)
- * typed in, then each moment's mean push as one arrow on the athlete's picture, in body weights, beside the studies'. */
-export default function ForceView({ kind, contacts, frames, width: W, height: H, direction, url, block, pxPerM, top = false }: {
+/** Contact-period estimates only: no still frame or posture is presented as an instantaneous force measurement. */
+export default function ForceView({ kind, contacts, frames, width: W, height: H, direction, block, pxPerM, top = false }: {
   kind: 'crouch' | 'run'; contacts: readonly Contact[]; frames: readonly CrouchFrame[]; width: number; height: number; direction: number; url: string;
   /** A section at top speed (the flying 10 m): the forward force about nil there, the vertical the one to read. */
   top?: boolean;
@@ -88,135 +53,64 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
   const forces: GroundForces | null = useMemo(() => weight ? groundForces({ mass: weight, contacts, track, pxPerM: scale, scaleSource: kind === 'run' ? 'lines' : 'height', direction,
     speeds: kind === 'run' ? 'steps' : 'flights',
     block: block ? { moveStart: block.moveStart, clearance: block.clearance } : null }) : null, [weight, contacts, track, scale, kind, direction, block]);
-  // The moments: the block's middle of the push and each contact's middle, their arrow from the foot on the ground.
-  const moments: Moment[] = useMemo(() => {
+  const periods: ForcePeriod[] = useMemo(() => {
     if (!forces) return [];
-    const out: Moment[] = [], m = forces.mass;
+    const out: ForcePeriod[] = [];
     const b = forces.block;
-    if (b && block) {
-      const start = frames.reduce<CrouchFrame | null>((best, f) => !best || Math.abs(f.pts - b.pushStart) < Math.abs(best.pts - b.pushStart) ? f : best, null);
-      const pose = start ? anglePose(start) : null, toe = pose && block.side !== null ? pose[31 + block.side] : null;
-      const picture = forcePicture(frames, b.pushStart, block.clearance, W, H, toe ? { x: toe.x * W, y: toe.y * H } : null);
+    if (b) {
       const S = FORCE_STUDY.block;
-      out.push({ key: 'block', label: 'ブロック', frame: picture?.frame ?? 0, pts: picture?.pts ?? 0, origin: picture?.origin ?? null, picture,
-        horizontal: b.horizontal, vertical: b.vertical, angle: b.angle, ratio: b.ratio, against: against(b.horizontal / (m * G), S.elite), elite: DIRECTION_STUDY.block.angle, eliteProvisional: false,
+      out.push({ key: 'block', label: 'ブロック', horizontal: b.horizontal, vertical: b.vertical, ratio: b.ratio,
         study: `一流男子 ${S.elite.toFixed(2)}倍・ジュニア男子 ${S.junior.toFixed(2)}倍`,
-        extra: [['押した時間', `${b.pushSeconds.toFixed(3)}秒`], ['押す強さ', `${b.power.toFixed(1)} W/kg（平均の前向きパワー。一流男子 ${S.power.elite}・ジュニア男子 ${S.power.junior}）`],
-          ['縦の力', '手で支えた分も含みます']] });
+        extra: [['押した時間', `${b.pushSeconds.toFixed(3)}秒`], ['平均の前向きパワー', `${b.power.toFixed(1)} W/kg（研究の区間平均：一流男子 ${S.power.elite}・ジュニア男子 ${S.power.junior}）`],
+          ['上向きの力', '手で支えた分も含みます']] });
     }
     forces.steps.forEach((s, i) => {
       const c = contacts[i];
       if (!c || c.touchdown === null || c.toeOff === null || (s.horizontal === null && s.vertical === null)) return;
-      const picture = forcePicture(frames, c.touchdown, c.toeOff, W, H, { x: c.x, y: c.groundY }, { start: c.touchdownFrame, end: c.toeOffFrame });
       const S = kind === 'crouch' ? FORCE_STUDY.steps[i] : undefined;
-      out.push({ key: `step${i + 1}`, label: `${i + 1}歩目`, frame: picture?.frame ?? 0, pts: picture?.pts ?? 0, origin: picture?.origin ?? null, picture,
-        horizontal: s.horizontal, vertical: s.vertical, angle: s.angle, ratio: s.ratio,
-        against: S && s.horizontal !== null ? against(s.horizontal / (m * G), S.elite) : null,
-        elite: kind === 'crouch' ? DIRECTION_STUDY.steps[i]?.angle ?? null : null,
-        eliteProvisional: kind === 'crouch' && (DIRECTION_STUDY.steps[i]?.provisional ?? false),
+      out.push({ key: `step${i + 1}`, label: `${i + 1}歩目`, horizontal: s.horizontal, vertical: s.vertical, ratio: s.ratio,
         study: S ? `一流男子 約${S.elite.toFixed(2)}倍・ジュニア男子 約${S.junior.toFixed(2)}倍` : null,
-        extra: [...(top ? [['研究（縦）', '速い選手ほど大きく、速い選手で約2〜2.5倍（Weyandら 2000）'] as [string, string]] : []),
-          ...(s.verticalPeak !== null ? [['縦の最大（目安）', times(s.verticalPeak, m)] as [string, string]] : []),
+        extra: [...(top ? [['研究の上向きの力（区間平均）', '速い選手で約2〜2.5倍（Weyandら 2000）'] as [string, string]] : []),
           ...(s.contactSeconds !== null ? [['接地時間', `${s.contactSeconds.toFixed(3)}秒`] as [string, string]] : [])] });
     });
     return out;
-  }, [forces, block, contacts, kind, frames, W, H, top]);
-  const [picked, setPicked] = useState<string | null>(null), [stage, setStage] = useState<PictureStage>('middle'), picture = useRef<HTMLDivElement>(null);
-  const shown = moments.find(m => m.key === picked) ?? moments.find(m => m.horizontal !== null) ?? moments[0] ?? null;
-  const pick = (k: string) => { setPicked(k); setStage('middle'); requestAnimationFrame(() => picture.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })); };
-  useEffect(() => setStage('middle'), [shown?.key, url]);
-  const bw = (forces?.mass ?? 1) * G;
-  const startLabel = shown?.key === 'block' ? '押し始め' : '接地', endLabel = shown?.key === 'block' ? '離れる瞬間' : '離地';
-  const imageKey = shown ? `${shown.key}-${stage}` : '';
+  }, [forces, contacts, kind, top]);
+  const [picked, setPicked] = useState<string | null>(null), summary = useRef<HTMLDivElement>(null);
+  const shown = periods.find(p => p.key === picked) ?? periods.find(p => p.horizontal !== null) ?? periods[0] ?? null;
+  const pick = (k: string) => { setPicked(k); requestAnimationFrame(() => summary.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })); };
 
-  // The arrow on the picture: from the foot on the ground, its length a body weight per LEG_PER_WEIGHT of the leg.
-  const phases: Phase[] = useMemo(() => {
-    if (!shown?.picture) return [];
-    const middle = frames.find(f => f.frame === shown.frame), pose = middle ? anglePose(middle) : null;
-    const phases: Phase[] = [{ key: `${shown.key}-middle`, label: shown.label, frame: shown.frame, pts: shown.pts,
-      marks: [], skeleton: false, bounds: pose ?? shown.picture.bounds }];
-    for (const stage of ['start', 'end'] as const) {
-      const endpoint = shown.picture[stage], pose = stage === 'start' ? shown.picture.startPose : shown.picture.endPose;
-      if (endpoint) phases.push({ key: `${shown.key}-${stage}`, label: shown.label, ...endpoint,
-        marks: [], skeleton: false, bounds: pose ?? shown.picture.bounds });
-    }
-    return phases;
-  }, [shown, frames]);
-  const overlay = useCallback<FigureOverlay>((p, ctx, to, unit) => {
-    if (p.key.endsWith('-start') || p.key.endsWith('-end')) {
-      if (shown?.picture) {
-        const start = p.key.endsWith('-start');
-        drawForcePose(ctx, start ? shown.picture.startPose : shown.picture.endPose, to, unit, start ? CONTACT_COLOR : RELEASE_COLOR);
-      }
-      return;
-    }
-    if (!shown?.origin || shown.vertical === null) return;
-    const f = frames.find(q => q.frame === p.frame), pose = f ? anglePose(f) : null;
-    drawForceArrow(ctx, to, { x: shown.origin.x / W, y: shown.origin.y / H }, pose, shown.horizontal ?? 0, shown.vertical, bw, direction || 1, unit);
-  }, [shown, frames, W, H, bw, direction]);
-  const { images, failed } = usePhasePictures(url, frames, phases, overlay);
-
-  return <section className="force-view" aria-label="床反力">
-    <h3>地面が体を押し返す力</h3>
+  return <section className="force-view" aria-label="平均の力">
+    <h3>接地から離地までの平均（動画から推定）</h3>
+    <p className="force-limit">接地中のどの瞬間に、どちらへ力を出したかは、この結果では判断できません。</p>
     <div className="force-inputs">
       <NumberBox label="体重" unit="kg" value={weight} onValue={setWeight} min={20} max={150} example="例 55" />
       {kind === 'crouch' && <NumberBox label="身長" unit="cm" value={height} onValue={setHeight} min={100} max={220} example="例 160" />}
     </div>
-    {!weight ? <p className="sprint10-hint">体重を入れると、{kind === 'crouch' ? 'ブロックと' : ''}1歩ごとに地面を押した力を出します。値はこの端末にだけ残ります。</p> : <>
-      {kind === 'crouch' && !height && <p className="sprint10-note">身長を入れると、前向きの力と力の向きも出ます（今は縦の力だけ）。</p>}
-      {kind === 'run' && !pxPerM && <p className="sprint10-note">2本の線から距離が分からないため、縦の力だけを出しています。</p>}
-      {top && <p className="sprint10-note">最高速度の区間では前向きの力はほぼ0になるのがふつうで、1歩ごとの前向きの値は測定のぶれ（体重の±0.2倍ほど）の範囲です。この区間では縦の力を見てください。</p>}
-      <ul className="force-list">{moments.map(m => <li key={m.key}><button type="button" aria-pressed={shown?.key === m.key} onClick={() => pick(m.key)}>
-        <strong>{m.label}</strong>
-        <span>{m.horizontal !== null ? <>前へ <b>{times(m.horizontal, forces!.mass)}</b></> : '前へ —'}　上へ <b>{m.vertical !== null ? times(m.vertical, forces!.mass) : '—'}</b></span>
-        {m.against && <em className={m.against.includes('小さい') || m.against.includes('ブレーキ') ? 'low' : 'ok'}>{m.against}</em>}</button></li>)}</ul>
-      {shown && <div ref={picture} className="force-pic" aria-live="polite">
-        <div className="force-pic-head"><strong>{shown.label}</strong>
-          {shown.horizontal !== null && <span>前へ {times(shown.horizontal, forces!.mass)}</span>}{shown.vertical !== null && <span>上へ {times(shown.vertical, forces!.mass)}</span>}</div>
-        <small className="force-weight-note">数値は、体重を1とした力の大きさです。</small>
-        <p className="force-average">{shown.key === 'block' ? '押し始めからブロックを離れるまでの平均' : '接地から離地までの平均'}</p>
-        {shown.picture && <div className="force-photo-choices" role="group" aria-label="写真の瞬間">
-          <button type="button" aria-pressed={stage === 'start'} onClick={() => setStage('start')}>{startLabel}</button>
-          <button type="button" aria-pressed={stage === 'middle'} onClick={() => setStage('middle')}>真ん中<small>平均の力</small></button>
-          <button type="button" aria-pressed={stage === 'end'} onClick={() => setStage('end')}>{endLabel}</button>
-        </div>}
-        {shown.picture && (images[imageKey] ? <img src={images[imageKey]} alt={`${shown.label}：${stage === 'middle' ? '区間の真ん中のコマに平均の力の矢印' : `${stage === 'start' ? startLabel : endLabel}の写真と骨格`}`} />
-          : <div className="sprint10-phase-wait">{failed ? '画像を作れませんでした' : '画像を作成しています…'}</div>)}
-        <p className="force-picture-caption">{stage === 'middle' ? <><i style={{ background: ARROW_COLOR }} />地面が体を押し返す向き<small>矢印は動画から推定した平均の力です。{shown.key === 'block' && '手で支えた分も含みます。'}</small></>
-          : <><i style={{ background: stage === 'start' ? CONTACT_COLOR : RELEASE_COLOR }} />{stage === 'start' ? startLabel : endLabel}の姿勢<small>この瞬間の写真に、同じ瞬間の骨格を表示しています。</small></>}</p>
-        {shown.angle !== null && shown.elite !== null && <p className="force-reading"><span>平均の力の向き</span><strong>{directionSummary(shown.angle, shown.elite, shown.eliteProvisional)}</strong>
-          {shown.eliteProvisional && <small>比較に使う{Math.round(shown.elite)}°は仮の目安です。</small>}</p>}
-        <details className="force-details"><summary>詳しい数値</summary>
+    {!weight ? <p className="sprint10-hint">体重を入れると、{kind === 'crouch' ? 'ブロックと' : ''}1歩ごとの平均の力を出します。値はこの端末にだけ残ります。</p> : <>
+      {kind === 'crouch' && !height && <p className="sprint10-note">身長を入れると、前向きの平均の力も出ます（今は上向きの力だけ）。</p>}
+      {kind === 'run' && !pxPerM && <p className="sprint10-note">2本の線から距離が分からないため、上向きの平均の力だけを出しています。</p>}
+      {top && <p className="sprint10-note">最高速度の区間では、前向きの力は平均するとほぼ0になります。途中で力を出していないという意味ではありません。</p>}
+      <p className="force-weight-note">数値は、体重を1とした平均の力の大きさです。</p>
+      <ul className="force-list">{periods.map(p => <li key={p.key}><button type="button" aria-pressed={shown?.key === p.key} onClick={() => pick(p.key)}>
+        <strong>{p.label}</strong>
+        <span>{p.horizontal !== null ? <>前へ <b>{times(p.horizontal, forces!.mass)}</b></> : '前へ —'}　上へ <b>{p.vertical !== null ? times(p.vertical, forces!.mass) : '—'}</b></span>
+        </button></li>)}</ul>
+      {shown && <div ref={summary} className="force-summary" aria-live="polite">
+        <div className="force-summary-head"><strong>{shown.label}</strong></div>
+        <p className="force-average">{shown.key === 'block' ? '押し始めからブロックを離れるまでの平均' : '接地から離地までの平均'}（動画から推定）</p>
+        <dl className="force-values force-mean-values">
+          <dt>前向きの平均</dt><dd>{shown.horizontal !== null ? times(shown.horizontal, forces!.mass) : '—'}</dd>
+          <dt>上向きの平均</dt><dd>{shown.vertical !== null ? times(shown.vertical, forces!.mass) : '—'}</dd>
+        </dl>
+        <details className="force-details"><summary>時間・割合・研究の数値</summary>
         <dl className="force-values">
-          {shown.angle !== null && <><dt>向き</dt><dd>地面から {Math.round(shown.angle)}°{shown.elite !== null && <small>{shown.eliteProvisional ? '仮の目安' : '一流男子の目安'} 約{Math.round(shown.elite)}°</small>}</dd></>}
-          {shown.ratio !== null && <><dt>前向きの割合</dt><dd>{Math.round(shown.ratio * 100)}%</dd></>}
-          {shown.study && <><dt>研究（前向き）</dt><dd>{shown.study}</dd></>}
+          {shown.ratio !== null && <><dt>平均の力の前向きの割合</dt><dd>{Math.round(shown.ratio * 100)}%</dd></>}
+          {shown.study && <><dt>研究の前向きの力（区間平均）</dt><dd>{shown.study}</dd></>}
           {shown.extra.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}
         </dl>
         </details>
       </div>}
-      <p className="sprint10-hint">体重の何倍の力で地面を押したか（1回の接地の平均）。研究は男子の値です（出し方は「数値の見方」）。</p>
+      <p className="sprint10-hint">研究の数値は男子の区間平均です。その瞬間の力や、姿勢の良し悪しを示すものではありません。出し方は「数値の見方」で確認できます。</p>
     </>}
   </section>;
-}
-
-export const ARROW_COLOR = '#ffd23f';
-/** The mean push as an arrow from the foot: forward along the run, up; its length a body weight to 0.8 of the leg
- * (hip to ankle at that moment) on the picture. Keep the photo to one arrow; the components and comparison are text. */
-function drawForceArrow(ctx: CanvasRenderingContext2D, to: (q: { x: number; y: number }) => { x: number; y: number }, origin: { x: number; y: number },
-  pose: { x: number; y: number }[] | null, horizontal: number, vertical: number, weight: number, dir: number, unit: number) {
-  const o = to(origin);
-  const hip = pose ? to({ x: (pose[23].x + pose[24].x) / 2, y: (pose[23].y + pose[24].y) / 2 }) : null;
-  const leg = hip ? Math.max(unit * 12, Math.hypot(hip.x - o.x, hip.y - o.y)) : unit * 20;
-  const k = .8 * leg / weight, dx = dir * horizontal * k, dy = -vertical * k;
-  ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  const head = unit * 1.8, a = Math.atan2(dy, dx);
-  for (const [color, width] of [['rgba(8,18,16,.7)', unit * .95], [ARROW_COLOR, unit * .6]] as const) {
-    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = width;
-    ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x + dx - Math.cos(a) * head * .6, o.y + dy - Math.sin(a) * head * .6); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(o.x + dx, o.y + dy);
-    ctx.lineTo(o.x + dx - head * Math.cos(a - .45), o.y + dy - head * Math.sin(a - .45)); ctx.lineTo(o.x + dx - head * Math.cos(a + .45), o.y + dy - head * Math.sin(a + .45));
-    ctx.closePath(); ctx.fill();
-  }
-  ctx.restore();
 }
