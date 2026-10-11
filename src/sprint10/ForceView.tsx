@@ -5,6 +5,7 @@ import type { Contact } from './contacts';
 import { bodyTrack, G, groundForces, scaleFromHeight, type GroundForces } from './ground-force';
 import { usePhasePictures, type FigureOverlay } from './CrouchViews';
 import type { Phase } from './crouch-figure';
+import { CONTACT_COLOR, RELEASE_COLOR, drawForcePose, forcePicture } from './force-figure';
 
 /** The body's weight and height, kept on this device only (the user enters them once). */
 const WEIGHT_KEY = 'sachizu-body-weight', HEIGHT_KEY = 'sachizu-body-height';
@@ -47,6 +48,7 @@ export function against(v: number, elite: number): string {
 const times = (v: number, mass: number) => `${(v / (mass * G)).toFixed(2)}倍`;
 
 interface Moment { key: string; label: string; frame: number; pts: number; origin: { x: number; y: number } | null;
+  picture: NonNullable<ReturnType<typeof forcePicture>> | null;
   horizontal: number | null; vertical: number | null; angle: number | null; ratio: number | null; extra: [string, string][]; against: string | null; study: string | null;
   /** The elite men's direction for this phase (degrees from the ground), when there is one. */
   elite: number | null }
@@ -83,15 +85,16 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
     speeds: kind === 'run' ? 'steps' : 'flights',
     block: block ? { moveStart: block.moveStart, clearance: block.clearance } : null }) : null, [weight, contacts, track, scale, kind, direction, block]);
   // The moments: the block's middle of the push and each contact's middle, their arrow from the foot on the ground.
-  const nearest = useCallback((t: number) => frames.reduce<CrouchFrame | null>((best, f) => f.pose && (!best || Math.abs(f.pts - t) < Math.abs(best.pts - t)) ? f : best, null), [frames]);
   const moments: Moment[] = useMemo(() => {
     if (!forces) return [];
     const out: Moment[] = [], m = forces.mass;
     const b = forces.block;
     if (b && block) {
-      const f = nearest(b.pushStart + b.pushSeconds / 2), pose = f ? anglePose(f) : null, toe = pose && block.side !== null ? pose[31 + block.side] : null;
+      const start = frames.reduce<CrouchFrame | null>((best, f) => !best || Math.abs(f.pts - b.pushStart) < Math.abs(best.pts - b.pushStart) ? f : best, null);
+      const pose = start ? anglePose(start) : null, toe = pose && block.side !== null ? pose[31 + block.side] : null;
+      const picture = forcePicture(frames, b.pushStart, block.clearance, W, H, toe ? { x: toe.x * W, y: toe.y * H } : null);
       const S = FORCE_STUDY.block;
-      out.push({ key: 'block', label: 'ブロック', frame: f?.frame ?? 0, pts: f?.pts ?? 0, origin: toe ? { x: toe.x * W, y: toe.y * H } : null,
+      out.push({ key: 'block', label: 'ブロック', frame: picture?.frame ?? 0, pts: picture?.pts ?? 0, origin: picture?.origin ?? null, picture,
         horizontal: b.horizontal, vertical: b.vertical, angle: b.angle, ratio: b.ratio, against: against(b.horizontal / (m * G), S.elite), elite: DIRECTION_STUDY.block.angle,
         study: `一流男子 ${S.elite.toFixed(2)}倍・ジュニア男子 ${S.junior.toFixed(2)}倍`,
         extra: [['押した時間', `${b.pushSeconds.toFixed(3)}秒`], ['押す強さ', `${b.power.toFixed(1)} W/kg（平均の前向きパワー。一流男子 ${S.power.elite}・ジュニア男子 ${S.power.junior}）`],
@@ -100,8 +103,9 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
     forces.steps.forEach((s, i) => {
       const c = contacts[i];
       if (!c || c.touchdown === null || c.toeOff === null || (s.horizontal === null && s.vertical === null)) return;
-      const f = nearest((c.touchdown + c.toeOff) / 2), S = kind === 'crouch' ? FORCE_STUDY.steps[i] : undefined;
-      out.push({ key: `step${i + 1}`, label: `${i + 1}歩目`, frame: f?.frame ?? 0, pts: f?.pts ?? 0, origin: { x: c.x, y: c.groundY },
+      const picture = forcePicture(frames, c.touchdown, c.toeOff, W, H, { x: c.x, y: c.groundY }, { start: c.touchdownFrame, end: c.toeOffFrame });
+      const S = kind === 'crouch' ? FORCE_STUDY.steps[i] : undefined;
+      out.push({ key: `step${i + 1}`, label: `${i + 1}歩目`, frame: picture?.frame ?? 0, pts: picture?.pts ?? 0, origin: picture?.origin ?? null, picture,
         horizontal: s.horizontal, vertical: s.vertical, angle: s.angle, ratio: s.ratio,
         against: S && s.horizontal !== null ? against(s.horizontal / (m * G), S.elite) : null,
         elite: kind === 'crouch' ? DIRECTION_STUDY.steps[i]?.angle ?? null : null,
@@ -111,15 +115,20 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
           ...(s.contactSeconds !== null ? [['接地時間', `${s.contactSeconds.toFixed(3)}秒`] as [string, string]] : [])] });
     });
     return out;
-  }, [forces, block, contacts, kind, nearest, W, H]);
+  }, [forces, block, contacts, kind, frames, W, H, top]);
   const [picked, setPicked] = useState<string | null>(null), picture = useRef<HTMLDivElement>(null);
   const shown = moments.find(m => m.key === picked) ?? moments.find(m => m.horizontal !== null) ?? moments[0] ?? null;
   const pick = (k: string) => { setPicked(k); requestAnimationFrame(() => picture.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })); };
   const bw = (forces?.mass ?? 1) * G;
 
   // The arrow on the picture: from the foot on the ground, its length a body weight per LEG_PER_WEIGHT of the leg.
-  const phases: Phase[] = useMemo(() => shown && shown.origin ? [{ key: shown.key, label: shown.label, frame: shown.frame, pts: shown.pts, marks: [] }] : [], [shown?.key, shown?.frame, shown?.origin?.x]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const phases: Phase[] = useMemo(() => shown?.picture ? [{ key: shown.key, label: shown.label, frame: shown.frame, pts: shown.pts,
+    marks: [], skeleton: false, bounds: shown.picture.bounds }] : [], [shown]);
   const overlay = useCallback<FigureOverlay>((p, ctx, to, unit) => {
+    if (shown?.picture) {
+      drawForcePose(ctx, shown.picture.startPose, to, unit, CONTACT_COLOR);
+      drawForcePose(ctx, shown.picture.endPose, to, unit, RELEASE_COLOR);
+    }
     if (!shown?.origin || shown.vertical === null) return;
     const f = frames.find(q => q.frame === p.frame), pose = f ? anglePose(f) : null;
     drawForceArrow(ctx, to, { x: shown.origin.x / W, y: shown.origin.y / H }, pose, shown.horizontal ?? 0, shown.vertical, bw, direction || 1, unit, shown.horizontal !== null,
@@ -144,10 +153,14 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
       {shown && <div ref={picture} className="force-pic" aria-live="polite">
         <div className="force-pic-head"><strong>{shown.label}</strong>
           {shown.horizontal !== null && <span>前へ {times(shown.horizontal, forces!.mass)}</span>}{shown.vertical !== null && <span>縦 {times(shown.vertical, forces!.mass)}</span>}</div>
-        {shown.origin && (images[shown.key] ? <img src={images[shown.key]} alt={`${shown.label}の押す力の矢印`} />
+        <p className="force-average">{shown.key === 'block' ? '押し始めからブロックを離れるまでの平均' : '接地から離地までの平均'}</p>
+        {shown.picture && (images[shown.key] ? <img src={images[shown.key]} alt={`${shown.label}：区間の真ん中のコマに、${shown.key === 'block' ? '押し始めとブロックを離れる瞬間' : '接地と離地'}の骨格と平均の力の矢印`} />
           : <div className="sprint10-phase-wait">{failed ? '画像を作れませんでした' : '画像を作成しています…'}</div>)}
-        <p className="cr-key" aria-hidden="true"><span><i style={{ background: ARROW_COLOR }} />押す力（平均）</span>{shown.horizontal !== null && <span><i className="white" />前向き・縦</span>}
+        <p className="cr-key"><span><i style={{ background: ARROW_COLOR }} />押す力（平均）</span>{shown.horizontal !== null && <span><i className="white" />前向き・縦</span>}
+          <span><i style={{ background: CONTACT_COLOR }} />{shown.key === 'block' ? '接地（押し始め）' : '接地'}</span>
+          <span><i style={{ background: RELEASE_COLOR }} />{shown.key === 'block' ? '離地（ブロックを離れる瞬間）' : '離地'}</span>
           {shown.angle !== null && shown.elite !== null && <span><i style={{ background: ELITE_COLOR }} />一流男子の目安の向き</span>}</p>
+        <p className="force-picture-note">背景は{shown.key === 'block' ? '押し始めからブロックを離れるまで' : '接地から離地まで'}の真ん中のコマです。薄い線は区間の始めと終わりの姿勢です。</p>
         <dl className="force-values">
           {shown.angle !== null && <><dt>向き</dt><dd>地面から {Math.round(shown.angle)}°{shown.elite !== null && <>（一流男子の目安 約{Math.round(shown.elite)}°）
             <span className="force-direction">{directionAgainst(shown.angle, shown.elite)}</span></>}</dd></>}

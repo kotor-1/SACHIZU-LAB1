@@ -10,7 +10,9 @@ export type Mark = { kind: 'trunk'; label: string; value: number }
   | { kind: 'shank' | 'knee' | 'thigh' | 'hip' | 'level' | 'line'; side: 0 | 1; label: string; value: number };
 /** A moment whose angles are reported, with the frame shown for it. */
 export interface Phase { key: string; label: string; frame: number; pts: number; marks: Mark[]; /** Name on its button, when shorter than the label. */ short?: string;
-  /** The landmarks the picture is cut round (all seen ones when absent): a leg, or the trunk, made larger. */ focus?: number[] }
+  /** The landmarks the picture is cut round (all seen ones when absent): a leg, or the trunk, made larger. */ focus?: number[];
+  /** Picture-only bounds, also including poses overlaid from other moments. */ bounds?: CrouchPoint[];
+  /** Hide the background frame's white skeleton when the overlay supplies its own outlines. */ skeleton?: boolean }
 
 const known = (m: Mark | null): m is Mark => m !== null;
 /** The set, the front block clearance and each touchdown, with their angles (none left out when null). */
