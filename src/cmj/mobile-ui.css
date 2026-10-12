@@ -27,3 +27,5 @@
 @media(prefers-reduced-motion:reduce){.cmj-spin{animation:none}.cmj-progress>div{transition:none}}
 
 
+
+.cmj-frame-view{margin:10px 0 0}.cmj-frame-view button{font-size:12px}

@@ -76,11 +76,15 @@ export default function CrouchLab() {
   const flowChecks = advice.filter(a => a.level === 'check');
   const flowGood = [...new Set(advice.map(a => a.topic))].filter(topic => !flowChecks.some(a => a.topic === topic));
   const checks = advice.filter(a => a.level === 'check').length + (research?.rows.filter(row => row.verdict === 'improve').length ?? 0);
-  const events: ReplayEvent[] = useMemo(() => !result || result.reason ? [] : [
-    ...(result.set ? [{ label: '構え', short: '構え', pts: result.set.pts }] : []),
-    ...(result.blockClearance ? [{ label: 'ブロックを離れる', short: '離れる', pts: result.blockClearance.pts }] : []),
-    ...result.contacts.flatMap(c => [...(c.touchdown !== null ? [{ label: `${c.index}歩目の接地`, short: `${c.index}歩目 接地`, pts: c.touchdown }] : []),
-      ...(c.toeOff !== null ? [{ label: `${c.index}歩目の離地`, short: `${c.index}歩目 離地`, pts: c.toeOff }] : [])])], [result]);
+  // The replay goes to each judged moment's frame (as 確認 shows it): the moments' times lie between frames (frameEdge).
+  const events: ReplayEvent[] = useMemo(() => {
+    if (!result || result.reason) return [];
+    const at = (frame: number | null | undefined, pts: number) => (frame != null ? measured?.frames.find(f => f.frame === frame)?.pts : undefined) ?? pts;
+    return [...(result.set ? [{ label: '構え', short: '構え', pts: result.set.pts }] : []),
+      ...(result.blockClearance ? [{ label: 'ブロックを離れる', short: '離れる', pts: at(result.blockClearance.frame, result.blockClearance.pts) }] : []),
+      ...result.contacts.flatMap(c => [...(c.touchdown !== null ? [{ label: `${c.index}歩目の接地`, short: `${c.index}歩目 接地`, pts: at(c.touchdownFrame, c.touchdown) }] : []),
+        ...(c.toeOff !== null ? [{ label: `${c.index}歩目の離地`, short: `${c.index}歩目 離地`, pts: at(c.toeOffFrame, c.toeOff) }] : [])])];
+  }, [result, measured]);
   // The result is shown one part at a time under tabs that stay at the top of
   // the screen (all parts one under another were too long on a phone, the
   // user 2026-10-05: 「縦長で使いにくい」).
@@ -146,7 +150,7 @@ export default function CrouchLab() {
   /** The check, from the first moment worth a look not yet checked. */
   function openCheck() { const first = list.find(q => q.flag && !checked.has(q.key)) ?? list.find(q => !checked.has(q.key)); if (first) setMoment(first.key); choose('check'); }
   /** A phase in the slow replay: its tab, paused on its frame. */
-  function show(p: Phase) { seekTo.current = p.pts; choose('replay'); }
+  function show(p: Phase) { seekTo.current = measured?.frames.find(f => f.frame === p.frame)?.pts ?? p.pts; choose('replay'); }
   function save() {
     if (!result) return;
     const blob = new Blob([JSON.stringify({ version: CROUCH_VERSION, file: file?.name, startX: start, result,
@@ -219,8 +223,8 @@ export default function CrouchLab() {
           </div>
           <div id="crouch-panel-force" role="tabpanel" aria-labelledby="crouch-tab-force" hidden={tab !== 'force'}>
             {measured && <ForceView kind="crouch" contacts={result.contacts} frames={measured.frames} width={measured.width} height={measured.height}
-              direction={result.direction} url={url} block={result.moveStart != null && result.blockClearance
-                ? { moveStart: result.moveStart, clearance: result.blockClearance.pts, side: result.set?.frontSide ?? null } : null} />}
+              direction={result.direction} sex={sex} onSex={setSex} block={result.moveStart != null && result.blockClearance
+                ? { moveStart: result.moveStart, clearance: result.blockClearance.pts } : null} />}
           </div>
           <div id="crouch-panel-check" role="tabpanel" aria-labelledby="crouch-tab-check" hidden={tab !== 'check'}>
             <p className="sprint10-hint">自動判定のコマを1つずつ確かめます。ずれていたら◀▶か下のコマで合わせて「このコマに決める」、合っていれば「OK」。数値はすぐ変わります。</p>
@@ -248,12 +252,12 @@ export default function CrouchLab() {
           </div>
         </div>
         <details className="sprint10-more"><summary>数値の見方</summary>
-          <p>接地は靴が床に着いた時、離地はつま先が床から離れた時です。骨格の動きで、足が着く場所とおおよその瞬間を決め、その前後の足元の画像（靴先の画素が、着地した靴と床のどちらに近いか）で瞬間を決め直します。画像ではっきりしない所は骨格の判定のままです。真横から1秒240コマで撮影した3人の検証動画では、映像で見た瞬間との差は最大でおよそ1/60秒でした。同じ動画を暗く・ノイズを多くすると、骨格だけでは接地が最大約1/25秒ずれましたが、画像で決め直すと約1/45秒でした。</p>
+          <p>接地は靴が床に着いた時、離地はつま先の先端が床から離れた時です。骨格の動きで、足が着く場所とおおよその瞬間を決め、その前後の足元の画像（靴先の画素が、着地した靴と床のどちらに近いか。離地は、かかとが上がった後のつま先の位置で見ます）で瞬間を決め直します。画像ではっきりしない所は骨格の判定のままです。時刻は、判定したコマとその前（接地）・後（離地）のコマの間です。離地を映像で見直した9本の動画（25回、2026-10-12）では、映像で見た瞬間との差は平均で約1/170秒（1.4コマ）、最大で約1/55秒でした。同じ動画を暗く・ノイズを多くすると、骨格だけでは接地が最大約1/25秒ずれましたが、画像で決め直すと約1/45秒でした。暗い動画では、離地も早めにずれることがあります。</p>
           <p>ピッチは接地から次の接地までの時間の逆数です。角度は鉛直を0°とし、進行方向へ倒れる向きを正とします（脛は足首から膝、体幹は腰から肩）。膝は伸び切った状態が180°です。</p>
           <p>骨格の推定が崩れたコマの角度は出しません。</p>
-          <p>研究と比べる：「トップ並み」は世界トップやトップ選手の平均±標準偏差の範囲、「良い」は鍛えた選手の平均より標準偏差ぶん以上良い値（鍛えた選手の値しかない項目）。「ふつう」は、ふつうの範囲か、トップとの差が測定の誤差（角度5°、ももの開き8°、時間0.01秒）ほどの値。「伸びしろ」は、研究で速いスタートと結びつく向きに、トップとの差が誤差より大きい値。「参考」は、研究で良し悪しが決まっていない（結論が分かれる）値です。画像の緑の範囲は研究の値（世界トップ・トップ選手、それがない項目は鍛えた選手の平均±標準偏差や研究の範囲）で、色の線がこの選手です。「コツ」は、研究で速い選手に見られる向きへ近づけるための、ひとつの目安です。ももの開きは後ろ足のももと支持脚のももの角度の差で、「前」は後ろ足の膝が支持脚の膝より前（挟み込み）です。脚が速く動く瞬間の値のため、判定したコマが1つずれたり、端末（骨格モデルの計算方式）が違ったりすると数度変わります（同じ動画で前83°と前87°）。体幹は、研究の水平からの角度を、このアプリの角度（鉛直から）に直して比べます。</p>
-          <p>床反力（「力」）：フォースプレートを使わず、動画と体重から1回の接地（ブロックは押している間）の平均の力を出します。縦は体重×9.8×（滞空時間÷接地時間＋1）（Morinら 2005）。前向きは体重×その接地で増えた速さ÷接地時間で、速さは骨格から求めた全身の重心が空中で進む速さ（空中では前向きの速さが変わらないため）。空中の速さは、ブロックを離れてから最後の接地までのすべてのコマに「空中は速さが一定、接地中は前の空中の速さから次の空中の速さへ、途中2か所で曲がりながら変わる」一続きの動きを当てはめて求めます（空中のコマだけでは骨格の点の揺れで1歩の値が体重の±0.15倍ほど動き、接地中に一定に増えるとすると、接地の前半にブレーキがある時に速さを低く読んだため。2026-10-11）。ブロックは体重×離れた後の空中の速さ÷押した時間（重心が動き始めてから前足が離れるまで。動き始めは、重心が約1cm動いた時からさかのぼって求め、さかのぼりは0.05秒まで）、縦は手で支えた分も含みます。この計算で分かるのは区間全体の平均です。矢印は写真とは別の図に、区間全体の平均の向きとして表示します。矢印の長さは一定で、大きさは数値で示します。接地中の各瞬間の力は求めていないため、写真に力の矢印を重ねたり、どの瞬間に力が前向き・上向きだったかを判定したりはできません。距離は身長と胴の長さの比（胴は身長の0.288、Drillis・Contini 1966）から出すため、身長が実際と違うと前向きの力もその割合だけずれます（目安±1割）。研究の値は、一流男子17人とジュニア男子20人のブロックの押す時間・離れる速さ・1〜2歩目の接地時間と離地の速さ（Graham-Smithら 2020）から計算したものです。女子の値は見つかっていません。1回の値は腰や手足の点のずれで大きく変わることがあるので、同じ条件の何本かで比べてください。</p>
-          <p>研究の出典：構えの膝はBezodisら（2019、総説：前膝91〜99°、後膝117〜136°）、速い選手ほど前膝が深いことはCiacciら（2017、世界トップ・一流の男女20人）、女子の前膝の平均（約103°）と構えの体幹はČohら（1998、男子13人・女子11人）。ブロックを離れてから1歩目の接地までと1歩目の接地時間はBezodisら（2019：ダイヤモンドリーグの選手は100m 女子11.10秒・男子10.03秒、その下の群は11.95秒・10.74秒）。1歩目の体幹・脛・ももの開きの世界トップ男子は、2018年世界室内60m決勝の8人（Walkerら 2021：離地の体幹とももの開きの2つで、1歩目の推進の違いの約9割を説明）。鍛えた選手の脛・ももの開き・空中時間は男子15人・女子6人（女子の100m平均11.79秒、Donaldsonら 2022）。接地で脛が前に倒れているほど良いことはDonaldsonら（2020、一流と準一流の比較）と2023年の研究（J Sports Sci）。接地のときの挟み込みが速さと結びつくのは最高速度の局面（Miyashiroら 2019）で、加速では離地で支持脚のももを後ろまで伸ばす選手ほど速い結果です（Haugenら 2018）。歩ごとの流れ（歩ごとに接地時間が短くなり、脛と体幹が起きていく）はBezodisら（2019）とDonaldsonら（2022）。グラフの点線はČoh・Tomazin（2006、100m 10.15秒の選手）の1〜4歩目です。</p>
+          <p>参考値と比べる：参考値は、下の出典の研究で報告された値です。画面には男子・女子を書かず、数値だけを出します（どの選手の値かは出典に書いています）。女子／男子の切り替えは、男女の値がある項目（構えの体幹、1歩目の接地時間、前膝の平均、「力」のブロック）で、どちらの値を使うかを選びます。「トップ並み」は世界トップやトップ選手の平均±標準偏差の範囲、「良い」は鍛えた選手の平均より標準偏差ぶん以上良い値（鍛えた選手の値しかない項目）。「ふつう」は、ふつうの範囲か、トップとの差が測定の誤差（角度5°、ももの開き8°、時間0.01秒）ほどの値。「伸びしろ」は、研究で速いスタートと結びつく向きに、トップとの差が誤差より大きい値。「判定なし」は、良し悪しがはっきりしていない（研究で結論が分かれる）値です。画像の緑の範囲は参考値（世界トップ・トップ選手、それがない項目は鍛えた選手の平均±標準偏差や総説の範囲）で、色の線がこの選手です。「コツ」は、研究で速い選手に見られる向きへ近づけるための、ひとつの目安です。ももの開きは後ろ足のももと支持脚のももの角度の差で、「前」は後ろ足の膝が支持脚の膝より前（挟み込み）です。脚が速く動く瞬間の値のため、判定したコマが1つずれたり、端末（骨格モデルの計算方式）が違ったりすると数度変わります（同じ動画で前83°と前87°）。体幹は、研究の水平からの角度を、このアプリの角度（鉛直から）に直して比べます。</p>
+          <p>床反力（「力」）：フォースプレートを使わず、動画と体重から1回の接地（ブロックは押している間）の平均の力を出します。上向きは体重×9.8×（滞空時間÷接地時間＋1）（Morinら 2005）。前向きは体重×その接地で増えた速さ÷接地時間で、速さは骨格から求めた全身の重心が空中で進む速さ（空中では前向きの速さが変わらないため）。空中の速さは、ブロックを離れてから最後の接地までのすべてのコマに「空中は速さが一定、接地中は前の空中の速さから次の空中の速さへ、途中2か所で曲がりながら変わる」一続きの動きを当てはめて求めます（空中のコマだけでは骨格の点の揺れで1歩の値が体重の±0.15倍ほど動き、接地中に一定に増えるとすると、接地の前半にブレーキがある時に速さを低く読んだため。2026-10-11）。ブロックは体重×離れた後の空中の速さ÷押した時間（重心が動き始めてから前足が離れるまで。動き始めは、重心が約1cm動いた時からさかのぼって求め、さかのぼりは0.05秒まで）、上向きは手で支えた分も含みます。この計算で分かるのは区間全体の平均です。矢印は写真とは別の図に、区間全体の平均の向きとして表示します。矢印の長さは一定で、大きさは数値で示します。接地中の各瞬間の力は求めていないため、写真に力の矢印を重ねたり、どの瞬間に力が前向き・上向きだったかを判定したりはできません。距離は身長と胴の長さの比（胴は身長の0.288、Drillis・Contini 1966）から出すため、身長が実際と違うと前向きの力もその割合だけずれます（目安±1割）。参考値と比べるのは、男子と女子の両方の値が同じ研究でそろうブロックの前向きの力だけです：スロベニアの国内トップ級の選手（男子22人・女子6人、平均17歳、力を測るブロック、練習のスタート10回の平均）の、ブロックを離れる速さと押した時間（男子3.20 m/s・0.349秒、女子3.03 m/s・0.363秒、Mirkovら 2020）から計算した男子0.93倍・女子0.85倍。「参考値」の女子／男子で選んだ方と比べ、0.85〜1.15倍を「男子（女子）の参考値並み」とします。1・2歩目の離地の速さや、ブロックを離れるときの上向きの速さ（力の向きの目安に必要）は、女子の値が見つからないため比べません。1回の値は腰や手足の点のずれで大きく変わることがあるので、同じ条件の何本かで比べてください。</p>
+          <p>参考値の出典（研究）：構えの膝はBezodisら（2019、総説：前膝91〜99°、後膝117〜136°）、速い選手ほど前膝が深いことはCiacciら（2017、世界トップ・一流の男女20人）、女子の前膝の平均（約103°）と構えの体幹はČohら（1998、男子13人・女子11人）。ブロックを離れてから1歩目の接地までと1歩目の接地時間はBezodisら（2019：ダイヤモンドリーグの選手は100m 女子11.10秒・男子10.03秒、その下の群は11.95秒・10.74秒）。1歩目の体幹・脛・ももの開きの世界トップの値は、2018年世界室内60m決勝の男子8人（Walkerら 2021：離地の体幹とももの開きの2つで、1歩目の推進の違いの約9割を説明）。鍛えた選手の脛・ももの開き・空中時間は男子15人・女子6人（女子の100m平均11.79秒、Donaldsonら 2022）。接地で脛が前に倒れているほど良いことはDonaldsonら（2020、一流と準一流の比較）と2023年の研究（J Sports Sci）。接地のときの挟み込みが速さと結びつくのは最高速度の局面（Miyashiroら 2019）で、加速では離地で支持脚のももを後ろまで伸ばす選手ほど速い結果です（Haugenら 2018）。歩ごとの流れ（歩ごとに接地時間が短くなり、脛と体幹が起きていく）はBezodisら（2019）とDonaldsonら（2022）。グラフの点線はČoh・Tomazin（2006、100m 10.15秒の選手）の1〜4歩目です。</p>
           <p>骨格：選手を見つけて追い、接地・離地を判定するのはMediaPipe、角度と画像・スロー再生の骨格はRTMPose（{measured?.refiner === 'webgpu' ? 'WebGPU' : measured?.refiner === 'wasm' ? 'WebAssembly' : '今回は未使用'}）です。かがんだ構えではRTMPoseの方が膝・腰の位置が体に合い、接地・離地の時刻は映像との差がMediaPipeの方が小さかったためです（3人の検証動画）。</p>
           <p>接地・離地・ブロックを離れる瞬間は、「確認」で1コマ単位で直せます。直した値には ✎ を付け、保存（JSON）には自動の結果も残します。暗い動画や、カメラの性能が低いスマホの動画では、自動の判定が1コマ以上ずれることがあります。</p>
           <p>この解析の時間はコマ単位（1/240秒）で判定しているため、0.01〜0.02秒の差は誤差の範囲です。ブロックを離れる瞬間は平均で約0.01秒早めに判定するため、1歩目の接地までの時間は少し長めに出ます。</p></details>

@@ -29,16 +29,21 @@ export interface SessionUpdate {
   decodeDiagnostics?: { submittedSamples: number; emittedFrames: number; maxRetainedFrames: number; configureCount: number };
 }
 export interface SessionSummary { resultCount: number; estimateCount: number; reason: string | null }
+/** Each frame as the model saw it (the session's own canvas: upright, at most 720 px a side), with what it found on it,
+ * given as soon as it is found: the screen can then show the picture and its skeleton as one. Drawn over the live
+ * picture, the skeleton ran behind it by the inference time and the update's throttle (the user, 2026-10-12: 「動画に対し
+ * てスケルトンがずれて動く」). The canvas is the session's: read it at once, do not keep it. */
+export type FrameSink = (frame: HTMLCanvasElement, landmarks: { x: number; y: number }[], com: { x: number; y: number } | null) => void;
 /** Recorded playback can slow down without changing source timestamps.
  * A camera cannot slow physical time: gaps are rejected, never interpolated. */
 export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'file', signal: AbortSignal,
   update: (state: SessionUpdate) => void, status: (message: string) => void = () => {}, allowMovement: () => boolean = () => true,
-  legs: JumpLegs = 'BOTH'): Promise<SessionSummary> {
+  legs: JumpLegs = 'BOTH', onFrame?: FrameSink): Promise<SessionSummary> {
   if (!video.requestVideoFrameCallback) throw new Error('このブラウザは映像の時刻取得に未対応です。OSとブラウザを更新してください。');
   if (mode === 'camera' && typeof Worker !== 'undefined') {
     const live = await import('./live-session');
     const client = await live.prepareLiveWorker(signal, status);
-    if (client) return live.measureLive(video, client, signal, update, allowMovement);
+    if (client) return live.measureLive(video, client, signal, update, allowMovement, onFrame);
   }
   const check = () => { if (signal.aborted) throw new DOMException('中止', 'AbortError'); };
   // Live and playback both use Full; exact recorded analysis uses Heavy.
@@ -123,6 +128,8 @@ export async function measureVideo(video: HTMLVideoElement, mode: 'camera' | 'fi
             const found = timing ? timing.measurementPts === null ? null
               : stream.push({ ...r.comSample, pts: timing.measurementPts }, allowMovement()) : stream.push(r.comSample);
             if (found) results.push({ ...found, id: (results.at(-1)?.id ?? 0) + 1 });
+            onFrame?.(canvas, r.landmarks.length === 1 ? r.landmarks[0] : [],
+              r.comSample.comX === null || r.comSample.comY === null ? null : { x: r.comSample.comX / 960, y: r.comSample.comY / 960 });
             if (stream.phase === 'READY') prepared = true;
             if (mode === 'file') video.playbackRate = Math.max(.1, Math.min(1, 20 / Math.max(1, averageMs)));
             if (mode === 'camera' && averageMs > 40) slowSince ??= pts;

@@ -13,6 +13,16 @@ import './mobile-ui.css';
 const phases = { PREPARING: '全身を確認しています', READY: 'いつでも跳べます', MOVING: 'ジャンプを検出しました', RECOVERING: '着地を確認しています' };
 const skeleton = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24],
   [23, 24], [23, 25], [25, 27], [24, 26], [26, 28], [27, 31], [28, 32]];
+/** The skeleton and the COM drawn on the frame they were found on (the SVG draws the same over the live picture). */
+function drawPose(c: HTMLCanvasElement, landmarks: readonly { x: number; y: number }[], com: { x: number; y: number } | null) {
+  if (landmarks.length !== 33) return;
+  const ctx = c.getContext('2d'); if (!ctx) return;
+  const w = c.width, h = c.height;
+  ctx.save(); ctx.strokeStyle = '#bff598'; ctx.lineWidth = w / 220; ctx.lineCap = 'round';
+  for (const [a, b] of skeleton) { ctx.beginPath(); ctx.moveTo(landmarks[a].x * w, landmarks[a].y * h); ctx.lineTo(landmarks[b].x * w, landmarks[b].y * h); ctx.stroke(); }
+  if (com) { ctx.fillStyle = '#e6ffac'; ctx.beginPath(); ctx.arc(com.x * w, com.y * h, w / 70, 0, Math.PI * 2); ctx.fill(); }
+  ctx.restore();
+}
 
 export default function CMJMobile() {
   const video = useRef<HTMLVideoElement>(null), canvas = useRef<HTMLCanvasElement>(null), input = useRef<HTMLInputElement>(null);
@@ -34,6 +44,11 @@ export default function CMJMobile() {
   const [keepRecording, setKeepRecording] = useState(false);
   // Recordings may be single-leg CMJs; the camera measures both legs for now.
   const [legs, setLegs] = useState<JumpLegs>('BOTH'), [analysedLegs, setAnalysedLegs] = useState<JumpLegs>('BOTH');
+  // The picture under the skeleton while the camera measures: the frame the model read, with its skeleton on it (the
+  // picture a little behind the camera, by the inference time), or the live picture, over which the skeleton runs
+  // behind by as much (the user, 2026-10-12: 「動画に対してスケルトンがずれて動く」).
+  const [frameView, setFrameView] = useState<'analyzed' | 'live'>('analyzed'), frameViewRef = useRef(frameView); frameViewRef.current = frameView;
+  const [analyzedShown, setAnalyzedShown] = useState(false);
 
   function cancel() {
     owner.current?.abort();
@@ -93,6 +108,15 @@ export default function CMJMobile() {
     setBusy(true); setCancelling(false); setProblem(false); setReview(false); setState(null); setActiveResult(null);
     setExact(false); setFailureReason(null); setAnalysedLegs(sourceLegs);
     if (canvas.current) canvas.current.getContext('2d')?.clearRect(0, 0, canvas.current.width, canvas.current.height);
+    setAnalyzedShown(false);
+    /** The frame the model read, shown with its skeleton as one picture (the camera and the playback paths). */
+    const shown = (source: HTMLCanvasElement, landmarks: { x: number; y: number }[], com: { x: number; y: number } | null) => {
+      const c = canvas.current;
+      if (!c || frameViewRef.current !== 'analyzed' || owner.current !== control || control.signal.aborted) return;
+      if (c.width !== source.width || c.height !== source.height) { c.width = source.width; c.height = source.height; }
+      const ctx = c.getContext('2d'); if (!ctx) return;
+      ctx.drawImage(source, 0, 0); drawPose(c, landmarks, com); setAnalyzedShown(true);
+    };
     setMessage('計測の準備をしています…');
     const status = (value: string) => { if (owner.current === control && !control.signal.aborted) setMessage(value); };
     const update = (next: SessionUpdate) => {
@@ -125,11 +149,14 @@ export default function CMJMobile() {
         const recording = await import('./recording-session');
         if (control.signal.aborted) throw new DOMException('中止', 'AbortError');
         const useExact = recording.supportsExactRecording(sourceFile); setExact(useExact);
-        if (useExact) summary = await recording.measureRecording(sourceFile, canvas.current!, control.signal, update, status, { legs: sourceLegs });
+        // Exact frames are drawn on this canvas for the model: the skeleton goes on the same frame, at once.
+        if (useExact) summary = await recording.measureRecording(sourceFile, canvas.current!, control.signal, update, status, { legs: sourceLegs,
+          onDecodedFrame: ({ poses, sample }) => { if (canvas.current) drawPose(canvas.current, poses.length === 1 ? poses[0] : [],
+            sample.comX === null || sample.comY === null ? null : { x: sample.comX / 960, y: sample.comY / 960 }); } });
         else {
           if (element.currentTime !== 0) element.currentTime = 0;
           await waitForCurrentFrame(element, control.signal);
-          summary = await measureVideo(element, 'file', control.signal, update, status, undefined, sourceLegs);
+          summary = await measureVideo(element, 'file', control.signal, update, status, undefined, sourceLegs, shown);
         }
       } else {
         setExact(false);
@@ -141,7 +168,7 @@ export default function CMJMobile() {
         if (control.signal.aborted) { media.getTracks().forEach(t => t.stop()); throw new DOMException('中止', 'AbortError'); }
         camera.current = media; element.removeAttribute('src'); element.srcObject = media;
         await element.play(); await waitForCurrentFrame(element, control.signal);
-        summary = await measureVideo(element, 'camera', control.signal, update, status);
+        summary = await measureVideo(element, 'camera', control.signal, update, status, undefined, 'BOTH', shown);
       }
       if (owner.current !== control || control.signal.aborted) return;
       setProblem(summary.estimateCount === 0);
@@ -209,6 +236,8 @@ export default function CMJMobile() {
     : mode === 'camera' ? 'カメラを起動して、全身をフレームに入れてください。' : file ? '準備ができました。動画を解析してください。' : '撮影したジャンプ動画を読み込んでください。');
   const showHeight = height != null && !review && (!busy || state?.phase === 'PREPARING' || state?.phase === 'READY');
   const showCanvas = mode === 'file' && exact && !review && (busy || state?.acquisition === 'EXACT_FRAMES');
+  // The camera's (or playback's) analysed frame with its skeleton, over the live picture, once one has been drawn.
+  const analyzedView = busy && !showCanvas && frameView === 'analyzed' && analyzedShown;
   // The legs the shown results were analysed on; before an analysis, the choice.
   const shownLegs: JumpLegs = mode === 'camera' ? 'BOTH' : state ? analysedLegs : legs;
   const single = mode === 'file' && singleLeg(legs);
@@ -234,11 +263,11 @@ export default function CMJMobile() {
           // so the status and the stop button stay visible below it.
           width: `min(100%, calc((100dvh - 190px) * ${(dimensions.w / dimensions.h).toFixed(4)}))`, marginInline: 'auto' } : undefined}>
         <video ref={video} playsInline muted preload="metadata" controls={review && !busy} hidden={showCanvas} />
-        <canvas ref={canvas} hidden={!showCanvas} aria-label="解析した元動画フレーム" />
+        <canvas ref={canvas} hidden={!showCanvas && !analyzedView} aria-label="解析した元動画フレーム" />
         {!hasSource && <div className="cmj-empty"><div className="cmj-frame-guide"><svg viewBox="0 0 140 240" aria-hidden="true">
           <circle cx="70" cy="35" r="17" /><path d="M46 68 Q70 58 94 68 L107 120 L88 135 M46 68 L33 120 L52 135 M49 76 L51 143 L89 143 L91 76 M53 146 L50 191 L44 221 M87 146 L90 191 L96 221 M34 223 L51 223 M89 223 L106 223" /></svg></div>
           <span>全身が映る位置で、正面から。</span><small>スマホは固定してください</small></div>}
-        {busy && state?.landmarks.length === 33 && <svg className="cmj-skeleton" viewBox={`0 0 ${dimensions.w} ${dimensions.h}`} aria-label="全身と重心の追跡" preserveAspectRatio="xMidYMid meet">
+        {busy && !showCanvas && !analyzedView && state?.landmarks.length === 33 && <svg className="cmj-skeleton" viewBox={`0 0 ${dimensions.w} ${dimensions.h}`} aria-label="全身と重心の追跡" preserveAspectRatio="xMidYMid meet">
           {skeleton.map(([a, b]) => <line key={`${a}-${b}`} x1={state.landmarks[a].x * dimensions.w} y1={state.landmarks[a].y * dimensions.h}
             x2={state.landmarks[b].x * dimensions.w} y2={state.landmarks[b].y * dimensions.h} strokeWidth={dimensions.w / 220} />)}
           {state.com && <circle cx={state.com.x * dimensions.w} cy={state.com.y * dimensions.h} r={dimensions.w / 70} />}</svg>}
@@ -246,6 +275,9 @@ export default function CMJMobile() {
         {showHeight && <div className="cmj-score-overlay"><span>{isPreviousResult(state, latest?.id) ? `直近の成立結果（${latest?.id}回目）` : 'JUMP HEIGHT'}</span><strong>{height.toFixed(1)}<small>cm</small></strong><em>つま先の離地〜重心の最高点からの推定値</em></div>}
         {busy && !showHeight && <div className="cmj-stage-caption">{cancelling ? '停止中…' : rejected && state?.phase === 'READY' ? '要確認' : state?.phase === 'READY' ? 'Ready' : 'Tracking'}<span>{mode === 'file' ? progress === null ? '動画を確認しています' : `${progress}% 解析済み` : state?.phase === 'READY' ? '好きなタイミングで跳んでください' : '頭から足先まで映してください'}</span></div>}
       </div>
+      {mode === 'camera' && <div className="cmj-mode cmj-frame-view" role="group" aria-label="映像の表示">
+        <button type="button" className={frameView === 'analyzed' ? 'is-selected' : ''} aria-pressed={frameView === 'analyzed'} onClick={() => setFrameView('analyzed')}>解析したコマ（線が合う）</button>
+        <button type="button" className={frameView === 'live' ? 'is-selected' : ''} aria-pressed={frameView === 'live'} onClick={() => setFrameView('live')}>ライブ映像（線が遅れる）</button></div>}
       {busy && mode === 'file' && <div className="cmj-progress"><div role="progressbar" aria-label="動画の解析" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress ?? undefined} style={{ width: `${progress ?? 3}%` }} /></div>}
       <div className={`cmj-status ${problem ? 'has-problem' : ''}`} role="status">{busy ? <LoaderCircle size={18} className="cmj-spin" /> : successful.length ? <Check size={18} /> : <Activity size={18} />}<span>{statusText}</span></div>
       <input className="cmj-file-input" ref={input} type="file" accept="video/*" disabled={busy} aria-label="録画動画を選ぶ" onChange={e => fileSelected(e.target.files?.[0])} />

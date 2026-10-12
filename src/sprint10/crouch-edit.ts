@@ -3,8 +3,8 @@
  * judgment can be a frame or more off (the user, 2026-10-06: 「暗かったりスマホのグレードが低かったりすると、正しく接地や
  * 離地が判定できずずれてしまいます」「自動解析→ズレていたら手動で微調整→自動的に数値もそれに伴ってすぐに変化する」).
  * Nothing is judged again: the times and the angles at the moments are taken from the frames the user chose. */
-import { GROUND_BAND, legLength, LIFT_BAND, median, PLANT_RADIUS, TOE, visible } from './contacts';
-import { posture, stepsOf, type CrouchFrame, type CrouchResult } from './crouch';
+import { GROUND_BAND, legLength, median, PLANT_RADIUS, TOE, visible } from './contacts';
+import { CROUCH_CONTACT, frameEdge, posture, stepsOf, type CrouchFrame, type CrouchResult } from './crouch';
 
 export type MomentKind = 'clearance' | 'touchdown' | 'toeOff';
 export interface Moment {
@@ -31,14 +31,17 @@ const CONTACT = [.07, .3], FLIGHT = [.005, .15], FIRST = [0, .12];
 const NEAR = 3, TOE_SEEN = .5, MISSING = 2;
 
 /** The result with the user's frames in place of the automatic ones: contact, flight and step times, pitch, the angles
- * at the touchdowns, the block-to-first-touchdown time and the posture as the front foot leaves the block. */
+ * at the touchdowns, the block-to-first-touchdown time and the posture as the front foot leaves the block. A frame chosen
+ * is the first with the foot down (touchdown) or the last (toe-off, clearance); its time is at the frame's edge
+ * (frameEdge), as the automatic moments' are. */
 export function applyEdits(auto: CrouchResult, edits: Edits, frames: readonly CrouchFrame[], W: number, H: number): CrouchResult {
   if (auto.reason || !Object.keys(edits).length) return auto;
   const byFrame = new Map(frames.map(f => [f.frame, f]));
   const chosen = (key: string) => { const n = edits[key]; return n === undefined ? undefined : byFrame.get(n); };
   const contacts = auto.contacts.map(c => {
     const td = chosen(`td${c.index}`), to = chosen(`to${c.index}`);
-    return { ...c, ...(td ? { touchdown: td.pts, touchdownFrame: td.frame } : {}), ...(to && c.toeOff !== null ? { toeOff: to.pts, toeOffFrame: to.frame } : {}) };
+    return { ...c, ...(td ? { touchdown: frameEdge(frames, td.frame, -1) ?? td.pts, touchdownFrame: td.frame } : {}),
+      ...(to && c.toeOff !== null ? { toeOff: frameEdge(frames, to.frame, 1) ?? to.pts, toeOffFrame: to.frame } : {}) };
   });
   const seen = frames.filter(f => f.pose), leg = legLength(seen, W, H);
   const steps = stepsOf(contacts, frames, W, H, auto.direction, leg);
@@ -46,7 +49,8 @@ export function applyEdits(auto: CrouchResult, edits: Edits, frames: readonly Cr
   const clear = chosen('clearance');
   if (clear && auto.blocks) {
     const i = seen.findIndex(f => f.frame === clear.frame);
-    if (i >= 0) blockClearance = posture(seen.slice(Math.max(0, i - 2), i + 3), auto.blocks.front, W, H, auto.direction, leg, seen[i]);
+    if (i >= 0) blockClearance = { ...posture(seen.slice(Math.max(0, i - 2), i + 3), auto.blocks.front, W, H, auto.direction, leg, seen[i]),
+      pts: frameEdge(frames, clear.frame, 1) ?? clear.pts };
   }
   if ((clear || edits.td1 !== undefined) && blockClearance && contacts[0]?.touchdown != null) firstFlight = contacts[0].touchdown - blockClearance.pts;
   return { ...auto, contacts, steps, blockClearance, firstFlight };
@@ -104,8 +108,8 @@ export function moments(auto: CrouchResult, edits: Edits, result: CrouchResult, 
 }
 
 /** Whether the foot is down in a frame, as the automatic judgment sees it: for a touchdown or toe-off, a toe near the
- * place within the band of its ground level (GROUND_BAND for a touchdown, LIFT_BAND for a toe-off); for the block, a toe
- * still near the front block. null when no toe is seen there. */
+ * place within the band of its ground level (GROUND_BAND for a touchdown, the crouch start's toe-off band for a toe-off);
+ * for the block, a toe still near the front block. null when no toe is seen there. */
 export function footDown(f: CrouchFrame, m: Pick<Moment, 'focus' | 'ground'> & { kind: string }, W: number, H: number, leg: number): boolean | null {
   if (!f.pose || !m.focus) return null;
   const toe = nearestToe(f.pose, m.focus.x, W);
@@ -113,7 +117,7 @@ export function footDown(f: CrouchFrame, m: Pick<Moment, 'focus' | 'ground'> & {
   const dx = Math.abs(toe.x - m.focus.x) * W;
   if (m.kind === 'clearance') return dx < .1 * leg;
   if (dx > PLANT_RADIUS * 4 * leg) return false;
-  return (m.ground! - toe.y) * H < (m.kind === 'touchdown' ? GROUND_BAND : LIFT_BAND) * leg;
+  return (m.ground! - toe.y) * H < (m.kind === 'touchdown' ? GROUND_BAND : CROUCH_CONTACT.liftBand) * leg;
 }
 
 /** What a moment's frame changes: the values that use it, before and after (rounded as shown). */

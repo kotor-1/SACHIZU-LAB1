@@ -5,8 +5,9 @@ import { firstShown, type ResearchRow, type ResearchSummary, type Sex, type Verd
 import { drawResearchTarget, SWING_COLOR, TARGET_COLOR } from './crouch-research-figure';
 import { usePhasePictures, type FigureOverlay } from './CrouchViews';
 
-/** The verdicts in words (the marks ◎○△ were not understood at a glance, the user 2026-10-10). */
-const WORDS: Record<Exclude<Verdict, 'top'>, string> = { ok: 'ふつう', improve: '伸びしろ', note: '参考', none: '測れない' };
+/** The verdicts in words (the marks ◎○△ were not understood at a glance, the user 2026-10-10). A value not judged is
+ * 判定なし, not 参考, since the values compared with are called 参考値 (2026-10-12). */
+const WORDS: Record<Exclude<Verdict, 'top'>, string> = { ok: 'ふつう', improve: '伸びしろ', note: '判定なし', none: '測れない' };
 export const wordOf = (row: ResearchRow) => row.verdict !== 'top' ? WORDS[row.verdict]
   : row.bands.some(b => b.kind === 'top' && b.label.includes('トップ')) ? 'トップ並み' : '良い';
 const ORDER = '①②③④⑤⑥⑦⑧';
@@ -44,7 +45,7 @@ function ResearchPicture({ row, url, frames, direction }: { row: ResearchRow; ur
   return <div className="cr-pic" aria-live="polite">
     <div className="cr-pic-head"><strong>{row.moment ? `${row.moment.name}：${row.short}` : row.label}</strong>
       <span className="cr-pic-value">{row.value}</span><span className={`cr-word ${row.verdict}`}>{wordOf(row)}</span></div>
-    {drawn ? images[row.key] ? <img src={images[row.key]} alt={`${row.label}：この選手の${name}（${row.value}）と、研究の範囲（${row.target}）`} />
+    {drawn ? images[row.key] ? <img src={images[row.key]} alt={`${row.label}：この選手の${name}（${row.value}）と、${row.target}`} />
       : <div className="sprint10-phase-wait">{failed ? '画像を作れませんでした' : '画像を作成しています…'}</div>
       : row.num !== null && <p className="cr-time">いま {row.value}<span>→ {row.target}</span></p>}
     {drawn && <p className="cr-key" aria-hidden="true">
@@ -68,9 +69,9 @@ export default function CrouchResearch({ summary, sex, onSex, url, frames, direc
   const good = byLabel(summary.good).filter(r => r.plain), fix = byLabel(summary.improve);
   // A value picked: its picture, brought into view when it is off the screen.
   const pick = (k: string) => { setPicked(k); requestAnimationFrame(() => picture.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })); };
-  return <section className="crouch-research" aria-label="研究と比べる">
-    <div className="crouch-research-head"><h3>研究と比べる</h3>
-      <div className="sprint10-seg" role="group" aria-label="比べる研究">{(['female', 'male'] as Sex[]).map(s =>
+  return <section className="crouch-research" aria-label="参考値と比べる">
+    <div className="crouch-research-head"><h3>参考値と比べる</h3>
+      <div className="sprint10-seg" role="group" aria-label="参考値">{(['female', 'male'] as Sex[]).map(s =>
         <button key={s} type="button" aria-pressed={sex === s} onClick={() => onSex(s)}>{s === 'female' ? '女子' : '男子'}</button>)}</div></div>
     {good.length > 0 && <div className="cr-good"><h4>良いところ</h4><ul>{good.map(r =>
       <li key={r.key}><button type="button" aria-pressed={r.key === key} onClick={() => pick(r.key)}>{r.plain}</button></li>)}</ul></div>}
@@ -78,7 +79,7 @@ export default function CrouchResearch({ summary, sex, onSex, url, frames, direc
       {fix.length ? <ol>{fix.map((r, i) => <li key={r.key}>
         <button type="button" aria-pressed={r.key === key} onClick={() => pick(r.key)}>{ORDER[i] ?? ''} {r.plain ?? r.label}</button>
         <span className="cr-now">いま {r.value} → {r.target}</span>{r.cue && <span className="cr-cue">コツ：{r.cue}</span>}</li>)}</ol>
-        : <p>研究と比べて、はっきり直すところはありません。</p>}</div>
+        : <p>参考値と比べて、はっきり直すところはありません。</p>}</div>
     <p className="cr-hint">項目を押すと、下の画像が変わります。</p>
     {row && <div ref={picture}><ResearchPicture row={row} url={url} frames={frames} direction={direction} /></div>}
     <details className="cr-all"><summary>全部の項目を見る（{summary.rows.length}）</summary>

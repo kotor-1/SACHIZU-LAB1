@@ -172,24 +172,70 @@ describe('contact-period force display', () => {
     const { MeanForceDirection } = await import('../src/sprint10/ForceView');
     expect(renderToStaticMarkup(createElement(MeanForceDirection, { horizontal: 1, vertical: 1.1, block: true }))).toContain('手で支えた分も含みます');
   });
-  it('keeps the published mean forward-force references', async () => {
-    const { FORCE_STUDY } = await import('../src/sprint10/ForceView');
-    // Graham-Smith et al. 2020: elite men 3.36 m/s in 0.365 s → 0.94 body weights; juniors 3.16 in 0.412 → 0.78.
-    expect(FORCE_STUDY.block.elite).toBeCloseTo(.938, 2); expect(FORCE_STUDY.block.junior).toBeCloseTo(.782, 2);
-    expect(FORCE_STUDY.steps[0].elite).toBeCloseTo(.648, 2); expect(FORCE_STUDY.steps[1].elite).toBeCloseTo(.519, 2);
+  it('says at top speed that the arrow\'s tilt forward or back is within the measuring spread', async () => {
+    const { MeanForceDirection } = await import('../src/sprint10/ForceView');
+    expect(renderToStaticMarkup(createElement(MeanForceDirection, { horizontal: -.1, vertical: 2, noisy: true }))).toContain('測定のぶれ');
+    expect(renderToStaticMarkup(createElement(MeanForceDirection, { horizontal: -.1, vertical: 2 }))).not.toContain('測定のぶれ');
   });
-  it('shows the same contact mean without claiming a force at a pictured instant', async () => {
+  it('keeps only the study values found for both men and women, one each from one study (the block), and puts a mean against them in words', async () => {
+    const { FORCE_STUDY, STUDY_WHO, against } = await import('../src/sprint10/ForceView');
+    // Mirkov et al. 2020: men 3.20 m/s over 0.483 − 0.134 s, women 3.03 m/s over 0.497 − 0.134 s.
+    expect(Object.keys(FORCE_STUDY)).toEqual(['male', 'female']);
+    expect(FORCE_STUDY.male.value).toBeCloseTo(.935, 2); expect(FORCE_STUDY.female.value).toBeCloseTo(.851, 2);
+    expect(FORCE_STUDY.male.power).toBeCloseTo(14.7, 1); expect(FORCE_STUDY.female.power).toBeCloseTo(12.6, 1);
+    // 参考値, not 研究 (the user, 2026-10-12).
+    expect(against(.98, FORCE_STUDY.male.value, STUDY_WHO.male)).toBe('男子の参考値並み');
+    expect(against(1.1, FORCE_STUDY.female.value, STUDY_WHO.female)).toBe('女子の参考値より大きい');
+    expect(against(.6, FORCE_STUDY.male.value, STUDY_WHO.male)).toBe('男子の参考値よりやや小さい');
+    expect(against(.3, FORCE_STUDY.female.value, STUDY_WHO.female)).toBe('女子の参考値より小さい');
+    expect(against(-.1, FORCE_STUDY.male.value, STUDY_WHO.male)).toBe('ブレーキの方が大きい');
+  });
+  it('shows the same contact mean without claiming a force at a pictured instant, and no study on a run', async () => {
     const { default: ForceView } = await import('../src/sprint10/ForceView');
     vi.stubGlobal('localStorage', { getItem: (key: string) => key === 'sachizu-body-weight' ? String(MASS) : null });
     try {
       const html = renderToStaticMarkup(createElement(ForceView, {
-        kind: 'run', contacts: contacts as Contact[], frames: [], width: 1920, height: 1080, direction: 1, url: 'video.mov', pxPerM: PX,
+        kind: 'run', contacts: contacts as Contact[], frames: [], width: 1920, height: 1080, direction: 1, pxPerM: PX,
       }));
       expect(html).toContain('接地から離地までの平均（動画から推定）');
       expect(html).toContain('接地中のどの瞬間に、どちらへ力を出したかは、この結果では判断できません。');
       expect(html).toContain('1.26倍'); // (0.05 / 0.195 + 1), unchanged from groundForces.
       expect(html).toContain('0.195秒');
-      expect(html).not.toMatch(/<img|<canvas|写真の瞬間|真ん中|仮の目安|鉛直寄り|水平寄り|縦の最大/);
+      expect(html).not.toMatch(/<img|<canvas|研究|目安|一流|並み|鉛直寄り|水平寄り|縦の最大/);
+      // At top speed the forward means are within the spread: said where the values are, the vertical to read; no study.
+      const top = renderToStaticMarkup(createElement(ForceView, {
+        kind: 'run', contacts: contacts as Contact[], frames: [], width: 1920, height: 1080, direction: 1, pxPerM: null, top: true,
+      }));
+      expect(top).toContain('測定のぶれ（体重の±0.2倍ほど）'); expect(top).toContain('上向きの力を見てください');
+      expect(top).not.toMatch(/Weyand|研究の上向き/);
+    } finally { vi.unstubAllGlobals(); }
+  });
+  it('sets the crouch start\'s block against the men\'s or the women\'s of one study, and nothing else, from the poses, the weight and the height', async () => {
+    const { default: ForceView } = await import('../src/sprint10/ForceView');
+    // Poses at the synthetic start's body (every point there, the shoulders 100 px above): the trunk 100 px, so a height
+    // of 100 ÷ 0.288 ÷ 300 m gives the track's 300 px a metre.
+    const pose = (x: number, y: number): CrouchPoint[] => Array.from({ length: 33 }, (_, k) => k === 11 || k === 12 ? { x: x / 1920, y: (y - 100) / 1080, visibility: .9 }
+      : { x: x / 1920, y: y / 1080, visibility: .9 });
+    const frames: CrouchFrame[] = track().map((h, i) => ({ frame: i, pts: h.t, pose: pose(h.x, h.y) }));
+    const height = 100 / .288 / PX * 100;
+    vi.stubGlobal('localStorage', { getItem: (key: string) => key === 'sachizu-body-weight' ? String(MASS) : key === 'sachizu-body-height' ? String(height) : null });
+    try {
+      const render = (sex: 'male' | 'female') => renderToStaticMarkup(createElement(ForceView, {
+        kind: 'crouch', contacts: contacts as Contact[], frames, width: 1920, height: 1080, direction: 1, block: { moveStart: .0463, clearance: .36 },
+        sex, onSex: () => undefined,
+      }));
+      const man = render('male'), woman = render('female');
+      // The synthetic push: forward 0.95 body weights (3.36 m/s in 0.36 s): about the men's 0.93, more than the women's 0.85.
+      expect(man).toContain('前へ：男子の参考値並み'); expect(woman).toContain('前へ：女子の参考値並み');
+      // Both values, one each, in the block's details; the athlete's own direction without any study's.
+      for (const html of [man, woman]) {
+        expect(html).toContain('参考値（前向きの力）'); expect(html).toContain('男子 0.93倍・女子 0.85倍（国内トップ級）');
+        expect(html).toContain('参考値：男子 14.7・女子 12.6');
+        expect(html).toContain('地面から 51°'); expect(html).toContain('aria-label="参考値"');
+        expect(html).not.toMatch(/一流|ジュニア|目安|force-direction-elite|仮の|研究と比べる|研究の/);
+        // The steps are listed with no study and no words against one.
+        expect((html.match(/前へ：/g) ?? []).length).toBe(1);
+      }
     } finally { vi.unstubAllGlobals(); }
   });
 });

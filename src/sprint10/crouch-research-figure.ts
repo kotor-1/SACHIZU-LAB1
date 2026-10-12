@@ -1,4 +1,4 @@
-/** A value of 「研究と比べる」 on the athlete's own picture (the user, 2026-10-10: 「何の角度か分からない」「記号と図の見方」が
+/** A value of 「参考値と比べる」 (「研究と比べる」 until 2026-10-12) on the athlete's own picture (the user, 2026-10-10: 「何の角度か分からない」「記号と図の見方」が
  * 分かりにくい): the studies' range as a green sector from the joint the angle is measured at, so the athlete's line can be
  * seen inside or outside it. The athlete's trunk, shank and knee are drawn by drawCrouchFigure (its marks); the thighs'
  * separation, which has no mark there, is drawn here. Display only. */

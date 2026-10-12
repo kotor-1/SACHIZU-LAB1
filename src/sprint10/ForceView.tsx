@@ -3,28 +3,45 @@ import { numberInput } from './number-input';
 import type { CrouchFrame } from './crouch';
 import type { Contact } from './contacts';
 import { bodyTrack, G, groundForces, scaleFromHeight, type GroundForces } from './ground-force';
+import type { Sex } from './crouch-research';
 
 /** The body's weight and height, kept on this device only (the user enters them once). */
 const WEIGHT_KEY = 'sachizu-body-weight', HEIGHT_KEY = 'sachizu-body-height';
 const stored = (key: string) => { try { const v = Number(localStorage.getItem(key)); return v > 0 ? v : null; } catch { return null; } };
 const store = (key: string, v: number | null) => { try { if (v) localStorage.setItem(key, String(v)); else localStorage.removeItem(key); } catch { /* not kept */ } };
 
-/** The studies' mean forward forces in body weights, worked out from Graham-Smith, Colyer & Salo 2020 (Int J Sports Sci
- * Coach 15:418; 17 elite senior and 20 junior academy men): the block, exit speed ÷ push ÷ g (3.36 m/s, 0.365 s;
- * 3.16 m/s, 0.412 s); the first and second contacts, the speed gained ÷ contact time ÷ g (to 4.60 and 5.48 m/s in
- * 0.195 and 0.173 s; juniors to 4.39 and 5.27 in 0.202 and 0.173). Men only: no women's values were found. */
+/** The studies the means are set against: only values found for both men and women, one each, from one study by one
+ * method (the user, 2026-10-12: 「男子も女子も出せる数値だけに統一して欲しい。男子だけ多いとかはないように」). That is
+ * the block alone: Mirkov et al. 2020 (Int J Environ Res Public Health 17:6447; top national-level Slovenian sprinters,
+ * 22 men 17.7 ± 2.7 years and 6 women 17.0 ± 2.0, instrumented blocks, the mean of 10 training starts): the horizontal
+ * take-off speed over the block time less the reaction time (men 3.20 m/s, 0.483 − 0.134 s; women 3.03 m/s,
+ * 0.497 − 0.134 s), body weights 0.93 and 0.85; the mean forward power ½ × speed² ÷ that time, from the means.
+ * Taken off for want of women's values: the elite and junior men's block and first two contacts (Graham-Smith et al.
+ * 2020: no women), the elite men's push directions (51°, and the user's provisional 63° and 70°: no women's upward speeds
+ * off the blocks), and the top-speed vertical force (Weyand et al. 2000: men and women together). Looked for and not
+ * found: women's speeds at the first toe-offs (the 2018 World Indoor 60 m finalists' report and Ciacci et al. 2017 give
+ * contact times; Nagahara 2023 forces by speed group in figures only). */
 export const FORCE_STUDY = {
-  block: { elite: 3.36 / .365 / G, junior: 3.16 / .412 / G, power: { elite: 15.5, junior: 12.4 } },
-  steps: [{ elite: (4.60 - 3.36) / .195 / G, junior: (4.39 - 3.16) / .202 / G }, { elite: (5.48 - 4.60) / .173 / G, junior: (5.27 - 4.39) / .173 / G }],
+  male: { value: 3.20 / (.483 - .134) / G, power: 3.20 ** 2 / 2 / (.483 - .134) },
+  female: { value: 3.03 / (.497 - .134) / G, power: 3.03 ** 2 / 2 / (.497 - .134) },
 } as const;
+/** The block's values in the words compared with: 参考値, not 研究 (the user, 2026-10-12: 「研究という書き方はやめて別の書き方に」). */
+export const STUDY_WHO: Record<Sex, string> = { male: '男子の参考値', female: '女子の参考値' };
+/** Where a mean forward force stands against a study's mean: within 15% alike. */
+export function against(v: number, study: number, who: string): string {
+  const q = v / study;
+  return v < 0 ? 'ブレーキの方が大きい' : q >= 1.15 ? `${who}より大きい` : q >= .85 ? `${who}並み` : q >= .6 ? `${who}よりやや小さい` : `${who}より小さい`;
+}
 const times = (v: number, mass: number) => `${(v / (mass * G)).toFixed(2)}倍`;
 interface ForcePeriod {
-  key: string; label: string; horizontal: number | null; vertical: number | null; ratio: number | null;
-  extra: [string, string][]; study: string | null;
+  key: string; label: string; horizontal: number | null; vertical: number | null; angle: number | null; ratio: number | null;
+  extra: [string, string][]; against: string | null; study: string | null;
 }
 
-/** Direction of the contact mean, in running-relative coordinates. A fixed length deliberately encodes no magnitude. */
-export function MeanForceDirection({ horizontal, vertical, block = false }: { horizontal: number | null; vertical: number | null; block?: boolean }) {
+/** Direction of the contact mean, in running-relative coordinates. A fixed length deliberately encodes no magnitude.
+ * `noisy`: a section at top speed, where the forward mean is within the measuring spread. */
+export function MeanForceDirection({ horizontal, vertical, block = false, noisy = false }: {
+  horizontal: number | null; vertical: number | null; block?: boolean; noisy?: boolean }) {
   if (horizontal === null || vertical === null || !Number.isFinite(horizontal) || !Number.isFinite(vertical)) {
     return <p className="force-direction-unavailable">前向きと上向きの両方の力が求まると、平均の向きを表示できます。</p>;
   }
@@ -55,6 +72,7 @@ export function MeanForceDirection({ horizontal, vertical, block = false }: { ho
     </svg>
     <p>地面が体を押し返す向きです。{block && '手で支えた分も含みます。'}</p>
     <p className="force-direction-note">矢印の長さは一定です。力の大きさは下の数値で確認できます。</p>
+    {noisy && <p className="force-direction-note">最高速度の区間では、矢印の前後の傾きは測定のぶれ（前向きで体重の±0.2倍ほど）の範囲です。</p>}
   </figure>;
 }
 
@@ -70,13 +88,17 @@ function NumberBox({ label, unit, value, onValue, min, max, example }: { label: 
     onBlur={() => { typing.current = false; setText(value === null ? '' : String(value)); }} />{unit}</label>;
 }
 
-/** Contact-period estimates only: no still frame or posture is presented as an instantaneous force measurement. */
-export default function ForceView({ kind, contacts, frames, width: W, height: H, direction, block, pxPerM, top = false }: {
-  kind: 'crouch' | 'run'; contacts: readonly Contact[]; frames: readonly CrouchFrame[]; width: number; height: number; direction: number; url: string;
+/** Contact-period estimates only: no still frame or posture is presented as an instantaneous force measurement. The
+ * crouch start's block is set against the men's or the women's 参考値 of one study (FORCE_STUDY), the only values found
+ * for both. */
+export default function ForceView({ kind, contacts, frames, width: W, height: H, direction, block, pxPerM, top = false, sex = 'male', onSex }: {
+  kind: 'crouch' | 'run'; contacts: readonly Contact[]; frames: readonly CrouchFrame[]; width: number; height: number; direction: number;
+  /** The crouch start: whose 参考値 to compare the block with (the same choice as 参考値と比べる). */
+  sex?: Sex; onSex?: (s: Sex) => void;
   /** A section at top speed (the flying 10 m): the forward force about nil there, the vertical the one to read. */
   top?: boolean;
-  /** The crouch start: the first movement seen, the front block's clearance and the front foot's side. */
-  block?: { moveStart: number; clearance: number; side: 0 | 1 | null } | null;
+  /** The crouch start: the first movement seen and the front block's clearance. */
+  block?: { moveStart: number; clearance: number } | null;
   /** A run: the picture's pixels per metre from its two lines. */
   pxPerM?: number | null;
 }) {
@@ -90,26 +112,25 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
     block: block ? { moveStart: block.moveStart, clearance: block.clearance } : null }) : null, [weight, contacts, track, scale, kind, direction, block]);
   const periods: ForcePeriod[] = useMemo(() => {
     if (!forces) return [];
-    const out: ForcePeriod[] = [];
+    const out: ForcePeriod[] = [], m = forces.mass;
     const b = forces.block;
     if (b) {
-      const S = FORCE_STUDY.block;
-      out.push({ key: 'block', label: 'ブロック', horizontal: b.horizontal, vertical: b.vertical, ratio: b.ratio,
-        study: `一流男子 ${S.elite.toFixed(2)}倍・ジュニア男子 ${S.junior.toFixed(2)}倍`,
-        extra: [['押した時間', `${b.pushSeconds.toFixed(3)}秒`], ['平均の前向きパワー', `${b.power.toFixed(1)} W/kg（研究の区間平均：一流男子 ${S.power.elite}・ジュニア男子 ${S.power.junior}）`],
+      const S = FORCE_STUDY;
+      out.push({ key: 'block', label: 'ブロック', horizontal: b.horizontal, vertical: b.vertical, angle: b.angle, ratio: b.ratio,
+        against: against(b.horizontal / (m * G), S[sex].value, STUDY_WHO[sex]),
+        study: `男子 ${S.male.value.toFixed(2)}倍・女子 ${S.female.value.toFixed(2)}倍（国内トップ級）`,
+        extra: [['押した時間', `${b.pushSeconds.toFixed(3)}秒`], ['平均の前向きパワー', `${b.power.toFixed(1)} W/kg（参考値：男子 ${S.male.power.toFixed(1)}・女子 ${S.female.power.toFixed(1)}）`],
           ['上向きの力', '手で支えた分も含みます']] });
     }
     forces.steps.forEach((s, i) => {
       const c = contacts[i];
       if (!c || c.touchdown === null || c.toeOff === null || (s.horizontal === null && s.vertical === null)) return;
-      const S = kind === 'crouch' ? FORCE_STUDY.steps[i] : undefined;
-      out.push({ key: `step${i + 1}`, label: `${i + 1}歩目`, horizontal: s.horizontal, vertical: s.vertical, ratio: s.ratio,
-        study: S ? `一流男子 約${S.elite.toFixed(2)}倍・ジュニア男子 約${S.junior.toFixed(2)}倍` : null,
-        extra: [...(top ? [['研究の上向きの力（区間平均）', '速い選手で約2〜2.5倍（Weyandら 2000）'] as [string, string]] : []),
-          ...(s.contactSeconds !== null ? [['接地時間', `${s.contactSeconds.toFixed(3)}秒`] as [string, string]] : [])] });
+      out.push({ key: `step${i + 1}`, label: `${i + 1}歩目`, horizontal: s.horizontal, vertical: s.vertical, angle: s.angle, ratio: s.ratio,
+        against: null, study: null,
+        extra: s.contactSeconds !== null ? [['接地時間', `${s.contactSeconds.toFixed(3)}秒`]] : [] });
     });
     return out;
-  }, [forces, contacts, kind, top]);
+  }, [forces, contacts, sex]);
   const [picked, setPicked] = useState<string | null>(null), summary = useRef<HTMLDivElement>(null);
   const shown = periods.find(p => p.key === picked) ?? periods.find(p => p.horizontal !== null) ?? periods[0] ?? null;
   const pick = (k: string) => { setPicked(k); requestAnimationFrame(() => summary.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })); };
@@ -120,33 +141,37 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
     <div className="force-inputs">
       <NumberBox label="体重" unit="kg" value={weight} onValue={setWeight} min={20} max={150} example="例 55" />
       {kind === 'crouch' && <NumberBox label="身長" unit="cm" value={height} onValue={setHeight} min={100} max={220} example="例 160" />}
+      {kind === 'crouch' && onSex && <div className="force-sex"><span>参考値</span><div className="sprint10-seg" role="group" aria-label="参考値">{(['female', 'male'] as Sex[]).map(s =>
+        <button key={s} type="button" aria-pressed={sex === s} onClick={() => onSex(s)}>{s === 'female' ? '女子' : '男子'}</button>)}</div></div>}
     </div>
     {!weight ? <p className="sprint10-hint">体重を入れると、{kind === 'crouch' ? 'ブロックと' : ''}1歩ごとの平均の力を出します。値はこの端末にだけ残ります。</p> : <>
-      {kind === 'crouch' && !height && <p className="sprint10-note">身長を入れると、前向きの平均の力も出ます（今は上向きの力だけ）。</p>}
+      {kind === 'crouch' && !height && <p className="sprint10-note">身長を入れると、前向きの平均の力と、平均の力の向きも出ます（今は上向きの力だけ）。</p>}
       {kind === 'run' && !pxPerM && <p className="sprint10-note">2本の線から距離が分からないため、上向きの平均の力だけを出しています。</p>}
-      {top && <p className="sprint10-note">最高速度の区間では、前向きの力は平均するとほぼ0になります。途中で力を出していないという意味ではありません。</p>}
+      {top && <p className="sprint10-note">最高速度の区間では、前向きの力は平均するとほぼ0になります（途中で力を出していないという意味ではありません）。1歩ごとの前向きの値は測定のぶれ（体重の±0.2倍ほど）の範囲なので、この区間では上向きの力を見てください。</p>}
       <p className="force-weight-note">数値は、体重を1とした平均の力の大きさです。</p>
       <ul className="force-list">{periods.map(p => <li key={p.key}><button type="button" aria-pressed={shown?.key === p.key} onClick={() => pick(p.key)}>
         <strong>{p.label}</strong>
         <span>{p.horizontal !== null ? <>前へ <b>{times(p.horizontal, forces!.mass)}</b></> : '前へ —'}　上へ <b>{p.vertical !== null ? times(p.vertical, forces!.mass) : '—'}</b></span>
+        {p.against && <em className={p.against.includes('小さい') || p.against.includes('ブレーキ') ? 'low' : 'ok'}>前へ：{p.against}</em>}
         </button></li>)}</ul>
       {shown && <div ref={summary} className="force-summary" aria-live="polite">
         <div className="force-summary-head"><strong>{shown.label}</strong></div>
         <p className="force-average">{shown.key === 'block' ? '押し始めからブロックを離れるまでの平均' : '接地から離地までの平均'}（動画から推定）</p>
-        <MeanForceDirection horizontal={shown.horizontal} vertical={shown.vertical} block={shown.key === 'block'} />
+        <MeanForceDirection horizontal={shown.horizontal} vertical={shown.vertical} block={shown.key === 'block'} noisy={top} />
         <dl className="force-values force-mean-values">
           <dt>前向きの平均</dt><dd>{shown.horizontal !== null ? times(shown.horizontal, forces!.mass) : '—'}</dd>
           <dt>上向きの平均</dt><dd>{shown.vertical !== null ? times(shown.vertical, forces!.mass) : '—'}</dd>
         </dl>
-        <details className="force-details"><summary>時間・割合・研究の数値</summary>
+        <details className="force-details"><summary>{kind === 'crouch' && shown.key === 'block' ? '時間・割合・参考値' : '時間・割合'}</summary>
         <dl className="force-values">
+          {shown.angle !== null && <><dt>平均の力の向き</dt><dd>地面から {Math.round(shown.angle)}°</dd></>}
           {shown.ratio !== null && <><dt>平均の力の前向きの割合</dt><dd>{Math.round(shown.ratio * 100)}%</dd></>}
-          {shown.study && <><dt>研究の前向きの力（区間平均）</dt><dd>{shown.study}</dd></>}
+          {shown.study && <><dt>参考値（前向きの力）</dt><dd>{shown.study}</dd></>}
           {shown.extra.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}
         </dl>
         </details>
       </div>}
-      <p className="sprint10-hint">研究の数値は男子の区間平均です。その瞬間の力や、姿勢の良し悪しを示すものではありません。出し方は「数値の見方」で確認できます。</p>
+      <p className="sprint10-hint">{kind === 'crouch' ? '参考値と比べるのは、男子と女子の両方の値があるブロックだけです（区間平均）。' : ''}その瞬間の力や、姿勢の良し悪しを示すものではありません。出し方は「数値の見方」で確認できます。</p>
     </>}
   </section>;
 }

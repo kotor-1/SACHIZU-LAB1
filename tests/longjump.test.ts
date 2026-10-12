@@ -76,6 +76,13 @@ describe('long jump, the end of the run-up', () => {
     expect(run(1.2).leave).toBeNull();
     expect(longJumpAdvice(r).map(a => a.topic)).toContain('踏切（離地）');
   });
+  it('names a reference value by its level, not men or women (the user, 2026-10-12: 「男女の記載はなしで数値だけ」)', () => {
+    const words = longJumpAdvice(run()).map(a => a.text).join('\n');
+    expect(words).toContain('世界室内の決勝の平均から'); expect(words).toContain('平均記録5.50 mの選手で 鉛直2.75');
+    expect(words).toContain('記録4.3〜5.9 mの大学生の踏切前の速さ 8.28 m/s');
+    // Only a finding seen in women says so, and two values shown side by side name both.
+    expect(words.replace('離地の鉛直速度も女子で記録と結びつきます', '').replace(/男子[\d.]+°・女子[\d.]+°/, '')).not.toMatch(/男子|女子/);
+  });
   it('the ruler comes first: its scale, then the speeds in m/s', () => {
     // The synthetic picture is the world at 200 px/m: a 2 m ruler ahead of the takeoff (running left), 20 px across.
     const board = 1800 - SPEED * .87 - 40 - 60, P = (x: number, y: number) => ({ x: x / W, y: y / H });

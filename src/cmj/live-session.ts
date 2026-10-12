@@ -1,7 +1,7 @@
 import { CameraClock, drawCameraFrame } from './camera-clock';
 import { LiveWorkerClient } from './live-worker-client';
 import type { COMPhase, COMResult } from './com-stream';
-import type { SessionSummary, SessionUpdate } from './video-session';
+import type { FrameSink, SessionSummary, SessionUpdate } from './video-session';
 import type { LiveFrameResult } from './live-protocol';
 import { cameraStopReason } from './session-diagnostics';
 
@@ -24,7 +24,7 @@ export async function prepareLiveWorker(signal: AbortSignal, status: (message: s
 }
 
 export async function measureLive(video: HTMLVideoElement, client: LiveWorkerClient, signal: AbortSignal,
-  update: (value: SessionUpdate) => void, allowMovement: () => boolean = () => true): Promise<SessionSummary> {
+  update: (value: SessionUpdate) => void, allowMovement: () => boolean = () => true, onFrame?: FrameSink): Promise<SessionSummary> {
   const canvas = document.createElement('canvas'), context = canvas.getContext('2d')!;
   const clock = new CameraClock(), results: COMResult[] = [], failures = new Map<string, number>();
   let callback = 0, inflight = false, frame = 0, processed = 0, callbacks = 0;
@@ -79,6 +79,9 @@ export async function measureLive(video: HTMLVideoElement, client: LiveWorkerCli
             // sustainable per-frame cost. Never mix that into the next profile.
             previousProcessingMs = reset || r.profileChanged ? null : frameProcessingMs;
             processed++; if (r.landmarks.length === 1) poseFrames++;
+            // The canvas still holds the frame the worker read (no other is drawn while one is in flight).
+            onFrame?.(canvas, r.landmarks.length === 1 ? r.landmarks[0] : [],
+              r.comSample.comX === null || r.comSample.comY === null ? null : { x: r.comSample.comX / 960, y: r.comSample.comY / 960 });
             if (r.comSample.comY !== null) validFrames++;
             else if (r.comSample.reason) failures.set(r.comSample.reason, (failures.get(r.comSample.reason) ?? 0) + 1);
             averageMs = averageMs ? .8 * averageMs + .2 * r.inferenceMs : r.inferenceMs;

@@ -132,7 +132,7 @@ export function throwAdvice(r: ThrowResult, rel: ReleaseMeasures | null = null, 
   if (r.rearKnee.atStart !== null && r.rearKnee.atRelease !== null)
     out.push({ topic: '後ろ脚の伸び', level: 'info', text: `後ろ膝 ${deg(r.rearKnee.atStart)} → リリース ${deg(r.rearKnee.atRelease)}（参考：トップ選手のリリースの後ろ膝 ${G.shotRelease.rearKnee}°前後）。` });
   if (k.atStart !== null && k.least !== null)
-    out.push({ topic: '前脚の膝', level: 'info', text: `${glide ? '接地' : '突き出しの開始'} ${deg(k.atStart)}、最も曲がった時 ${deg(k.least)}。研究で比べられる値は見つかりませんでした。` });
+    out.push({ topic: '前脚の膝', level: 'info', text: `${glide ? '接地' : '突き出しの開始'} ${deg(k.atStart)}、最も曲がった時 ${deg(k.least)}。比べられる参考値は見つかりませんでした。` });
   if (k.atRelease !== null)
     out.push({ topic: 'リリース', level: k.atRelease < G.shotRelease.frontKnee - 2 * SLACK.knee ? 'check' : 'good',
       text: `リリースのときの前脚の膝 ${deg(k.atRelease)}（参考：トップ選手 ${G.shotRelease.frontKnee}°前後）。${k.atRelease < G.shotRelease.frontKnee - 2 * SLACK.knee ? '前脚が曲がったまま突き出しています。' : ''}` });

@@ -357,8 +357,8 @@ export default function Sprint10Lab() {
         </div>
         <div id="sprint-panel-force" role="tabpanel" aria-labelledby="sprint-tab-force" hidden={tab !== 'force'}>
           {/* The picture's metres from the two lines: their distance on the track over their distance on the picture. */}
-          {timeline && run && url && <ForceView kind="run" contacts={run.contacts} frames={timeline.frames} width={timeline.width} height={timeline.height}
-            direction={run.direction} url={url} pxPerM={distanceM > 0 && finish !== start ? Math.abs(finish - start) * timeline.width / distanceM : null} top={mode === 'flying'} />}
+          {timeline && run && <ForceView kind="run" contacts={run.contacts} frames={timeline.frames} width={timeline.width} height={timeline.height}
+            direction={run.direction} pxPerM={distanceM > 0 && finish !== start ? Math.abs(finish - start) * timeline.width / distanceM : null} top={mode === 'flying'} />}
         </div>
         <div id="sprint-panel-check" role="tabpanel" aria-labelledby="sprint-tab-check" hidden={tab !== 'check'}>
           <p className="sprint10-hint">線を越える瞬間と、各歩の接地・離地のコマを1つずつ確かめます。ずれていたら◀▶か下のコマで合わせて「このコマに決める」、合っていれば「OK」。数値はすぐ変わります。</p>

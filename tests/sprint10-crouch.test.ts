@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeCrouchStart, MAX_STEPS, runStart, type CrouchFrame, type CrouchPoint } from '../src/sprint10/crouch';
+import { analyzeCrouchStart, CROUCH_CONTACT, frameEdge, MAX_STEPS, runStart, type CrouchFrame, type CrouchPoint } from '../src/sprint10/crouch';
 import { crouchPhases, drawCrouchFigure, figureView, markText } from '../src/sprint10/crouch-figure';
 import { frameInterval, insideFrame } from '../src/sprint10/CrouchViews';
 import { crouchAdvice, GUIDE } from '../src/sprint10/crouch-advice';
 import type { CrouchResult, StepResult } from '../src/sprint10/crouch';
 import { applyEdits, effectsOf, footDown, moments } from '../src/sprint10/crouch-edit';
-import { legLength } from '../src/sprint10/contacts';
+import { legLength, LIFT_BAND } from '../src/sprint10/contacts';
 import { PIXEL_SETTINGS, refineByPixels, regionsOf, type RegionPictures } from '../src/sprint10/crouch-pixels';
 import { refineTargets } from '../src/sprint10/recording';
 
@@ -277,7 +277,8 @@ describe('crouch start: moments moved by the user', () => {
   });
   it('takes the times and the angles from the frames chosen, and the values that use them change at once', () => {
     const td2 = auto.contacts[1].touchdownFrame!, r = applyEdits(auto, { td2: td2 + 3 }, frames, W, H);
-    expect(r.contacts[1].touchdownFrame).toBe(td2 + 3); expect(r.contacts[1].touchdown).toBeCloseTo((td2 + 3) / 240, 9);
+    // the first frame with the foot down: the touchdown at its edge, half a frame before it (as the automatic moments)
+    expect(r.contacts[1].touchdownFrame).toBe(td2 + 3); expect(r.contacts[1].touchdown).toBeCloseTo((td2 + 3 - .5) / 240, 9);
     expect(r.steps[1].contactSeconds! - auto.steps[1].contactSeconds!).toBeCloseTo(-3 / 240, 9);
     expect(r.steps[0].flightSeconds! - auto.steps[0].flightSeconds!).toBeCloseTo(3 / 240, 9);
     expect(r.steps[0].pitch).toBeCloseTo(1 / r.steps[0].stepSeconds!, 9);
@@ -291,6 +292,8 @@ describe('crouch start: moments moved by the user', () => {
   it('moves the block clearance: its posture and the time to the first touchdown', () => {
     const at = auto.blockClearance!.frame, r = applyEdits(auto, { clearance: at - 4 }, frames, W, H);
     expect(r.blockClearance!.frame).toBe(at - 4);
+    // the last frame with the front foot on its block: the clearance at its edge, half a frame after it
+    expect(r.blockClearance!.pts).toBeCloseTo((at - 4 + .5) / 240, 9); expect(auto.blockClearance!.pts).toBeCloseTo((at + .5) / 240, 9);
     expect(r.firstFlight! - auto.firstFlight!).toBeCloseTo(4 / 240, 9);
     expect(r.steps).toEqual(auto.steps);
   });
@@ -419,15 +422,16 @@ describe('crouch start against the studies', () => {
     expect(s.rows.map(row => row.key)).toEqual(['frontKnee', 'rearKnee', 'setTrunk', 'firstFlight', 'trunk1', 'shank1', 'gapTouchdown1', 'firstContact',
       'trunkToeOff1', 'gapToeOff1', 'shank2', 'gapTouchdown2', 'shank3', 'gapTouchdown3']);
     expect([...new Set(s.rows.map(row => row.group))]).toEqual(['構え', 'ブロック →1歩目', '1歩目 接地', '1歩目 離地', '2歩目 接地', '3歩目 接地']);
-    expect(v('frontKnee')).toMatchObject({ verdict: 'improve', research: '91〜99°（女子の平均 約103°）', better: -1 });
-    expect(v('frontKnee').text).toContain('女子の平均は約103°');
+    // Shown as 参考値, with no men or women named (the user, 2026-10-12): the women's front-knee mean as 平均.
+    expect(v('frontKnee')).toMatchObject({ verdict: 'improve', research: '91〜99°（平均 約103°）', better: -1 });
+    expect(v('frontKnee').text).toContain('平均は約103°');
     expect(v('rearKnee').verdict).toBe('ok');
     // The app's own angles (from vertical, as the 姿勢 tab): the set trunk 111°, the studies' 24° below horizontal = 114°.
     expect(v('setTrunk')).toMatchObject({ verdict: 'ok', value: '111°' }); expect(v('setTrunk').text).toContain('肩が腰より21°低い');
     expect(v('firstFlight').verdict).toBe('top'); expect(v('firstContact').verdict).toBe('note');
     expect(v('trunk1')).toMatchObject({ verdict: 'top', value: '50°' });
     // The first shank: the trained sprinters' average, but 18° short of the world-class men.
-    expect(v('shank1').verdict).toBe('improve'); expect(v('shank1').text).toContain('鍛えた選手の平均並みで、世界トップ男子より18°立っています');
+    expect(v('shank1').verdict).toBe('improve'); expect(v('shank1').text).toContain('鍛えた選手の平均並みで、世界トップより18°立っています');
     expect(v('shank2').verdict).toBe('top'); expect(v('shank3').verdict).toBe('top');
     expect(v('gapTouchdown1')).toMatchObject({ verdict: 'note', value: '後ろ38°' });
     expect(v('trunkToeOff1')).toMatchObject({ verdict: 'top', value: '44°' });
@@ -435,11 +439,14 @@ describe('crouch start against the studies', () => {
     expect([v('gapTouchdown2').value, v('gapTouchdown3').value]).toEqual(['後ろ18°', '後ろ11°']);
     expect(s.good).toEqual(['ブロック→1歩目の空中', '1歩目接地の体幹', '1歩目離地の体幹', '2歩目接地の脛', '3歩目接地の脛']);
     expect(s.improve).toEqual(['1歩目接地の脛', '構えの前膝']); expect(s.missing).toEqual([]);
-    // Women's and men's studies where they differ.
-    expect(v('firstContact').research).toContain('女子 0.225秒');
+    // Women's and men's values where both exist, chosen by the switch, neither named.
+    expect(v('firstContact').research).toBe('上位の選手 0.225秒・その下 0.166秒');
     const men = crouchResearch(r, 'male');
-    expect(men.rows.find(row => row.key === 'firstContact')!.research).toContain('男子 0.210秒');
+    expect(men.rows.find(row => row.key === 'firstContact')!.research).toBe('上位の選手 0.210秒・その下 0.176秒');
     expect(men.rows.find(row => row.key === 'frontKnee')!.research).toBe('91〜99°');
+    // No men or women named, and no 研究, on the screen's words.
+    for (const sx of [s, men]) for (const row of sx.rows) for (const words of [row.research, row.text, row.target, row.plain ?? '', ...row.bands.map(b => b.label), ...row.marks.map(m => m.label)])
+      expect(words).not.toMatch(/男子|女子|研究/);
   });
   it('puts the studies\' strongest ties first, and tells what could not be measured instead of guessing', async () => {
     const { crouchResearch } = await import('../src/sprint10/crouch-research');
@@ -476,13 +483,13 @@ describe('crouch start against the studies', () => {
     const s = crouchResearch(r, 'female'), v = (key: string) => s.rows.find(row => row.key === key)!;
     expect(firstShown(s)).toBe('gapToeOff1');
     expect(v('gapToeOff1')).toMatchObject({ plain: '1歩目の離地で、後ろ足の膝をもっと前へ', cue: '地面を押し切るときに、反対の膝を素早く前へ引き出す',
-      target: '世界トップ男子 前95〜109°', moment: { frame: 252, name: '1歩目の離地' }, figure: { kind: 'gap', side: 1 } });
-    expect(v('shank1')).toMatchObject({ plain: '1歩目の接地で、脛をもっと前に倒す', target: '世界トップ男子 52〜58°', moment: { frame: 216, name: '1歩目の接地' }, figure: { kind: 'shank', side: 0 } });
-    expect(v('frontKnee')).toMatchObject({ plain: '構えの前膝を、もう少し深く曲げる', target: '研究の範囲 91〜99°', moment: { frame: 1, name: '構え' }, figure: { kind: 'knee', side: 1 } });
+      target: '参考値 前95〜109°（世界トップ）', moment: { frame: 252, name: '1歩目の離地' }, figure: { kind: 'gap', side: 1 } });
+    expect(v('shank1')).toMatchObject({ plain: '1歩目の接地で、脛をもっと前に倒す', target: '参考値 52〜58°（世界トップ）', moment: { frame: 216, name: '1歩目の接地' }, figure: { kind: 'shank', side: 0 } });
+    expect(v('frontKnee')).toMatchObject({ plain: '構えの前膝を、もう少し深く曲げる', target: '参考値 91〜99°', moment: { frame: 1, name: '構え' }, figure: { kind: 'knee', side: 1 } });
     expect(v('rearKnee').figure).toEqual({ kind: 'knee', side: 0 });
     // The good points in words; the times have no picture; values with nothing to say have no words.
-    expect(v('firstFlight')).toMatchObject({ plain: 'ブロックから1歩目まで、低く速く出られている', moment: null, figure: null, target: 'トップ選手 0.020〜0.070秒' });
-    expect(v('firstContact').target).toBe('上位の女子 0.225秒・その下 0.166秒');
+    expect(v('firstFlight')).toMatchObject({ plain: 'ブロックから1歩目まで、低く速く出られている', moment: null, figure: null, target: '参考値 0.020〜0.070秒（トップ選手）' });
+    expect(v('firstContact').target).toBe('参考値 0.225秒（上位の選手）・0.166秒（その下）');
     expect(v('rearKnee').plain).toBeNull(); expect(v('gapTouchdown1').plain).toBeNull();
     // Nothing to work on: the first at the best level is shown.
     expect(firstShown(crouchResearch(made({ shanks: [55, 38, 30] }), 'female'))).toBe('firstFlight');
@@ -524,10 +531,70 @@ describe('crouch start against the studies', () => {
     const summary = crouchResearch(made({ front: 107, shanks: [37, 34, 28], gapsTo: [83, null, null] }), 'female');
     const html = renderToStaticMarkup(createElement(CrouchResearch, { summary, sex: 'female', onSex: () => {}, url: '', frames: [], direction: 1 }));
     for (const text of ['良いところ', 'ブロックから1歩目まで、低く速く出られている', '直すところ（この順に）', '① 1歩目の離地で、後ろ足の膝をもっと前へ',
-      'いま 前83° → 世界トップ男子 前95〜109°', 'コツ：地面を押し切るときに、反対の膝を素早く前へ引き出す', '② 1歩目の接地で、脛をもっと前に倒す',
-      `全部の項目を見る（${summary.rows.length}）`, '伸びしろ', 'トップ並み', 'ふつう']) expect(html).toContain(text);
-    // Words, not marks; no table.
+      'いま 前83° → 参考値 前95〜109°（世界トップ）', 'コツ：地面を押し切るときに、反対の膝を素早く前へ引き出す', '② 1歩目の接地で、脛をもっと前に倒す', '参考値と比べる',
+      `全部の項目を見る（${summary.rows.length}）`, '伸びしろ', 'トップ並み', 'ふつう', '判定なし']) expect(html).toContain(text);
+    // Words, not marks; no table; neither 研究 nor men or women named, beside the switch's own buttons.
     expect(html).not.toMatch(/[◎○△]/); expect(html).not.toContain('<table');
+    expect(html.replace(/>女子<|>男子</g, '')).not.toMatch(/男子|女子|研究/);
     expect(html.match(/class="cr-item /g)).toHaveLength(summary.rows.length);
+  });
+});
+
+describe('crouch start: toe-offs checked again against the picture (2026-10-12)', () => {
+  const frames = startFrames(), auto = analyzeCrouchStart(frames, { width: W, height: H });
+  it('puts a moment judged on a frame at its edge: between it and the frame before or after', () => {
+    const some: CrouchFrame[] = [0, 1, 2, 4].map(frame => ({ frame, pts: frame / 240, pose: null }));
+    expect(frameEdge(some, 1, -1)).toBeCloseTo(.5 / 240, 12); expect(frameEdge(some, 1, 1)).toBeCloseTo(1.5 / 240, 12);
+    expect(frameEdge(some, 2, 1)).toBeCloseTo(3 / 240, 12);   // the next frame read is 4
+    // past the ends, half the interval on the other side
+    expect(frameEdge(some, 0, -1)).toBeCloseTo(-.5 / 240, 12); expect(frameEdge(some, 4, 1)).toBeCloseTo(5 / 240, 12);
+    expect(frameEdge(some, 3, 1)).toBeNull();
+  });
+  it('gives the pose\'s contacts and the clearance their times at the frames\' edges, as the pictures\' moments', () => {
+    for (const c of auto.contacts) {
+      expect(c.touchdown).toBeCloseTo((c.touchdownFrame! - .5) / 240, 12);
+      if (c.toeOff !== null) expect(c.toeOff).toBeCloseTo((c.toeOffFrame! + .5) / 240, 12);
+    }
+    // a contact of n frames lasts n frames (it was a frame short)
+    expect(auto.steps[0].contactSeconds).toBeCloseTo((auto.contacts[0].toeOffFrame! - auto.contacts[0].touchdownFrame! + 1) / 240, 12);
+    expect(auto.blockClearance!.pts).toBeCloseTo((auto.blockClearance!.frame + .5) / 240, 12);
+    expect(auto.firstFlight).toBeCloseTo(auto.contacts[0].touchdown! - auto.blockClearance!.pts, 12);
+  });
+  it('keeps the toe down while the toe point rises with the heel less than the crouch start\'s band', () => {
+    // The toe point 14 px up (0.06 of the 240 px leg) over the last 6 frames on the ground of the first contact, as the
+    // foot turns over the shoe's tip: the other events' band (0.05) took the toe-off 6 frames early.
+    const to = auto.contacts[0].toeOffFrame!, leg = legLength(frames.filter(f => f.pose), W, H);
+    const raised = frames.map(f => f.frame > to - 6 && f.frame <= to
+      ? { ...f, pose: f.pose!.map((q, k) => (k === 31 || k === 32) && Math.abs(q.y * H - GROUND) < 1 && Math.abs(q.x * W - auto.contacts[0].x) < 20 ? { ...q, y: (GROUND - .06 * leg) / H } : q) } : f);
+    expect(CROUCH_CONTACT.liftBand).toBe(.07); expect(LIFT_BAND).toBe(.05);
+    expect(analyzeCrouchStart(raised, { width: W, height: H }).contacts[0].toeOffFrame).toBe(to);
+    CROUCH_CONTACT.liftBand = LIFT_BAND;
+    try { expect(analyzeCrouchStart(raised, { width: W, height: H }).contacts[0].toeOffFrame).toBe(to - 6); } finally { CROUCH_CONTACT.liftBand = .07; }
+  });
+  it('looks for the toe-off at the toe as the heel rises, not at the contact\'s place', () => {
+    // The toe point 10 px ahead in the last frames on the ground (the foot turned over the shoe's tip); in the pictures the
+    // back of the shoe leaves the ground 6 frames before the tip (behind 4 px past the place), the tip at the truth.
+    const c0 = auto.contacts[0], to = c0.toeOffFrame!, x0 = c0.x;
+    const turned = frames.map(f => f.frame > to - 6 && f.frame <= to
+      ? { ...f, pose: f.pose!.map((q, k) => (k === 31 || k === 32) && Math.abs(q.x * W - x0) < 20 ? { ...q, x: (x0 + 10) / W } : q) } : f);
+    const base = analyzeCrouchStart(turned, { width: W, height: H }), regions = regionsOf(base, turned, W, H), c = base.contacts[0];
+    const q = regions.find(g => g.key === 'c1')!, truth = { td: c.touchdownFrame! + 2, to: c.toeOffFrame! + 1 };
+    let seed = 11; const grain = () => (seed = seed * 16807 % 2147483647) % 17 - 8;
+    const byFrame = new Map<number, Uint8Array>();
+    for (let f = q.from; f <= q.to; f++) {
+      const px = new Uint8Array(q.w * q.h * 3);
+      for (let i = 0; i < px.length; i += 3) {
+        const X = q.x + (i / 3) % q.w, down = f >= truth.td && f <= (X >= x0 + 4 ? truth.to : truth.to - 6);
+        const [r, g, b] = down ? [225, 205, 40] : [110, 118, 125]; px[i] = r + grain(); px[i + 1] = g + grain(); px[i + 2] = b + grain();
+      }
+      byFrame.set(f, px);
+    }
+    const toeOffAt = () => refineByPixels(base, new Map([['c1', byFrame]]), regions, turned, W, H).moments.find(m => m.key === 'to1')!;
+    const now = toeOffAt();
+    expect(now.fromPixels).toBe(true); expect(Math.abs(now.frame! - (truth.to + .5))).toBeLessThan(1);
+    // the window at the contact's place, half the share (before 2026-10-12): the back of the shoe leaving
+    const keep = { ...PIXEL_SETTINGS };
+    Object.assign(PIXEL_SETTINGS, { TO_LATE: 0, TO_BACK: -.01, TO_W: .08, TO_H: .04, TO_AT: .5 });
+    try { const before = toeOffAt(); expect(before.fromPixels).toBe(true); expect(before.frame!).toBeLessThan(truth.to - 3); } finally { Object.assign(PIXEL_SETTINGS, keep); }
   });
 });

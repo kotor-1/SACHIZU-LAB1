@@ -29,7 +29,7 @@ export function longJumpAdvice(r: LongJumpResult): HurdleAdvice[] {
   // The last two steps' speed, else (not both in the picture) the speed at the takeoff's touchdown: said as which.
   const two = mps(r, r.speed.lastTwoPx), v = two ?? mps(r, r.speed.touchdownPx);
   if (v !== null)
-    out.push({ topic: '助走速度', level: 'info', text: `${two !== null ? '最後の2歩で' : '踏切の接地の瞬間で'} ${v.toFixed(1)} m/s（時速約${kmh(v)}km、目安 ${(v * (1 - SPREAD)).toFixed(1)}〜${(v * (1 + SPREAD)).toFixed(1)} m/s）。研究では助走速度が記録と最も強く結びつき、0.1 m/s速いと記録は約13cm長い傾向です（参考：関西学生女子の踏切前の速さ ${G.speedWomen} m/s）。` });
+    out.push({ topic: '助走速度', level: 'info', text: `${two !== null ? '最後の2歩で' : '踏切の接地の瞬間で'} ${v.toFixed(1)} m/s（時速約${kmh(v)}km、目安 ${(v * (1 - SPREAD)).toFixed(1)}〜${(v * (1 + SPREAD)).toFixed(1)} m/s）。研究では助走速度が記録と最も強く結びつき、0.1 m/s速いと記録は約13cm長い傾向です（参考：記録4.3〜5.9 mの大学生の踏切前の速さ ${G.speedWomen} m/s）。` });
   const [s1, s2] = r.steps, a = mps(r, s1?.speedPx ?? null), b = mps(r, s2?.speedPx ?? null);
   if (a !== null && b !== null) {
     // Within ±STEADY the two are the same as far as the video tells: between the browsers the change differed up to
@@ -41,9 +41,9 @@ export function longJumpAdvice(r: LongJumpResult): HurdleAdvice[] {
   }
   const up = mps(r, r.leave?.verticalPx ?? null), ahead = mps(r, r.leave?.horizontalPx ?? null);
   if (r.leave && up !== null && ahead !== null)
-    out.push({ topic: '踏切（離地）', level: 'info', text: `離地の瞬間、鉛直 ${up.toFixed(2)} m/s・水平 ${ahead.toFixed(2)} m/s（目安）、踏切角度 ${r.leave.angle.toFixed(1)}°。研究では離地の鉛直速度も女子で記録と結びつきます（参考：女子（平均5.50 m）鉛直${G.leave.vertical}・水平${G.leave.horizontal} m/s・${G.leave.angle}°）。踏切角度は人ごとに最適が違い（${G.angleRange[0]}〜${G.angleRange[1]}°）、目標にする値ではありません。` });
+    out.push({ topic: '踏切（離地）', level: 'info', text: `離地の瞬間、鉛直 ${up.toFixed(2)} m/s・水平 ${ahead.toFixed(2)} m/s（目安）、踏切角度 ${r.leave.angle.toFixed(1)}°。研究では離地の鉛直速度も女子で記録と結びつきます（参考：平均記録5.50 mの選手で 鉛直${G.leave.vertical}・水平${G.leave.horizontal} m/s・${G.leave.angle}°）。踏切角度は人ごとに最適が違い（${G.angleRange[0]}〜${G.angleRange[1]}°）、目標にする値ではありません。` });
   if (r.rhythm !== null)
-    out.push({ topic: '最後の2歩のリズム', level: 'info', text: `最後の1歩の時間は、その前の歩の ${Math.round(r.rhythm * 100)}%（参考：世界室内の女子決勝の平均から ${Math.round(G.rhythm * 100)}%。最後の1歩を短く速く）。` });
+    out.push({ topic: '最後の2歩のリズム', level: 'info', text: `最後の1歩の時間は、その前の歩の ${Math.round(r.rhythm * 100)}%（参考：世界室内の決勝の平均から ${Math.round(G.rhythm * 100)}%。最後の1歩を短く速く）。` });
   if (r.posture.legAngle !== null)
     out.push({ topic: '踏切接地の脚', level: 'info', text: `股関節から足首の線が水平から ${Math.round(r.posture.legAngle)}°（参考：トップ選手 男子${G.legAngle.men}°・女子${G.legAngle.women}°前後。小さいほど足を前に着いています）。` });
   if (r.posture.trunkPenult !== null)

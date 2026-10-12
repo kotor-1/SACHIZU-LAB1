@@ -7,8 +7,9 @@
  * legs cross in a side view, are never needed. */
 import { contactOf, contactPlants, legLength, median, PLANT_GAP, plantedToes, plantsOf, quantile, TOE, toesOf, visible, type Contact, type Toe } from './contacts';
 import { kneeAngle, shankAngle, sideNearest, thighAngle, trunkAngle } from './angles';
-/** v2 (2026-10-04): angles from RTMPose when given (`refined`). */
-export const CROUCH_VERSION = 'crouch-start-v2.1-experimental';
+/** v2 (2026-10-04): angles from RTMPose when given (`refined`). v2.2 (2026-10-12): toe-offs checked again against the
+ * picture (CROUCH_CONTACT, crouch-pixels.ts) and the moments' times between frames (frameEdge). */
+export const CROUCH_VERSION = 'crouch-start-v2.2-experimental';
 export const MAX_STEPS = 5;
 
 export interface CrouchPoint { x: number; y: number; visibility?: number }
@@ -84,6 +85,27 @@ const FRONT_LEAVE = .10;
 /** The clearance search (exported for the study scripts, as crouch-pixels' PIXEL_SETTINGS): the toe score counted,
  * the time a front toe may go unseen (s), and whether frames without the athlete's pose count as unseen. */
 export const CLEARANCE_SETTINGS = { score: .5, gap: BLOCK_GAP, poseGaps: 0, refined: 0, leave: FRONT_LEAVE };
+/** The toe-off's band (leg lengths above the plant's ground level) for the crouch start's contacts (contacts.ts uses
+ * LIFT_BAND, 0.05, for the other events). The toe point rises with the heel while the shoe's tip is still down: read again
+ * against the picture (the last frame with the tip on the ground, 2026-10-12: 25 toe-offs of 9 videos, 3 SD athletes and
+ * 7 more of the user's), 0.05 put them 1.8 frames early on average (up to 8, しゅん), 0.07 0.1 late (|mean| 1.2, at most
+ * 3). The 10/03 truth the 0.05 came from had taken the shoe's body leaving for the toe-off (2-9 frames early on 8 of 9). */
+export const CROUCH_CONTACT = { liftBand: .07 };
+/** A moment judged on a frame falls between that frame and the one before (a touchdown: the first frame with the foot
+ * down) or after (a toe-off, the block clearance: the last frame with the foot down): the middle of the two frames'
+ * times, as the pictures' moments are (crouch-pixels.ts). Times taken at the frames themselves made a contact a frame
+ * short (2026-10-12). Past the video's ends, half the interval of the frames on the other side. */
+export function frameEdge(frames: readonly CrouchFrame[], frame: number, side: -1 | 1): number | null {
+  const i = frames.findIndex(f => f.frame === frame);
+  if (i < 0) return null;
+  const next = frames[i + side], back = frames[i - side];
+  return next ? (frames[i].pts + next.pts) / 2 : back ? frames[i].pts + (frames[i].pts - back.pts) / 2 : frames[i].pts;
+}
+/** A contact's times at the edges of its frames (frameEdge): touchdown before its first frame, toe-off after its last. */
+export function contactEdges(c: Contact, frames: readonly CrouchFrame[]): Contact {
+  return { ...c, touchdown: c.touchdown !== null && c.touchdownFrame !== null ? frameEdge(frames, c.touchdownFrame, -1) ?? c.touchdown : c.touchdown,
+    toeOff: c.toeOff !== null && c.toeOffFrame != null ? frameEdge(frames, c.toeOffFrame, 1) ?? c.toeOff : c.toeOff };
+}
 
 export function analyzeCrouchStart(frames: readonly CrouchFrame[], options: CrouchOptions): CrouchResult {
   const base: CrouchResult = { version: CROUCH_VERSION, reason: null, direction: 0, set: null, blockClearance: null, blocks: null,
@@ -165,7 +187,7 @@ export function analyzeCrouchStart(frames: readonly CrouchFrame[], options: Crou
   // Contacts: places after the front foot left the blocks, ahead of it, in time order.
   const after = contactPlants(real.filter(p => p.from > clearance - PLANT_GAP && along(p.x) > zone[1] + .2 * leg), leg, direction, MAX_STEPS);
   const lastSeen = seen.at(-1)!.pts;
-  base.contacts = after.map((p, i) => contactOf(p, i + 1, toes, leg, lastSeen));
+  base.contacts = after.map((p, i) => contactEdges(contactOf(p, i + 1, toes, leg, lastSeen, -Infinity, CROUCH_CONTACT.liftBand), frames));
 
   // Postures: medians over the set's last SET_SPAN s and the frames around the
   // clearance; one frame's pose error read a set trunk lean of 30° (others 103-106°).
@@ -173,11 +195,13 @@ export function analyzeCrouchStart(frames: readonly CrouchFrame[], options: Crou
   const clearIndex = seen.findIndex(f => f.pts >= clearance);
   const clearFrames = clearIndex < 0 ? [] : seen.slice(Math.max(0, clearIndex - 2), clearIndex + 3);
   base.set = setFrames.length ? posture(setFrames, front.x / W, W, H, direction, leg) : null;
-  base.blockClearance = clearFrames.length ? posture(clearFrames, front.x / W, W, H, direction, leg, seen[clearIndex]) : null;
+  // The clearance's time: after the last frame with the front foot on its block (frameEdge); its frame is shown.
+  const clearAt = clearIndex >= 0 ? frameEdge(frames, seen[clearIndex].frame, 1) ?? clearance : clearance;
+  base.blockClearance = clearFrames.length ? { ...posture(clearFrames, front.x / W, W, H, direction, leg, seen[clearIndex]), pts: clearAt } : null;
 
   // Steps.
   const first = base.contacts[0];
-  base.firstFlight = first?.touchdown != null ? first.touchdown - clearance : null;
+  base.firstFlight = first?.touchdown != null ? first.touchdown - clearAt : null;
   base.steps = stepsOf(base.contacts, frames, W, H, direction, leg);
   if (!base.contacts.length) base.notes.push('ブロックを離れた後の接地が映っていません。');
   const partial = base.contacts.filter(c => c.toeOff === null).map(c => c.index);

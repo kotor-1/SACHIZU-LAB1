@@ -263,7 +263,7 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
     ? { front: `参考：トップ選手のブロック膝 ${G.blockKnee.contact[0]}〜${G.blockKnee.contact[1]}°、上体は後ろへ${G.javTrunkBack.men}〜${G.javTrunkBack.women}°前後`,
       least: `参考：トップ選手 ${G.blockKnee.least[0]}〜${G.blockKnee.least[1]}°`, release: `参考：トップ選手のブロック膝 ${G.blockKnee.release[0]}〜${G.blockKnee.release[1]}°` }
     : { release: `参考：トップ選手の前膝 ${G.shotRelease.frontKnee}°・後ろ膝 ${G.shotRelease.rearKnee}°前後、上体は前へ${G.shotRelease.trunk}°前後`,
-      front: 'パワーポジション：比べられる研究の値は見つかりませんでした' };
+      front: 'パワーポジション：比べられる参考値は見つかりませんでした' };
   return <main className="sprint10">
     <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
     <header><p className="sprint10-eyebrow">EVENT / {jav ? 'JAVELIN' : 'SHOT PUT'}</p><h1>{title}</h1>

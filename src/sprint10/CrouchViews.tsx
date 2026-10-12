@@ -40,7 +40,7 @@ export function usePhasePictures(url: string, frames: readonly CrouchFrame[], ph
   const interval = useMemo(() => frameInterval(frames), [frames]);
   // Drawn again only when a picture would change (a moment's frame or marks): a new array of the same phases on every
   // render (a tap in 確認, a key in 身長) started the hidden video over each time, several at once on a phone.
-  const shownKey = phases.map(p => `${p.key}:${p.frame}:${p.pts}:${JSON.stringify(p.marks ?? null)}:${p.focus?.join(',') ?? ''}:${p.skeleton ?? true}:${JSON.stringify(p.bounds ?? null)}`).join('|');
+  const shownKey = phases.map(p => `${p.key}:${p.frame}:${JSON.stringify(p.marks ?? null)}:${p.focus?.join(',') ?? ''}`).join('|');
   const latest = useRef(phases); latest.current = phases;
   useEffect(() => {
     const phases = latest.current;
@@ -60,16 +60,18 @@ export function usePhasePictures(url: string, frames: readonly CrouchFrame[], ph
         for (const p of phases) {
           const shown = frames.find(f => f.frame === p.frame), pose = shown ? anglePose(shown) : null;
           if (closed) return;
-          if (!pose && !p.bounds?.length) continue;
-          await seekTo(v, insideFrame(p.pts, interval));
+          if (!pose) continue;
+          // The frame whose pose is drawn, by its own time: a moment's time may lie between frames (a touchdown from the
+          // pictures, crouch-pixels.ts), and its middle-of-frame seek then showed the frame before under this skeleton.
+          await seekTo(v, insideFrame(shown!.pts, interval));
           if (closed) return;
           const canvas = document.createElement('canvas'); canvas.width = FIGURE_W; canvas.height = FIGURE_H;
           const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('no canvas');
-          const around = p.bounds ?? (p.focus ? pose!.map((q, i) => p.focus!.includes(i) ? q : { ...q, visibility: 0 }) : pose!);
+          const around = p.focus ? pose.map((q, i) => p.focus!.includes(i) ? q : { ...q, visibility: 0 }) : pose;
           const W = v.videoWidth, H = v.videoHeight, view = figureView(around, W, H, FIGURE_W / FIGURE_H), k = FIGURE_W / view.w;
           ctx.drawImage(v, view.x, view.y, view.w, view.h, 0, 0, FIGURE_W, FIGURE_H);
           const to = (q: { x: number; y: number }) => ({ x: (q.x * W - view.x) * k, y: (q.y * H - view.y) * k });
-          if (pose && p.skeleton !== false) drawCrouchFigure(ctx, pose, to, p.marks, FIGURE_W / 48, true);
+          drawCrouchFigure(ctx, pose, to, p.marks, FIGURE_W / 48, true);
           overlay?.(p, ctx, to, FIGURE_W / 48);
           const image = canvas.toDataURL('image/jpeg', .85);
           if (!closed) setImages(m => ({ ...m, [p.key]: image }));

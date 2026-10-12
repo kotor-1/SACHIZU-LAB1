@@ -265,7 +265,7 @@ export default function HighJumpLab() {
             <p className="sprint10-hint">点線は鉛直、弧が測った角度。「踏切の接地」の赤い線は足首から重心への線で、鉛直からの傾きが後傾です。画像を左右にスワイプして局面を切り替えます。</p>
             {result.moments.length ? <PhaseFigures url={url} frames={measured!.frames} phases={result.moments} onShow={show} overlay={overlay}
               guides={{ touchdown: `後傾 ${result.posture.lean == null ? '—' : `${Math.round(result.posture.lean)}°`}（参考：小6・中学生のはさみ跳び ${G.lean.scissors[0]}〜${G.lean.scissors[1]}°）`,
-                least: `参考：高校の背面跳び ${G.knee.highSchool[1]}°・世界トップ男子 ${G.knee.elite[1]}°` }} /> : <p>角度を測れる局面がありませんでした。</p>}
+                least: `参考：高校の背面跳び ${G.knee.highSchool[1]}°・世界トップ ${G.knee.elite[1]}°` }} /> : <p>角度を測れる局面がありませんでした。</p>}
           </div>
           <div id="highjump-panel-times" role="tabpanel" aria-labelledby="highjump-tab-times" hidden={tab !== 'times'}>
             <RhythmTable result={result} />

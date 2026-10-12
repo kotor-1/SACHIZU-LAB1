@@ -282,11 +282,11 @@ function StepList({ result: r }: { result: LongJumpResult }) {
       `${v === null ? '—' : `${v.toFixed(1)} m/s`}`,
       `接地 ${seconds(s.contact)}・空中 ${seconds(s.flight)}`];
   });
-  rows.push(['最後の2歩のリズム（最後の1歩 ÷ その前の歩）', r.rhythm === null ? '—' : `${Math.round(r.rhythm * 100)}%`, `参考 ${Math.round(G.rhythm * 100)}%（世界室内の女子決勝の平均から）`]);
-  rows.push(['踏切の接地時間（参考）', seconds(r.takeoffContact), `参考 女子 ${G.takeoffContact}秒`]);
+  rows.push(['最後の2歩のリズム（最後の1歩 ÷ その前の歩）', r.rhythm === null ? '—' : `${Math.round(r.rhythm * 100)}%`, `参考 ${Math.round(G.rhythm * 100)}%（世界室内の決勝の平均から）`]);
+  rows.push(['踏切の接地時間（参考）', seconds(r.takeoffContact), `参考 ${G.takeoffContact}秒（平均記録5.50 m）`]);
   const leave = (px: number | undefined) => { const v = px === undefined ? null : mps(r, px); return v === null ? '—' : `${v.toFixed(2)} m/s`; };
-  rows.push(['離地の水平速度', leave(r.leave?.horizontalPx), `目安・参考 女子（平均5.50 m）${G.leave.horizontal} m/s`]);
-  rows.push(['離地の鉛直速度', leave(r.leave?.verticalPx), `目安・参考 女子（平均5.50 m）${G.leave.vertical} m/s`]);
+  rows.push(['離地の水平速度', leave(r.leave?.horizontalPx), `目安・参考 ${G.leave.horizontal} m/s（平均記録5.50 m）`]);
+  rows.push(['離地の鉛直速度', leave(r.leave?.verticalPx), `目安・参考 ${G.leave.vertical} m/s（平均記録5.50 m）`]);
   rows.push(['踏切角度（参考）', r.leave ? `${r.leave.angle.toFixed(1)}°` : '—', `人ごとの最適 ${G.angleRange[0]}〜${G.angleRange[1]}°（目標にしない）`]);
   rows.push(['踏切接地：脚の角度（股関節→足首と水平）', r.posture.legAngle === null ? '—' : `${Math.round(r.posture.legAngle)}°`, `参考 女子${G.legAngle.women}°・男子${G.legAngle.men}°`]);
   const lean = (v: number | null) => v === null ? '—' : v < 0 ? `後ろへ ${Math.round(-v)}°` : `前へ ${Math.round(v)}°`;

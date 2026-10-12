@@ -16,7 +16,7 @@
  * Pure: the pictures are given (crouch-pixels-read.ts takes them in the browser; dev-validation from ffmpeg). */
 import type { CrouchFrame, CrouchResult } from './crouch';
 import { posture, stepsOf } from './crouch';
-import { legLength } from './contacts';
+import { legLength, median, visible, type Contact } from './contacts';
 
 /** A part of the picture taken in the frames from..to (pixels, the analysis' frame size). */
 export interface PixelRegion { key: string; from: number; to: number; x: number; y: number; w: number; h: number }
@@ -34,14 +34,22 @@ const MARGIN = 32;
  * - the toe window (leg lengths): TOE_W wide, TOE_H high, centred TOE_BACK behind the toe and TOE_UP above the ground;
  *   for the toe-off TO_W, TO_H, TO_BACK, TO_UP (the tip of the shoe: the rest turns over it as the heel rises);
  * - the front foot on its block: a wider window (the forefoot); then with BC_TIP the tip of the shoe (BC_TIP_W, BC_TIP_H,
- *   centred BC_TIP_BACK behind and BC_TIP_UP above the toe) within BC_TIP_FAR frames after: the forefoot changes as the
- *   heel rises, while the toe is still on the block. Against the pictures' truth (the user's practice videos, 2026-10-07:
- *   「スタブロから離れるところがうまくいかない動画が多い」): 15 videos (the three SD videos clean, dark and 540p 120 fps,
- *   and six from Hadano in varied light) mean |error| 4.57 → 2.37 frames (240 fps), the bias −3.85 → −0.84 (early). */
-export const PIXEL_SETTINGS = { DIFF: 24, NOISE: 4, MIN_PIXELS: 8, STANDING: .7, BARE: .35, FAR: 15, TD_AT: .5, TO_AT: .5,
-  TOE_W: .16, TOE_H: .08, TOE_BACK: .03, TOE_UP: .02, TO_W: .08, TO_H: .04, TO_BACK: -.01, TO_UP: .005,
+ *   centred BC_TIP_BACK behind and BC_TIP_UP above the toe) within BC_TIP_FAR frames after, the share passing BC_AT: the
+ *   forefoot changes as the heel rises, while the toe is still on the block. Against the pictures' truth (the user's
+ *   practice videos, 2026-10-07: 「スタブロから離れるところがうまくいかない動画が多い」): 15 videos (the three SD videos
+ *   clean, dark and 540p 120 fps, and six from Hadano in varied light) mean |error| 4.57 → 2.37 frames (240 fps), the
+ *   bias −3.85 → −0.84 (early).
+ * - the toe-off window (2026-10-12): centred TO_BACK behind the toe seen in the TO_LATE frames up to the pose's toe-off
+ *   (the shoe's tip stands there as the heel rises; the contact's place, a median over the whole contact, lay up to 15 px
+ *   behind it and the window lost the tip early), the toe-off where the share passes TO_AT: read again against the picture
+ *   (the last frame with the tip down, 25 toe-offs of 9 videos and the dev app's own poses of しゅん), the window at the
+ *   place with TO_AT 0.5 put them 3.0 frames early on average (up to 8.4, しゅん), this 0.2 late (|mean| 1.4, at most 4.4:
+ *   a backlit video, the shoe's shadow by the tip; しゅん's first toe-off 1-2.5 early, the toe point a little behind the
+ *   tip); on darkened copies the shoe's tip is often lost to both (moments to fix in 確認). */
+export const PIXEL_SETTINGS = { DIFF: 24, NOISE: 4, MIN_PIXELS: 8, STANDING: .7, BARE: .35, FAR: 15, TD_AT: .5, TO_AT: .35,
+  TOE_W: .16, TOE_H: .08, TOE_BACK: .03, TOE_UP: .02, TO_W: .08, TO_H: .04, TO_BACK: .01, TO_UP: .005,
   BLOCK_W: .35, BLOCK_H: .18, BLOCK_BACK: .12, BLOCK_UP: .06,
-  BC_TIP: 1, BC_TIP_W: .1, BC_TIP_H: .05, BC_TIP_BACK: -.01, BC_TIP_UP: .01, BC_TIP_FAR: 12 };
+  BC_TIP: 1, BC_TIP_W: .1, BC_TIP_H: .05, BC_TIP_BACK: -.01, BC_TIP_UP: .01, BC_TIP_FAR: 12, BC_AT: .5, TO_LATE: 6 };
 const S = PIXEL_SETTINGS;
 
 /** A window of the picture by its centre and size (pixels of the analysis' frames). */
@@ -58,8 +66,18 @@ function placesOf(r: CrouchResult, frames: readonly CrouchFrame[], W: number, H:
     main: { cx: front.x - dir * S.BLOCK_BACK * leg, cy: front.y - S.BLOCK_UP * leg, w: S.BLOCK_W * leg, h: S.BLOCK_H * leg } });
   for (const c of r.contacts) if (c.touchdownFrame !== null) out.push({ key: `c${c.index}`, ...span(c.touchdownFrame, c.toeOffFrame ?? c.touchdownFrame),
     main: { cx: c.x - dir * S.TOE_BACK * leg, cy: c.groundY - S.TOE_UP * leg, w: S.TOE_W * leg, h: S.TOE_H * leg },
-    tip: { cx: c.x - dir * S.TO_BACK * leg, cy: c.groundY - S.TO_UP * leg, w: S.TO_W * leg, h: S.TO_H * leg } });
+    tip: { cx: lateToe(c, frames, W, leg) - dir * S.TO_BACK * leg, cy: c.groundY - S.TO_UP * leg, w: S.TO_W * leg, h: S.TO_H * leg } });
   return out;
+}
+/** Where the shoe's tip stands as the heel rises (pixels along x): the contact's toe in the last TO_LATE frames up to the
+ * pose's toe-off, else (TO_LATE 0, or no toe seen) the contact's place. */
+function lateToe(c: Contact, frames: readonly CrouchFrame[], W: number, leg: number) {
+  if (!S.TO_LATE || c.toeOffFrame == null) return c.x;
+  const xs = frames.filter(f => f.pose && f.frame <= c.toeOffFrame! && f.frame > c.toeOffFrame! - S.TO_LATE).flatMap(f => {
+    const near = [f.pose![31], f.pose![32]].filter(p => visible(p) && Math.abs(p.x * W - c.x) < .1 * leg).map(p => p.x * W);
+    return near.length ? [near.reduce((b, x) => Math.abs(x - c.x) < Math.abs(b - c.x) ? x : b)] : [];
+  });
+  return xs.length ? median(xs) : c.x;
 }
 /** The parts of the picture to take (a little round the windows), with their frames. */
 export function regionsOf(r: CrouchResult, frames: readonly CrouchFrame[], W: number, H: number): PixelRegion[] {
@@ -88,7 +106,7 @@ export function refineByPixels(r: CrouchResult, pictures: RegionPictures, region
     moments.push({ key: 'clearance', frame: found?.at ?? null, fromPixels: !!found, share: found?.share ?? null });
     if (found) {
       const n = Math.floor(found.at), i = seen.findIndex(f => f.frame >= n);   // the last frame with the foot on the block
-      if (i >= 0) { blockClearance = posture(seen.slice(Math.max(0, i - 2), i + 3), r.blocks!.front, W, H, dir, leg, seen[i]); clearancePts = timeOf(found.at); }
+      if (i >= 0) { clearancePts = timeOf(found.at); blockClearance = { ...posture(seen.slice(Math.max(0, i - 2), i + 3), r.blocks!.front, W, H, dir, leg, seen[i]), pts: clearancePts }; }
     }
   }
   const contacts = r.contacts.map(c => {
@@ -225,15 +243,15 @@ function contactOf(p: Pictures, q: PixelRegion, win: Window, tip: Window, td0: n
 function leaving(p: Pictures, q: PixelRegion, win: Window, bc0: number, tip: Window | null = null) {
   const on = medianPicture(p, q, win, bc0 - 12, bc0 - 4), bare = medianPicture(p, q, win, bc0 + 20, bc0 + 30), noise = noiseOf(p, q, win, bc0 + 20, bc0 + 30);
   if (!on || !bare) return null;
-  const s1 = shares(p, q, win, on, bare, noise), at1 = s1 ? edge(s1, bc0 - 8, 1, S.TO_AT) : null;
+  const s1 = shares(p, q, win, on, bare, noise), at1 = s1 ? edge(s1, bc0 - 8, 1, S.BC_AT) : null;
   const last = at1 === null ? null : medianPicture(p, q, win, at1 - 6, at1 - 2), share = last ? shares(p, q, win, last, bare, noise) : null;
-  const at = share && at1 !== null ? edge(share, at1 - 4, 1, S.TO_AT) : null;
+  const at = share && at1 !== null ? edge(share, at1 - 4, 1, S.BC_AT) : null;
   if (!share || at === null || Math.abs(at - bc0) > S.FAR || level(share, at - 6, at - 2) < S.STANDING || level(share, at + 5, at + 12) > S.BARE) return null;
   // The forefoot's pixels change as the heel rises and the shoe turns over its tip, before the toe leaves the block:
   // the moment is then taken at the tip of the shoe, when its pixels pass from the toe on the block to the bare block.
   if (S.BC_TIP && tip) {
     const tipOn = medianPicture(p, q, tip, at - 4, at), tipBare = medianPicture(p, q, tip, bc0 + 20, bc0 + 30), tipNoise = noiseOf(p, q, tip, bc0 + 20, bc0 + 30);
-    const s = tipOn && tipBare ? shares(p, q, tip, tipOn, tipBare, tipNoise) : null, atTip = s ? edge(s, at - 2, 1, S.TO_AT) : null;
+    const s = tipOn && tipBare ? shares(p, q, tip, tipOn, tipBare, tipNoise) : null, atTip = s ? edge(s, at - 2, 1, S.BC_AT) : null;
     if (s && atTip !== null && atTip >= at - 1 && atTip - at <= S.BC_TIP_FAR && level(s, atTip - 6, atTip - 2) >= S.STANDING && level(s, atTip + 5, atTip + 12) <= S.BARE)
       return { at: atTip, share: s };
   }

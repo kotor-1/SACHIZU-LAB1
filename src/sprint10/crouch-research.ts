@@ -47,7 +47,9 @@ export interface ResearchRow {
   /** The studies on the row's scale: ranges, single values (no spread given), and the side of faster starts (0: none). */
   bands: Band[]; marks: { at: number; label: string }[]; better: -1 | 0 | 1;
   research: string; verdict: Verdict; text: string;
-  /** The best studied level (or the studies' range) in words, for 「いま 35° → 世界トップ男子 52〜58°」. */
+  /** The best studied level (or the studies' range) in words, for 「いま 35° → 参考値 52〜58°（世界トップ）」: shown as 参考値
+   * without men or women named (the user, 2026-10-12: 「研究という書き方はやめて」「男女の記載はなしで数値だけ出せばいい」;
+   * the sources, with their samples, are in 数値の見方). */
   target: string;
   /** The moment the value is seen at (its picture), and the joints drawn on it: the leg's side for a knee or a shank,
    * the stance leg's for the thighs. None for the times. */
@@ -91,7 +93,7 @@ const band = (mean: number, sd: number, label: string, kind: Band['kind']): Band
 const NOT_MEASURED = '映っていない、または骨格がはっきりしないため測れませんでした。';
 const SHANK_WHY = '脛が前に倒れているほど、前へ押す力が大きくなります。';
 const GAP_WHY = '離地で後ろ足のももが前に来ている選手ほど、1歩目の推進が大きい結果です。';
-const NEAR = '世界トップ男子に近い値です（差は誤差ほど）。';
+const NEAR = '世界トップに近い値です（差は誤差ほど）。';
 
 export function crouchResearch(r: CrouchResult, sex: Sex): ResearchSummary {
   const rows: Base[] = [];
@@ -107,22 +109,22 @@ export function crouchResearch(r: CrouchResult, sex: Sex): ResearchSummary {
   // The set.
   const [kneeLo, kneeHi] = STUDY.frontKnee;
   add({ key: 'frontKnee', group: '構え', short: '前膝', label: '構えの前膝', kind: 'angle',
-    bands: [{ from: kneeLo, to: kneeHi, label: '研究の範囲', kind: 'top' }], marks: women ? [{ at: STUDY.frontKneeWomen, label: '女子の平均' }] : [], better: -1,
-    research: `${kneeLo}〜${kneeHi}°${women ? `（女子の平均 約${STUDY.frontKneeWomen}°）` : ''}` }, r.set?.frontKnee, v =>
-    v > kneeHi + ERROR.angle ? ['improve', `速い選手ほど前膝を深く曲げる傾向です${women ? `（女子の平均は約${STUDY.frontKneeWomen}°）` : ''}。記録との結びつきは弱めです。`]
-    : v < kneeLo - ERROR.angle ? ['note', '研究の範囲より深く曲がっています。ブロックの位置や腰の高さで変わります。']
-    : ['ok', v > kneeHi ? '研究の範囲に近い値です（差は誤差ほど）。' : '研究の範囲です。']);
+    bands: [{ from: kneeLo, to: kneeHi, label: '参考値', kind: 'top' }], marks: women ? [{ at: STUDY.frontKneeWomen, label: '平均' }] : [], better: -1,
+    research: `${kneeLo}〜${kneeHi}°${women ? `（平均 約${STUDY.frontKneeWomen}°）` : ''}` }, r.set?.frontKnee, v =>
+    v > kneeHi + ERROR.angle ? ['improve', `速い選手ほど前膝を深く曲げる傾向です${women ? `（平均は約${STUDY.frontKneeWomen}°）` : ''}。記録との結びつきは弱めです。`]
+    : v < kneeLo - ERROR.angle ? ['note', '参考値の範囲より深く曲がっています。ブロックの位置や腰の高さで変わります。']
+    : ['ok', v > kneeHi ? '参考値の範囲に近い値です（差は誤差ほど）。' : '参考値の範囲です。']);
   const [rearLo, rearHi] = STUDY.rearKnee;
   add({ key: 'rearKnee', group: '構え', short: '後膝', label: '構えの後膝', kind: 'angle',
-    bands: [{ from: rearLo, to: rearHi, label: '研究の範囲', kind: 'top' }], marks: [], better: 0, research: `${rearLo}〜${rearHi}°` }, r.set?.rearKnee, v =>
-    v >= rearLo - ERROR.angle && v <= rearHi + ERROR.angle ? ['ok', '研究の範囲です。']
-    : ['note', `研究の範囲より${v > rearHi ? '伸びて' : '曲がって'}います。良い向きは研究で分かれます。`]);
-  const T0 = STUDY.setTrunk[sex], who = women ? '女子' : '男子';
+    bands: [{ from: rearLo, to: rearHi, label: '参考値', kind: 'top' }], marks: [], better: 0, research: `${rearLo}〜${rearHi}°` }, r.set?.rearKnee, v =>
+    v >= rearLo - ERROR.angle && v <= rearHi + ERROR.angle ? ['ok', '参考値の範囲です。']
+    : ['note', `参考値の範囲より${v > rearHi ? '伸びて' : '曲がって'}います。良い向きははっきりしていません。`]);
+  const T0 = STUDY.setTrunk[sex];
   add({ key: 'setTrunk', group: '構え', short: '体幹', label: '構えの体幹', kind: 'angle',
-    bands: [{ from: T0.mean - 2 * T0.sd, to: T0.mean + 2 * T0.sd, label: `${who}（研究）`, kind: 'top' }], marks: [], better: 0,
-    research: `${who}の平均 ${T0.mean}°（肩が腰より約${T0.mean - 90}°低い）` }, r.set?.trunkAngle, v =>
-    Math.abs(v - T0.mean) <= 2 * T0.sd ? ['ok', `研究の範囲です（肩が腰より${Math.round(v - 90)}°低い構え）。`]
-    : ['note', `研究の平均より肩が${v > T0.mean ? '低い' : '高い'}構えです。記録との結びつきは弱めです。`]);
+    bands: [{ from: T0.mean - 2 * T0.sd, to: T0.mean + 2 * T0.sd, label: '参考値', kind: 'top' }], marks: [], better: 0,
+    research: `平均 ${T0.mean}°（肩が腰より約${T0.mean - 90}°低い）` }, r.set?.trunkAngle, v =>
+    Math.abs(v - T0.mean) <= 2 * T0.sd ? ['ok', `参考値の範囲です（肩が腰より${Math.round(v - 90)}°低い構え）。`]
+    : ['note', `参考値の平均より肩が${v > T0.mean ? '低い' : '高い'}構えです。記録との結びつきは弱めです。`]);
 
   // Leaving the blocks.
   const F = STUDY.firstFlight, topFlight = F.top + F.topSd;
@@ -137,19 +139,19 @@ export function crouchResearch(r: CrouchResult, sex: Sex): ResearchSummary {
   // The first contact.
   const T1 = STUDY.trunkTouchdown;
   add({ key: 'trunk1', group: '1歩目 接地', short: '体幹', label: '1歩目接地の体幹', kind: 'angle',
-    bands: [band(T1.mean, T1.sd, '世界トップ男子', 'top')], marks: [], better: 0, research: `世界トップ男子 ${T1.mean}°` }, step(0)?.trunkAngle, v =>
-    Math.abs(v - T1.mean) <= T1.sd ? ['top', '世界トップ男子と同じくらいの前傾です。']
-    : ['note', `世界トップ男子より${v < T1.mean ? '起きて' : '前に倒れて'}います。良い向きは研究で分かれます。`]);
+    bands: [band(T1.mean, T1.sd, '世界トップ', 'top')], marks: [], better: 0, research: `世界トップ ${T1.mean}°` }, step(0)?.trunkAngle, v =>
+    Math.abs(v - T1.mean) <= T1.sd ? ['top', '世界トップと同じくらいの前傾です。']
+    : ['note', `世界トップより${v < T1.mean ? '起きて' : '前に倒れて'}います。良い向きははっきりしていません。`]);
   const shankRow = (i: number) => {
     const S = STUDY.shank[i], top = i === 0 ? STUDY.shankTopFirst : null, low = S.mean - S.sd;
     add({ key: `shank${i + 1}`, group: `${i + 1}歩目 接地`, short: '脛', label: `${i + 1}歩目接地の脛`, kind: 'angle',
-      bands: [...(top ? [band(top.mean, top.sd, '世界トップ男子', 'top')] : []), band(S.mean, S.sd, '鍛えた選手', 'trained')], marks: [], better: 1,
-      research: top ? `世界トップ男子 ${top.mean}°・鍛えた選手 ${Math.round(S.mean)}°` : `鍛えた選手 ${Math.round(S.mean)}°` }, step(i)?.shankAngle, v => {
+      bands: [...(top ? [band(top.mean, top.sd, '世界トップ', 'top')] : []), band(S.mean, S.sd, '鍛えた選手', 'trained')], marks: [], better: 1,
+      research: top ? `世界トップ ${top.mean}°・鍛えた選手 ${Math.round(S.mean)}°` : `鍛えた選手 ${Math.round(S.mean)}°` }, step(i)?.shankAngle, v => {
       if (top) {
         const best = top.mean - top.sd, gap = Math.round(top.mean - v);
-        return v >= best ? ['top', '世界トップ男子並みに脛が前に倒れています。']
+        return v >= best ? ['top', '世界トップ並みに脛が前に倒れています。']
           : v >= best - ERROR.angle ? ['ok', NEAR]
-          : ['improve', `${v >= low ? `鍛えた選手の平均並みで、世界トップ男子より${gap}°立っています。` : `鍛えた選手より脛が立っています（世界トップ男子より${gap}°）。`}${SHANK_WHY}`];
+          : ['improve', `${v >= low ? `鍛えた選手の平均並みで、世界トップより${gap}°立っています。` : `鍛えた選手より脛が立っています（世界トップより${gap}°）。`}${SHANK_WHY}`];
       }
       return v >= S.mean + S.sd ? ['top', '鍛えた選手の平均より前傾を保てています。']
         : v >= low ? ['ok', '鍛えた選手の範囲です。']
@@ -159,29 +161,29 @@ export function crouchResearch(r: CrouchResult, sex: Sex): ResearchSummary {
   shankRow(0);
   const GT = STUDY.gapTouchdownTop, G1 = STUDY.gapTouchdown[0];
   add({ key: 'gapTouchdown1', group: '1歩目 接地', short: 'ももの開き', label: '1歩目接地のももの開き', kind: 'gap',
-    bands: [band(GT.mean, GT.sd, '世界トップ男子', 'top'), band(G1.mean, G1.sd, '鍛えた選手', 'trained')], marks: [], better: 0,
-    research: `世界トップ男子 ${gapText(GT.mean)}・鍛えた選手 ${gapText(G1.mean)}` }, step(0)?.thighGapTouchdown, () =>
-    ['note', '1歩目の接地で後ろ足が残るのはふつうです（世界トップ男子でも約70°後ろ）。']);
+    bands: [band(GT.mean, GT.sd, '世界トップ', 'top'), band(G1.mean, G1.sd, '鍛えた選手', 'trained')], marks: [], better: 0,
+    research: `世界トップ ${gapText(GT.mean)}・鍛えた選手 ${gapText(G1.mean)}` }, step(0)?.thighGapTouchdown, () =>
+    ['note', '1歩目の接地で後ろ足が残るのはふつうです（世界トップでも約70°後ろ）。']);
   const C = STUDY.firstContact[sex];
   add({ key: 'firstContact', group: '1歩目 接地', short: '接地時間', label: '1歩目の接地時間', kind: 'seconds',
-    bands: [], marks: [{ at: C.top, label: `上位の${who}` }, { at: C.below, label: 'その下' }], better: 0,
-    research: `上位の${who} ${C.top.toFixed(3)}秒・その下 ${C.below.toFixed(3)}秒` }, step(0)?.contactSeconds, v =>
+    bands: [], marks: [{ at: C.top, label: '上位の選手' }, { at: C.below, label: 'その下' }], better: 0,
+    research: `上位の選手 ${C.top.toFixed(3)}秒・その下 ${C.below.toFixed(3)}秒` }, step(0)?.contactSeconds, v =>
     ['note', `${Math.abs(v - C.top) <= Math.abs(v - C.below) ? '上位の選手' : 'その下の選手'}に近い長さです。長ければ良いとは言えません。`]);
 
   // The first toe-off: the two values tied to the first step's push.
   const T2 = STUDY.trunkToeOff;
   add({ key: 'trunkToeOff1', group: '1歩目 離地', short: '体幹', label: '1歩目離地の体幹', kind: 'angle',
-    bands: [band(T2.mean, T2.sd, '世界トップ男子', 'top')], marks: [], better: 0, research: `世界トップ男子 ${T2.mean}°` }, step(0)?.trunkToeOff, v =>
-    Math.abs(v - T2.mean) <= T2.sd ? ['top', '世界トップ男子と同じくらいの前傾です。']
-    : ['note', `世界トップ男子より${v < T2.mean ? '起きて' : '前に倒れて'}います。良い向きは研究で分かれます。`]);
+    bands: [band(T2.mean, T2.sd, '世界トップ', 'top')], marks: [], better: 0, research: `世界トップ ${T2.mean}°` }, step(0)?.trunkToeOff, v =>
+    Math.abs(v - T2.mean) <= T2.sd ? ['top', '世界トップと同じくらいの前傾です。']
+    : ['note', `世界トップより${v < T2.mean ? '起きて' : '前に倒れて'}います。良い向きははっきりしていません。`]);
   const GO = STUDY.gapToeOffTop, GN = STUDY.gapToeOff;
   add({ key: 'gapToeOff1', group: '1歩目 離地', short: 'ももの開き', label: '1歩目離地のももの開き', kind: 'gap',
-    bands: [band(GO.mean, GO.sd, '世界トップ男子', 'top'), band(GN.mean, GN.sd, '鍛えた選手', 'trained')], marks: [], better: 1,
-    research: `世界トップ男子 ${gapText(GO.mean)}・鍛えた選手 ${gapText(GN.mean)}` }, step(0)?.thighGapToeOff, v => {
+    bands: [band(GO.mean, GO.sd, '世界トップ', 'top'), band(GN.mean, GN.sd, '鍛えた選手', 'trained')], marks: [], better: 1,
+    research: `世界トップ ${gapText(GO.mean)}・鍛えた選手 ${gapText(GN.mean)}` }, step(0)?.thighGapToeOff, v => {
     const best = GO.mean - GO.sd, gap = Math.round(GO.mean - v);
-    return v >= best ? ['top', '世界トップ男子並みに、後ろ足のももが前に来ています。']
+    return v >= best ? ['top', '世界トップ並みに、後ろ足のももが前に来ています。']
       : v >= best - ERROR.gap ? ['ok', NEAR]
-      : ['improve', `${v >= GN.mean - ERROR.gap ? `鍛えた選手の平均並みで、世界トップ男子より${gap}°小さい開きです。` : `鍛えた選手より小さい開きです（世界トップ男子より${gap}°）。`}${GAP_WHY}`];
+      : ['improve', `${v >= GN.mean - ERROR.gap ? `鍛えた選手の平均並みで、世界トップより${gap}°小さい開きです。` : `鍛えた選手より小さい開きです（世界トップより${gap}°）。`}${GAP_WHY}`];
   });
 
   // The next contacts.
@@ -211,20 +213,20 @@ export function crouchResearch(r: CrouchResult, sex: Sex): ResearchSummary {
     rearKnee: { moment: set, figure: { kind: 'knee', side: front === null ? null : (1 - front) as 0 | 1 } },
     setTrunk: { moment: set, figure: { kind: 'trunk', side: null } },
     firstFlight: { moment: null, figure: null, top: 'ブロックから1歩目まで、低く速く出られている', improve: 'ブロックから低く前へ出る', cue: '上に跳び出さず、前へ低く出る' },
-    trunk1: { moment: td(0), figure: { kind: 'trunk', side: null }, top: '1歩目の接地の前傾が、世界トップ男子並み' },
-    shank1: { moment: td(0), figure: { kind: 'shank', side: side(0) }, top: '1歩目の接地で、脛が世界トップ男子並みに前に倒れている',
+    trunk1: { moment: td(0), figure: { kind: 'trunk', side: null }, top: '1歩目の接地の前傾が、世界トップ並み' },
+    shank1: { moment: td(0), figure: { kind: 'shank', side: side(0) }, top: '1歩目の接地で、脛が世界トップ並みに前に倒れている',
       improve: '1歩目の接地で、脛をもっと前に倒す', cue: '膝を前に出したまま、足を腰より後ろに着く' },
     gapTouchdown1: { moment: td(0), figure: { kind: 'gap', side: side(0) } },
     firstContact: { moment: null, figure: null },
-    trunkToeOff1: { moment: to(0), figure: { kind: 'trunk', side: null }, top: '1歩目の離地の前傾が、世界トップ男子並み' },
+    trunkToeOff1: { moment: to(0), figure: { kind: 'trunk', side: null }, top: '1歩目の離地の前傾が、世界トップ並み' },
     gapToeOff1: { moment: to(0), figure: { kind: 'gap', side: r.steps[0]?.sideToeOff ?? null },
-      top: '1歩目の離地で、後ろ足の膝が世界トップ男子並みに前に来ている', improve: '1歩目の離地で、後ろ足の膝をもっと前へ', cue: '地面を押し切るときに、反対の膝を素早く前へ引き出す' },
+      top: '1歩目の離地で、後ろ足の膝が世界トップ並みに前に来ている', improve: '1歩目の離地で、後ろ足の膝をもっと前へ', cue: '地面を押し切るときに、反対の膝を素早く前へ引き出す' },
     ...later(1), ...later(2),
   };
   const out: ResearchRow[] = rows.map(row => {
     const s = SEEN[row.key], best = row.bands.find(b => b.kind === 'top') ?? row.bands[0];
     return { ...row, moment: s.moment, figure: s.figure,
-      target: best ? `${best.label} ${rangeText(row.kind, best.from, best.to)}` : row.marks.map(m => `${m.label} ${shown(row.kind, m.at)}`).join('・'),
+      target: best ? `参考値 ${rangeText(row.kind, best.from, best.to)}${best.label === '参考値' ? '' : `（${best.label}）`}` : `参考値 ${row.marks.map(m => `${shown(row.kind, m.at)}（${m.label}）`).join('・')}`,
       plain: row.verdict === 'top' ? s.top ?? null : row.verdict === 'improve' ? s.improve ?? null : null, cue: row.verdict === 'improve' ? s.cue ?? null : null };
   });
   const of = (v: Verdict) => out.filter(row => row.verdict === v);
