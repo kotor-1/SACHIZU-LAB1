@@ -149,33 +149,73 @@ describe('ground reaction force from the video and the body mass', () => {
 
 describe('contact-period force display', () => {
   it.each([[3, 4], [-3, 4], [0, 4], [4, 0], [3, -4]])('draws the direction of the mean components (%s, %s), with a fixed length', async (horizontal, vertical) => {
-    const { MeanForceDirection } = await import('../src/sprint10/ForceView');
-    const draw = (factor: number) => renderToStaticMarkup(createElement(MeanForceDirection, { horizontal: horizontal * factor, vertical: vertical * factor }));
-    const html = draw(1), tip = html.match(/<polygon points="([^ ]+)/)![1].split(',').map(Number);
-    const dx = tip[0] - 160, dy = (vertical < 0 ? 56 : 172) - tip[1];
+    const { ForceDirections } = await import('../src/sprint10/ForceView');
+    const draw = (factor: number) => renderToStaticMarkup(createElement(ForceDirections, { items: [{ key: 'a', label: '1歩目', horizontal: horizontal * factor, vertical: vertical * factor }], chosen: 'a' }));
+    const html = draw(1), tip = html.slice(html.indexOf('force-direction-vector')).match(/<polygon points="([^ ]+)/)![1].split(',').map(Number);
+    const dx = tip[0] - 160, dy = (vertical < 0 ? 126 : 186) - tip[1];
     expect(Math.hypot(dx, dy)).toBeCloseTo(108, 9);
     expect(dx / 108).toBeCloseTo(horizontal / Math.hypot(horizontal, vertical), 9);
     expect(dy / 108).toBeCloseTo(vertical / Math.hypot(horizontal, vertical), 9);
     expect(draw(10)).toBe(html); // No magnitude is encoded by an independently scaled arrow.
     expect(html).toContain('平均の力の向き');
-    expect(html).toContain('矢印の長さは一定');
-    expect(html).toContain('前へ（走る方向）');
-    expect(html).not.toMatch(/<img|<canvas|一流|目安|°/);
+    expect(html).toContain('矢印の長さはどれも同じ');
+    expect(html).toContain('前（走る方向）');
+    expect(html).toContain(`1歩目 ${Math.round(Math.atan2(vertical, horizontal) * 180 / Math.PI)}°`); // the chosen one's own angle
+    expect(html).not.toMatch(/<img|<canvas|一流|目安|仮の/); // no study's direction
+  });
+  it('shows every section\'s direction on the same dial, the chosen one marked, and labels that do not overlap', async () => {
+    const { ForceDirections } = await import('../src/sprint10/ForceView');
+    const items = [{ key: 'block', label: 'ブロック', horizontal: 1.02, vertical: 1.12 }, { key: 'step1', label: '1歩目', horizontal: .53, vertical: 1.35 },
+      { key: 'step2', label: '2歩目', horizontal: .26, vertical: 1.38 }, { key: 'step3', label: '3歩目', horizontal: .25, vertical: 1.4 }, { key: 'step4', label: '4歩目', horizontal: null, vertical: 1.3 }];
+    const html = renderToStaticMarkup(createElement(ForceDirections, { items, chosen: 'step1' }));
+    expect((html.match(/class="force-direction-other"/g) ?? []).length).toBe(3); // the other usable sections, faint
+    expect(html).toContain('1歩目 69°'); expect(html).toContain('force-direction-tip chosen');
+    expect(html).toContain('>ブロック<'); expect(html).toContain('>2歩目<');
+    expect(html).not.toContain('>3歩目<'); // 80°, next to 2歩目's 79°: no second label on top of it
+    expect(html).toContain('薄い矢印は、ほかの区間の向きです。');
+    expect(html).toContain('<b>1歩目</b>：地面から 69°。上向きの力が前向きの力の約2.5倍です。');
+  });
+  it('puts the direction in plain words, without judging it', async () => {
+    const { directionWords } = await import('../src/sprint10/ForceView');
+    expect(directionWords(1.02, 1.12)).toBe('地面から 48°。前向きと上向きの力がほぼ同じ大きさです。');
+    expect(directionWords(.26, 1.38)).toBe('地面から 79°。上向きの力が前向きの力の約5.3倍です。');
+    expect(directionWords(2, 1)).toBe('地面から 27°。前向きの力が上向きの力の約2.0倍です。');
+    expect(directionWords(.05, 2)).toBe('地面から 89°。ほぼ真上です。');
+    expect(directionWords(-.1, 2)).toBe('地面から 93°。前向きの平均が後ろ向き（ブレーキ）です。');
+    expect(directionWords(-.1, 2, true)).toBe('地面から 93°。最高速度の区間なので、前後の傾きは測定のぶれの範囲です。');
+    for (const w of [directionWords(1, 1), directionWords(.3, 1.4), directionWords(2, 1)]) expect(w).not.toMatch(/良い|悪い|並み|目安|寄り/);
   });
   it.each([[null, 1], [1, null], [NaN, 1], [1, Infinity], [0, 0]])('does not invent a direction for missing or zero components (%s, %s)', async (horizontal, vertical) => {
-    const { MeanForceDirection } = await import('../src/sprint10/ForceView');
-    const html = renderToStaticMarkup(createElement(MeanForceDirection, { horizontal, vertical }));
+    const { ForceDirections } = await import('../src/sprint10/ForceView');
+    const html = renderToStaticMarkup(createElement(ForceDirections, { items: [{ key: 'a', label: '1歩目', horizontal, vertical }], chosen: 'a' }));
     expect(html).not.toContain('<svg');
     expect(html).toMatch(/両方の力が求まると|平均の力が0/);
   });
-  it('labels the block diagram as including support from the hands', async () => {
-    const { MeanForceDirection } = await import('../src/sprint10/ForceView');
-    expect(renderToStaticMarkup(createElement(MeanForceDirection, { horizontal: 1, vertical: 1.1, block: true }))).toContain('手で支えた分も含みます');
+  it('labels the block diagram as including support from the hands, and says what the arrow is', async () => {
+    const { ForceDirections } = await import('../src/sprint10/ForceView');
+    const html = renderToStaticMarkup(createElement(ForceDirections, { items: [{ key: 'block', label: 'ブロック', horizontal: 1, vertical: 1.1 }], chosen: 'block', block: true }));
+    expect(html).toContain('手で支えた分も含みます');
+    expect(html).toContain('地面は体を<b>前上</b>へ押し返します');
+  });
+  it('labels none on top of another when the arrows stand together (top speed)', async () => {
+    const { ForceDirections } = await import('../src/sprint10/ForceView');
+    const items = [-.1, .1, .13, -.22, .13, .15, -.15, -.14].map((h, k) => ({ key: `s${k}`, label: `${k + 1}歩目`, horizontal: h, vertical: 1.6 }));
+    const html = renderToStaticMarkup(createElement(ForceDirections, { items, chosen: 's1', noisy: true }));
+    const tips = [...html.matchAll(/<text x="([\d.]+)" y="([\d.]+)" text-anchor="(\w+)"[^>]*class="force-direction-tip[^"]*">([^<]+)</g)];
+    expect(tips[0][4]).toBe('2歩目 86°');
+    // Every pair of labels apart (boxes from the same rough widths as the component's).
+    const box = (m: RegExpMatchArray) => { const x = +m[1], w = [...m[4]].reduce((s, ch) => s + (/[\x00-\x7f]/.test(ch) ? 7.2 : 12.5), 0);
+      const l = m[3] === 'start' ? x : m[3] === 'end' ? x - w : x - w / 2; return { l, r: l + w, y: +m[2] }; };
+    for (let i = 0; i < tips.length; i++) for (let j = i + 1; j < tips.length; j++) {
+      const p = box(tips[i]), q = box(tips[j]);
+      expect(p.l < q.r && q.l < p.r && Math.abs(p.y - q.y) < 18).toBe(false);
+    }
   });
   it('says at top speed that the arrow\'s tilt forward or back is within the measuring spread', async () => {
-    const { MeanForceDirection } = await import('../src/sprint10/ForceView');
-    expect(renderToStaticMarkup(createElement(MeanForceDirection, { horizontal: -.1, vertical: 2, noisy: true }))).toContain('測定のぶれ');
-    expect(renderToStaticMarkup(createElement(MeanForceDirection, { horizontal: -.1, vertical: 2 }))).not.toContain('測定のぶれ');
+    const { ForceDirections } = await import('../src/sprint10/ForceView');
+    const draw = (noisy: boolean) => renderToStaticMarkup(createElement(ForceDirections, { items: [{ key: 'a', label: '1歩目', horizontal: -.1, vertical: 2 }], chosen: 'a', noisy }));
+    expect(draw(true)).toContain('測定のぶれ');
+    expect(draw(false)).not.toContain('測定のぶれ');
   });
   it('keeps only the study values found for both men and women, one each from one study (the block), and puts a mean against them in words', async () => {
     const { FORCE_STUDY, STUDY_WHO, against } = await import('../src/sprint10/ForceView');

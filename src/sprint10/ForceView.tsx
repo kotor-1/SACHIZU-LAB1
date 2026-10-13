@@ -38,42 +38,109 @@ interface ForcePeriod {
   extra: [string, string][]; against: string | null; study: string | null;
 }
 
-/** Direction of the contact mean, in running-relative coordinates. A fixed length deliberately encodes no magnitude.
- * `noisy`: a section at top speed, where the forward mean is within the measuring spread. */
-export function MeanForceDirection({ horizontal, vertical, block = false, noisy = false }: {
-  horizontal: number | null; vertical: number | null; block?: boolean; noisy?: boolean }) {
-  if (horizontal === null || vertical === null || !Number.isFinite(horizontal) || !Number.isFinite(vertical)) {
+/** A contact mean's direction: its angle from the ground (°; 0 forward, 90 straight up, past 90 backward). */
+export const angleOf = (horizontal: number, vertical: number) => Math.atan2(vertical, horizontal) * 180 / Math.PI;
+/** The direction in words: the angle and how the two components compare, plain and without any judgment (no study's
+ * direction is shown: none was found for both men and women). `noisy`: top speed, where the forward mean is within the
+ * measuring spread, so only the angle is said, with that. */
+export function directionWords(horizontal: number, vertical: number, noisy = false): string {
+  const at = `地面から ${Math.round(angleOf(horizontal, vertical))}°。`;
+  if (noisy) return `${at}最高速度の区間なので、前後の傾きは測定のぶれの範囲です。`;
+  if (vertical <= 0) return `${at}上向きの力がありません。`;
+  if (horizontal < 0) return `${at}前向きの平均が後ろ向き（ブレーキ）です。`;
+  if (horizontal < .05 * vertical) return `${at}ほぼ真上です。`;
+  const r = vertical / horizontal, x = (q: number) => q < 10 ? q.toFixed(1) : String(Math.round(q));
+  return at + (r >= .9 && r <= 1.1 ? '前向きと上向きの力がほぼ同じ大きさです。' : r > 1.1 ? `上向きの力が前向きの力の約${x(r)}倍です。` : `前向きの力が上向きの力の約${x(1 / r)}倍です。`);
+}
+export interface DirectionItem { key: string; label: string; horizontal: number | null; vertical: number | null }
+const usable = (i: DirectionItem): i is DirectionItem & { horizontal: number; vertical: number } =>
+  i.horizontal !== null && i.vertical !== null && Number.isFinite(i.horizontal) && Number.isFinite(i.vertical) && Math.hypot(i.horizontal, i.vertical) > 0;
+/** The arrow's tip from an origin (fixed length: the arrows show directions only). */
+const tipOf = (h: number, v: number, x0: number, y0: number, length: number) => { const m = Math.hypot(h, v); return { dx: h / m, dy: -v / m, x: x0 + h / m * length, y: y0 - v / m * length }; };
+/** The contact means' directions on one half-dial: every section's arrow (block, steps), the chosen one in the accent
+ * with its angle, the others faint, so the change from section to section shows at a glance (the user, 2026-10-13:
+ * 「図だけだとわかりにくいから見せ方を変えてほしい」). A line marks 45°, where forward and upward are equal; the words under
+ * it say the chosen one's angle and how its two components compare; a small picture says what the arrow is (the
+ * ground pushing the body back as the foot pushes it). Every arrow has one length: no magnitude is drawn. No study's
+ * direction is shown. `block`: the chosen section is the block (the hands' support included). `noisy`: top speed. */
+export function ForceDirections({ items, chosen, block = false, noisy = false }: {
+  items: readonly DirectionItem[]; chosen: string; block?: boolean; noisy?: boolean }) {
+  const pick = items.find(i => i.key === chosen);
+  if (!pick || pick.horizontal === null || pick.vertical === null || !Number.isFinite(pick.horizontal) || !Number.isFinite(pick.vertical)) {
     return <p className="force-direction-unavailable">前向きと上向きの両方の力が求まると、平均の向きを表示できます。</p>;
   }
-  const magnitude = Math.hypot(horizontal, vertical);
-  if (!magnitude) return <p className="force-direction-unavailable">平均の力が0のため、矢印の向きはありません。</p>;
-  const dx = horizontal / magnitude, dy = -vertical / magnitude;
-  const originY = vertical < 0 ? 56 : 172, endX = 160 + dx * 108, endY = originY + dy * 108;
-  const head = `${endX},${endY} ${endX - dx * 18 - dy * 8},${endY - dy * 18 + dx * 8} ${endX - dx * 18 + dy * 8},${endY - dy * 18 - dx * 8}`;
+  if (!usable(pick)) return <p className="force-direction-unavailable">平均の力が0のため、矢印の向きはありません。</p>;
+  const shown = items.filter(usable), down = shown.some(i => i.vertical < 0);
+  const X0 = 160, Y0 = down ? 126 : 186, L = 108, R = 120;
+  const at = (deg: number, r: number) => [X0 + r * Math.cos(deg * Math.PI / 180), Y0 - r * Math.sin(deg * Math.PI / 180)] as const;
+  const head = (t: ReturnType<typeof tipOf>, w: number, len: number) => `${t.x},${t.y} ${t.x - t.dx * len - t.dy * w},${t.y - t.dy * len + t.dx * w} ${t.x - t.dx * len + t.dy * w},${t.y - t.dy * len - t.dx * w}`;
+  // Labels: the chosen one's always, another's only where its box overlaps no label already placed (the dial's own
+  // words included), so none sit on top of another (at top speed the arrows all stand near 90°).
+  type Box = { l: number; r: number; t: number; b: number };
+  const textWidth = (t: string) => [...t].reduce((w, ch) => w + (/[\x00-\x7f]/.test(ch) ? 7.2 : 12.5), 0);
+  const anchorOf = (a: number) => a < 75 ? 'start' as const : a > 105 ? 'end' as const : 'middle' as const;
+  const boxOf = (x: number, y: number, w: number, anchor: 'start' | 'middle' | 'end'): Box =>
+    ({ l: anchor === 'start' ? x : anchor === 'end' ? x - w : x - w / 2, r: anchor === 'start' ? x + w : anchor === 'end' ? x : x + w / 2, t: y - 9, b: y + 9 });
+  const overlaps = (p: Box, q: Box) => p.l < q.r + 3 && q.l < p.r + 3 && p.t < q.b && q.t < p.b;
+  const placed: Box[] = [boxOf(X0, Y0 - R - 30, textWidth('真上'), 'middle')];
+  const labels: { key: string; text: string; x: number; y: number; anchor: 'start' | 'middle' | 'end'; mine: boolean }[] = [];
+  for (const i of [pick, ...shown.filter(i => i.key !== pick.key)]) {
+    const a = angleOf(i.horizontal, i.vertical), [x, y] = at(a, L + 16), mine = i.key === pick.key, text = mine ? `${i.label} ${Math.round(a)}°` : i.label;
+    // Kept inside the picture: a label that would run off an edge is moved in.
+    const w = textWidth(text), anchor = anchorOf(a), lx = anchor === 'start' ? Math.min(x, 316 - w) : anchor === 'end' ? Math.max(x, 4 + w) : Math.min(Math.max(x, 4 + w / 2), 316 - w / 2);
+    const box = boxOf(lx, y, w, anchor);
+    if (!mine && placed.some(p => overlaps(p, box))) continue;
+    placed.push(box); labels.push({ key: i.key, text, x: lx, y, anchor, mine });
+  }
+  const ticks = Array.from({ length: down ? 24 : 13 }, (_, k) => k * 15);
+  const others = shown.filter(i => i.key !== pick.key);
+  const tip = tipOf(pick.horizontal, pick.vertical, X0, Y0, L);
   return <figure className="force-direction">
     <figcaption>平均の力の向き</figcaption>
-    <svg viewBox="0 0 320 228" role="img" aria-label="区間全体の平均の力の向き。図の右が走る方向、上が上向きです。">
+    <svg viewBox={`0 0 320 ${down ? 252 : 220}`} role="img" aria-label={`区間ごとの平均の力の向き。図の右が走る方向、上が上向きです。${pick.label}：${directionWords(pick.horizontal, pick.vertical, noisy)}`}>
       <g className="force-direction-axis">
-        <path d={`M32 ${originY} H288 M160 36 V196`} />
-        <path d={`M38 ${originY - 4} L32 ${originY} L38 ${originY + 4} M282 ${originY - 4} L288 ${originY} L282 ${originY + 4} M156 42 L160 36 L164 42`} />
-        {vertical < 0 && <path d="M156 190 L160 196 L164 190" />}
+        <path d={down ? `M${X0 + R} ${Y0} A${R} ${R} 0 1 0 ${X0 - R} ${Y0} A${R} ${R} 0 1 0 ${X0 + R} ${Y0}` : `M${X0 + R} ${Y0} A${R} ${R} 0 0 0 ${X0 - R} ${Y0}`} className="force-direction-arc" />
+        <path d={`M20 ${Y0} H300`} />
+        {ticks.map(d => { const [x1, y1] = at(d, R), [x2, y2] = at(d, R + (d % 45 ? 4 : 8)); return <line key={d} x1={x1} y1={y1} x2={x2} y2={y2} />; })}
       </g>
+      <path d={`M${X0} ${Y0} L${at(45, R)[0]} ${at(45, R)[1]}`} className="force-direction-guide" />
       <g className="force-direction-label">
-        <text x="160" y="23" textAnchor="middle">上へ</text>
-        <text x="32" y={vertical < 0 ? originY - 12 : originY + 25}>後ろへ</text>
-        <text x="288" y={vertical < 0 ? originY - 12 : originY + 25} textAnchor="end">前へ（走る方向）</text>
-        {vertical < 0 && <text x="160" y="219" textAnchor="middle">下へ</text>}
+        <text x={X0} y={Y0 - R - 30} textAnchor="middle" dominantBaseline="middle">真上</text>
+        <text x="300" y={Y0 + 20} textAnchor="end">前（走る方向）</text>
+        <text x="20" y={Y0 + 20}>後ろ</text>
+        {down && <text x={X0} y={Y0 + R + 22} textAnchor="middle">下</text>}
       </g>
+      {others.map(i => { const t = tipOf(i.horizontal, i.vertical, X0, Y0, L); return <g key={i.key} className="force-direction-other">
+        <line x1={X0} y1={Y0} x2={t.x - t.dx * 8} y2={t.y - t.dy * 8} /><polygon points={head(t, 6, 13)} /></g>; })}
       <g className="force-direction-vector">
-        <line x1="160" y1={originY} x2={endX - dx * 10} y2={endY - dy * 10} />
-        <polygon points={head} />
+        <line x1={X0} y1={Y0} x2={tip.x - tip.dx * 10} y2={tip.y - tip.dy * 10} />
+        <polygon points={head(tip, 8, 18)} />
       </g>
-      <circle cx="160" cy={originY} r="4" className="force-direction-origin" />
+      {labels.map(t => <text key={t.key} x={t.x} y={t.y} textAnchor={t.anchor} dominantBaseline="middle" className={`force-direction-tip${t.mine ? ' chosen' : ''}`}>{t.text}</text>)}
+      <circle cx={X0} cy={Y0} r="4" className="force-direction-origin" />
     </svg>
-    <p>地面が体を押し返す向きです。{block && '手で支えた分も含みます。'}</p>
-    <p className="force-direction-note">矢印の長さは一定です。力の大きさは下の数値で確認できます。</p>
+    <p className="force-direction-words"><b>{pick.label}</b>：{directionWords(pick.horizontal, pick.vertical, noisy)}</p>
+    <p className="force-direction-note">点線（45°）より下なら前向きの力の方が大きく、上なら上向きの力の方が大きい向きです。</p>
+    <div className="force-howto">
+      <svg viewBox="0 0 110 66" aria-hidden="true">
+        <path d="M4 50 H106" className="force-howto-ground" />
+        <path d="M22 50 V40 Q22 34 29 34 H38 Q43 34 47 38 L59 43 Q64 45 64 50 Z" className="force-howto-foot" />
+        <path d="M36 52 L14 63" className="force-howto-push" /><path d="M14 63 L17 56 M14 63 L21 62" className="force-howto-push" />
+        <path d="M50 47 L82 13" className="force-howto-back" /><path d="M82 13 L74 16 M82 13 L80 21" className="force-howto-back" />
+      </svg>
+      <p>足で地面を<b>後ろ下</b>へ押すと、地面は体を<b>前上</b>へ押し返します。矢印はその押し返す向きの、区間の平均です。{block && '手で支えた分も含みます。'}</p>
+    </div>
+    <p className="force-direction-note">矢印の長さはどれも同じです。力の大きさは数値で確認できます。{shown.length > 1 ? '薄い矢印は、ほかの区間の向きです。' : ''}</p>
     {noisy && <p className="force-direction-note">最高速度の区間では、矢印の前後の傾きは測定のぶれ（前向きで体重の±0.2倍ほど）の範囲です。</p>}
   </figure>;
+}
+
+/** A small arrow for a list row: the section's direction at a glance (the same one length). */
+function DirectionGlyph({ horizontal, vertical }: { horizontal: number; vertical: number }) {
+  const t = tipOf(horizontal, vertical, 12, vertical < 0 ? 10 : 18, 13);
+  return <svg viewBox="0 0 24 20" width="24" height="20" aria-hidden="true" className="force-glyph">
+    <path d="M1 18 H23" className="force-glyph-ground" /><line x1="12" y1={vertical < 0 ? 10 : 18} x2={t.x - t.dx * 3} y2={t.y - t.dy * 3} />
+    <polygon points={`${t.x},${t.y} ${t.x - t.dx * 6 - t.dy * 3.5},${t.y - t.dy * 6 + t.dx * 3.5} ${t.x - t.dx * 6 + t.dy * 3.5},${t.y - t.dy * 6 - t.dx * 3.5}`} /></svg>;
 }
 
 /** A box for the weight or the height: it shows what is typed (number-input.ts), and gives the value only once the
@@ -152,19 +219,22 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
       <ul className="force-list">{periods.map(p => <li key={p.key}><button type="button" aria-pressed={shown?.key === p.key} onClick={() => pick(p.key)}>
         <strong>{p.label}</strong>
         <span>{p.horizontal !== null ? <>前へ <b>{times(p.horizontal, forces!.mass)}</b></> : '前へ —'}　上へ <b>{p.vertical !== null ? times(p.vertical, forces!.mass) : '—'}</b></span>
-        {p.against && <em className={p.against.includes('小さい') || p.against.includes('ブレーキ') ? 'low' : 'ok'}>前へ：{p.against}</em>}
+        {(p.against || (p.horizontal !== null && p.vertical !== null && Math.hypot(p.horizontal, p.vertical) > 0)) && <span className="force-list-sub">
+          {p.horizontal !== null && p.vertical !== null && Math.hypot(p.horizontal, p.vertical) > 0
+            && <i className="force-list-angle"><DirectionGlyph horizontal={p.horizontal} vertical={p.vertical} />向き {Math.round(angleOf(p.horizontal, p.vertical))}°</i>}
+          {p.against && <em className={p.against.includes('小さい') || p.against.includes('ブレーキ') ? 'low' : 'ok'}>前へ：{p.against}</em>}</span>}
         </button></li>)}</ul>
       {shown && <div ref={summary} className="force-summary" aria-live="polite">
         <div className="force-summary-head"><strong>{shown.label}</strong></div>
         <p className="force-average">{shown.key === 'block' ? '押し始めからブロックを離れるまでの平均' : '接地から離地までの平均'}（動画から推定）</p>
-        <MeanForceDirection horizontal={shown.horizontal} vertical={shown.vertical} block={shown.key === 'block'} noisy={top} />
+        <ForceDirections items={periods} chosen={shown.key} block={shown.key === 'block'} noisy={top} />
         <dl className="force-values force-mean-values">
           <dt>前向きの平均</dt><dd>{shown.horizontal !== null ? times(shown.horizontal, forces!.mass) : '—'}</dd>
           <dt>上向きの平均</dt><dd>{shown.vertical !== null ? times(shown.vertical, forces!.mass) : '—'}</dd>
+          {shown.angle !== null && <><dt>平均の力の向き</dt><dd>地面から {Math.round(shown.angle)}°</dd></>}
         </dl>
         <details className="force-details"><summary>{kind === 'crouch' && shown.key === 'block' ? '時間・割合・参考値' : '時間・割合'}</summary>
         <dl className="force-values">
-          {shown.angle !== null && <><dt>平均の力の向き</dt><dd>地面から {Math.round(shown.angle)}°</dd></>}
           {shown.ratio !== null && <><dt>平均の力の前向きの割合</dt><dd>{Math.round(shown.ratio * 100)}%</dd></>}
           {shown.study && <><dt>参考値（前向きの力）</dt><dd>{shown.study}</dd></>}
           {shown.extra.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}

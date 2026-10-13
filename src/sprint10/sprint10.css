@@ -167,7 +167,7 @@
 .sprint10 .force-list button{display:grid;grid-template-columns:4.2em 1fr;align-items:baseline;gap:2px 8px;width:100%;min-height:44px;padding:8px 12px;border:1.5px solid var(--sz-line);border-radius:12px;background:var(--sz-surface-2);color:var(--sz-text);font:inherit;font-size:14px;text-align:left;cursor:pointer}
 .sprint10 .force-list button[aria-pressed=true]{border-color:var(--sz-text);box-shadow:0 0 0 1px var(--sz-text);background:var(--sz-surface-3)}
 .force-list b{font-size:16px;font-variant-numeric:tabular-nums}
-.force-list em{grid-column:2;font-size:12.5px;font-style:normal;font-weight:700}.force-list em.ok{color:var(--sz-good)}.force-list em.low{color:var(--sz-warn-text)}
+.force-list em{font-size:12.5px;font-style:normal;font-weight:700}.force-list em.ok{color:var(--sz-good)}.force-list em.low{color:var(--sz-warn-text)}
 .sprint10 .force-limit{margin:0 0 14px;padding:10px 12px;border-radius:12px;background:var(--sz-surface-2);color:var(--sz-text-2);font-size:13px;line-height:1.65}
 .force-summary{margin:6px 0 10px;padding:12px;border:1px solid var(--sz-line);border-radius:14px;background:var(--sz-surface-2)}
 .force-summary-head strong{font-size:16px}
@@ -178,12 +178,26 @@
 .force-direction svg{display:block;width:100%;max-width:360px;height:auto;margin:0 auto}
 .force-direction-axis{fill:none;stroke:var(--sz-faint);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
 .force-direction-label{fill:var(--sz-muted);font-size:13px;font-family:inherit}
-.force-direction-vector{fill:var(--sz-warn);stroke:var(--sz-warn);stroke-linejoin:round}
-.force-direction-vector line{stroke:var(--sz-warn);stroke-width:7;stroke-linecap:round}
+.force-direction-vector{fill:var(--sz-accent);stroke:var(--sz-accent);stroke-linejoin:round}
+.force-direction-vector line{stroke:var(--sz-accent);stroke-width:7;stroke-linecap:round}
 .force-direction-origin{fill:var(--sz-text)}
 .force-direction p{margin:0;font-size:13px;color:var(--sz-text-2);line-height:1.6}
 .force-direction .force-direction-note{margin-top:4px;font-size:12px;color:var(--sz-muted)}
 .force-direction-unavailable{margin:12px 0;font-size:13px;color:var(--sz-muted)}
+/* The directions on one half-dial (ForceDirections): every section's arrow, the chosen one in the accent; the words under it;
+ * the small picture of what the arrow is; the list rows' small arrows. */
+.force-direction-other{fill:var(--sz-faint);stroke:var(--sz-faint);stroke-linejoin:round}.force-direction-other line{stroke-width:3.5;stroke-linecap:round}
+.force-direction-guide{fill:none;stroke:var(--sz-muted);stroke-width:1.5;stroke-dasharray:5 5;opacity:.8}
+.force-direction-label .force-direction-small{font-size:11px;fill:var(--sz-faint)}
+.force-direction-tip{fill:var(--sz-text-2);font-size:12px;font-weight:700;font-family:inherit}.force-direction-tip.chosen{fill:var(--sz-accent);font-size:13px;font-weight:800}
+.force-direction .force-direction-words{margin:6px 0 0;font-size:15px;line-height:1.6;color:var(--sz-text)}.force-direction-words b{color:var(--sz-accent)}
+.force-howto{display:flex;align-items:center;gap:10px;margin:10px 0 6px;padding:8px 10px;border-radius:12px;background:var(--sz-surface-3)}.force-howto svg{flex:none;width:104px;height:auto}
+.force-direction .force-howto p{margin:0;font-size:13px;line-height:1.55;color:var(--sz-text-2)}.force-howto b{color:var(--sz-text)}
+.force-howto-ground{fill:none;stroke:var(--sz-faint);stroke-width:2}.force-howto-foot{fill:var(--sz-line-strong)}
+.force-howto-push{fill:none;stroke:var(--sz-muted);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.force-howto-back{fill:none;stroke:var(--sz-accent);stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round}
+.force-list-sub{grid-column:2;display:flex;flex-wrap:wrap;align-items:center;gap:2px 12px}.force-list-angle{display:inline-flex;align-items:center;gap:4px;font-style:normal;font-size:12.5px;font-weight:700;color:var(--sz-muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.sprint10 .force-list button[aria-pressed=true] .force-list-angle{color:var(--sz-accent)}
+.force-glyph line{stroke:currentColor;stroke-width:2.2;stroke-linecap:round}.force-glyph polygon{fill:currentColor}.force-glyph-ground{fill:none;stroke:var(--sz-line-strong);stroke-width:1.5}
 .force-mean-values dd{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--sz-text)}
 .force-details{margin-top:8px;border-top:1px solid var(--sz-line)}.force-details summary{display:flex;align-items:center;min-height:44px;font-size:13px;cursor:pointer;list-style:none;color:var(--sz-text-2)}
 .force-details summary::-webkit-details-marker{display:none}.force-details summary::after{content:'＋';margin-left:auto;padding-left:10px}.force-details[open] summary::after{content:'－'}
