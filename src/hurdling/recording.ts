@@ -16,6 +16,7 @@ import { MobileCMJPose } from '../cmj/mobile-pose';
 import { untilAborted } from '../cmj/session-lifecycle';
 import type { CrouchFrame, CrouchPoint } from '../sprint10/crouch';
 import { loadRefiner, type Refiner } from '../sprint10/rtm-refine';
+import { mendRefinedFeet } from '../sprint10/leg-check';
 import { CROUCH_FPS, DecodeFailure, measureSprint, readFrames, SPRINT_POSES } from '../sprint10/recording';
 /** The frame reader lives with the sprint pass (moved for the crouch start's second reading); here for the old imports. */
 export { readFrames } from '../sprint10/recording';
@@ -180,6 +181,8 @@ export async function measureHurdle(file: File, signal: AbortSignal, progress: (
     for (const [i, f] of earlier) merged.set(i, f);
     frames.splice(0, frames.length, ...[...merged.values()].sort((a, b) => a.frame - b.frame));
   } finally { watcher.dispose(); }
+  // RTMPose's feet that cannot be feet are mended from MediaPipe's, or left out (sprint10/leg-check.ts), before anything is judged or drawn.
+  mendRefinedFeet(frames, width, height);
   progress(1, '解析が終わりました。');
   return { frames, width, height, refiner: refiner?.backend ?? null, direction };
 }

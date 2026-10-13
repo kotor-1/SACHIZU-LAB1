@@ -28,7 +28,7 @@ import { centreOfMass } from '../hurdling/analysis';
 import { anglePose, type CrouchFrame, type CrouchPoint } from '../sprint10/crouch';
 import { contactOf, contactPlants, legLength, median, plantedToes, plantsOf, TOE, visible, type Contact, type Toe } from '../sprint10/contacts';
 import { editContacts, type Edits } from '../sprint10/moment-edits';
-import { kneeAngle, trunkAngle } from '../sprint10/angles';
+import { kneeAngle, stanceSide, trunkAngle } from '../sprint10/angles';
 import type { Mark, Phase } from '../sprint10/crouch-figure';
 import { rulerScale, type RulerPoints, type RulerScale } from './ruler';
 
@@ -126,11 +126,9 @@ function parabola(ts: number[], ys: number[]) {
   return { a: det(M.map((r, i) => r.map((x, j) => j === 0 ? v[i] : x))) / D };
 }
 
-/** The stance leg's side at a contact (0 left, 1 right landmarks): the toe nearest the contact's place. */
-function sideAt(pose: CrouchPoint[], c: Contact, W: number, H: number): 0 | 1 | null {
-  const d = [31, 32].map(k => visible(pose[k], .3) ? Math.hypot(pose[k].x * W - c.x, pose[k].y * H - c.groundY) : Infinity);
-  return d[0] === Infinity && d[1] === Infinity ? null : d[0] <= d[1] ? 0 : 1;
-}
+/** The stance leg's side at a contact (0 left, 1 right landmarks): the toe nearest the contact's place (the heel or the ankle
+ * for a toe not seen: one RTMPose misplaced is left out, sprint10/leg-check.ts). */
+const sideAt = (pose: CrouchPoint[], c: Contact, W: number, H: number) => stanceSide(pose, c.x / W, c.groundY / H, W, H);
 
 export function analyzeLongJump(frames: readonly CrouchFrame[], options: LongJumpOptions): LongJumpResult {
   const { width: W, height: H } = options;

@@ -7,6 +7,7 @@ import type { Point, SprintSample } from './analysis';
 import { analyzeCrouchStart, runStart, SET_SPAN, type CrouchFrame, type CrouchResult } from './crouch';
 import { PIXEL_SETTINGS } from './crouch-pixels';
 import { loadRefiner, type Refiner } from './rtm-refine';
+import { mendRefinedFeet } from './leg-check';
 import type { SprintStart } from './tracker';
 import { SPRINT_POSES, SprintFrameProcessor } from './frame-processor';
 
@@ -282,5 +283,7 @@ export async function measureCrouch(file: File, startX: number, signal: AbortSig
       });
     }
   }
+  // RTMPose's feet that cannot be feet are mended from MediaPipe's, or left out (leg-check.ts), before anything is judged or drawn.
+  mendRefinedFeet(frames, width, height);
   return { frames, width, height, refiner: (refiner as Refiner | null)?.backend ?? null };
 }

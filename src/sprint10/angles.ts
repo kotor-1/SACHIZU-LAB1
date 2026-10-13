@@ -12,9 +12,20 @@ import { TOE, visible } from './contacts';
 export const TRUNK_MIN = .45, SEGMENT_MIN = .38;
 const degrees = (r: number) => r * 180 / Math.PI;
 
-/** The landmark side (0 left, 1 right) whose toe is nearest normalized x. */
+/** A side's foot point: its toe, or when that is not seen (a misplaced one is left out, leg-check.ts) its heel, or its
+ * ankle; `min`, the least score taken as seen. */
+const footPoint = (pose: CrouchPoint[], side: 0 | 1, min = .3) => [TOE[side], 29 + side, 27 + side].map(k => pose[k]).find(p => visible(p, min)) ?? null;
+/** The landmark side (0 left, 1 right) whose toe (footPoint) is nearest normalized x. */
 export function sideNearest(pose: CrouchPoint[], x: number, W: number): 0 | 1 | null {
-  const d = TOE.map(k => visible(pose[k], .3) ? Math.abs(pose[k].x - x) * W : Infinity);
+  const d = ([0, 1] as const).map(s => { const p = footPoint(pose, s); return p ? Math.abs(p.x - x) * W : Infinity; });
+  return d[0] === Infinity && d[1] === Infinity ? null : d[0] <= d[1] ? 0 : 1;
+}
+/** The stance leg at a contact: the side whose toe (footPoint) is nearest the contact's place on the ground (normalized
+ * x, y). Across the picture alone, the swing foot passing over the stance foot was taken for it (1-2 frames in the middle
+ * of a contact, in 7 of 8 recorded videos); a toe gone behind on the stance foot took the swing leg at a touchdown
+ * (leg-check.ts). `min`: the least score taken as seen (the high jump takes RTMPose's points whatever their score). */
+export function stanceSide(pose: CrouchPoint[], x: number, y: number, W: number, H: number, min = .3): 0 | 1 | null {
+  const d = ([0, 1] as const).map(s => { const p = footPoint(pose, s, min); return p ? Math.hypot((p.x - x) * W, (p.y - y) * H) : Infinity; });
   return d[0] === Infinity && d[1] === Infinity ? null : d[0] <= d[1] ? 0 : 1;
 }
 /** Forward lean of the trunk (hip to shoulder) from vertical. */

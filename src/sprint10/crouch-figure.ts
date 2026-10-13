@@ -10,7 +10,8 @@ export type Mark = { kind: 'trunk'; label: string; value: number }
   | { kind: 'shank' | 'knee' | 'thigh' | 'hip' | 'level' | 'line'; side: 0 | 1; label: string; value: number };
 /** A moment whose angles are reported, with the frame shown for it. */
 export interface Phase { key: string; label: string; frame: number; pts: number; marks: Mark[]; /** Name on its button, when shorter than the label. */ short?: string;
-  /** The landmarks the picture is cut round (all seen ones when absent): a leg, or the trunk, made larger. */ focus?: number[] }
+  /** The landmarks the picture is cut round (all seen ones when absent): a leg, or the trunk, made larger. */ focus?: number[];
+  /** Said under the picture: why an angle is not there. */ note?: string }
 
 const known = (m: Mark | null): m is Mark => m !== null;
 /** The set, the front block clearance and each touchdown, with their angles (none left out when null). */
@@ -31,7 +32,9 @@ export function crouchPhases(result: CrouchResult): Phase[] {
     if (!c || c.touchdown === null || c.touchdownFrame === null) continue;
     const marks = ([s.shankAngle === null || s.side === null ? null : { kind: 'shank' as const, side: s.side, label: '脛', value: s.shankAngle },
       s.trunkAngle === null ? null : { kind: 'trunk' as const, label: '体幹', value: s.trunkAngle }] as (Mark | null)[]).filter(known);
-    out.push({ key: `td${s.step}`, label: `${s.step}歩目の接地`, frame: c.touchdownFrame, pts: c.touchdown, marks });
+    // A frame whose stance leg could not be told (the feet of both pose models wrong there, leg-check.ts) has no shank.
+    out.push({ key: `td${s.step}`, label: `${s.step}歩目の接地`, frame: c.touchdownFrame, pts: c.touchdown, marks,
+      ...(s.shankAngle === null ? { note: '脛：このコマは脚の骨格を正しく取れなかったため、測っていません。' } : {}) });
   }
   return out;
 }

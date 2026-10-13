@@ -14,6 +14,7 @@ import { loadRefiner, type Refiner } from '../sprint10/rtm-refine';
 import { forgetFineModel, loadFineModel, readFine, type FineModel } from './fine';
 import { pickAthlete, type Box } from './athlete';
 import { analyzeStrength, type StrengthFrame } from './analysis';
+import { mendRefinedFeet } from '../sprint10/leg-check';
 
 /** Frames analysed per second, and at most this many in a video (a long set is read at fewer, not below MIN_FPS). */
 export const STRENGTH_FPS = 30, MAX_FRAMES = 1200, MIN_FPS = 15;
@@ -122,6 +123,8 @@ export async function measureStrength(file: File, signal: AbortSignal, progress:
       return { frames, width, height, refiner: null, fps, fine: false };
     }
   }
+  // RTMPose's feet that cannot be feet are mended from MediaPipe's, or left out (sprint10/leg-check.ts), before anything is judged or drawn.
+  mendRefinedFeet(frames, width, height);
   progress(1, '解析が終わりました。');
   // `fine` only where the 384×288 model read the frames (not when it opened but read none).
   return { frames, width, height, refiner: fm?.backend ?? r?.backend ?? null, fps, fine: !!fm && frames.some(f => (f as StrengthFrame).refined) };

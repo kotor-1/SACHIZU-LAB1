@@ -16,6 +16,7 @@ import type { FirstFrame } from '../sprint10/first-frame';
 import { FOCAL_35MM_DEFAULT, type P2 } from './camera';
 import { readFocal35 } from './focal';
 import { pictureShift, shrinkCanvas, type Drift, type Small } from './drift';
+import { mendRefinedFeet } from '../sprint10/leg-check';
 
 type Pt = { x: number; y: number; visibility?: number };
 type Region = { x: number; y: number; w: number; h: number };
@@ -108,6 +109,8 @@ export async function measureCurveStart(file: File, signal: AbortSignal, progres
     });
     if (!frames.some(f => f.pose || f.refined)) throw new Error('選手を見つけられませんでした。ブロックの真後ろから、構えた選手の全身が映るように撮影してください。');
     if (!clear) throw new Error('動画の最後のコマを読み出せませんでした。');
+    // RTMPose's feet that cannot be feet are mended from MediaPipe's, or left out (sprint10/leg-check.ts), before anything is judged or drawn.
+    mendRefinedFeet(frames, width, height);
     return { frames, width, height, refiner: refiner?.backend ?? null, clear, mm35: read ?? FOCAL_35MM_DEFAULT, mm35Read: read !== null, drift };
   } finally { model.dispose(); }
 }

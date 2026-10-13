@@ -6,10 +6,12 @@
  * pooled), so the left/right labels of the pose model, which swap when the
  * legs cross in a side view, are never needed. */
 import { contactOf, contactPlants, legLength, median, PLANT_GAP, plantedToes, plantsOf, quantile, TOE, toesOf, visible, type Contact, type Toe } from './contacts';
-import { kneeAngle, shankAngle, sideNearest, thighAngle, trunkAngle } from './angles';
+import { kneeAngle, shankAngle, sideNearest, stanceSide, thighAngle, trunkAngle } from './angles';
 /** v2 (2026-10-04): angles from RTMPose when given (`refined`). v2.2 (2026-10-12): toe-offs checked again against the
- * picture (CROUCH_CONTACT, crouch-pixels.ts) and the moments' times between frames (frameEdge). */
-export const CROUCH_VERSION = 'crouch-start-v2.2-experimental';
+ * picture (CROUCH_CONTACT, crouch-pixels.ts) and the moments' times between frames (frameEdge). v2.3 (2026-10-13):
+ * RTMPose's feet that cannot be feet mended from MediaPipe's or left out (leg-check.ts), the stance leg the one nearest
+ * the contact's place on the ground (stanceSide). */
+export const CROUCH_VERSION = 'crouch-start-v2.3-experimental';
 export const MAX_STEPS = 5;
 
 export interface CrouchPoint { x: number; y: number; visibility?: number }
@@ -258,10 +260,10 @@ export function stepsOf(contacts: readonly Contact[], frames: readonly CrouchFra
     const flightSeconds = next?.touchdown != null && c.toeOff !== null ? next.touchdown - c.toeOff : null;
     const stepSeconds = next?.touchdown != null && c.touchdown !== null ? next.touchdown - c.touchdown : null;
     const td = c.touchdownFrame !== null ? frames.find(f => f.frame === c.touchdownFrame) : null, at = td ? anglePose(td) : null;
-    const side = at ? sideNearest(at, c.x / W, W) : null;
-    const toe = i === 0 && c.toeOffFrame != null ? frames.find(f => f.frame === c.toeOffFrame) : null, off = toe ? anglePose(toe) : null;
     // The stance leg in a frame is the side whose toe is at the contact's place (the model's labels swap side-on).
-    const stanceOf = (pose: CrouchPoint[] | null) => pose ? sideNearest(pose, c.x / W, W) : null;
+    const stanceOf = (pose: CrouchPoint[] | null) => pose ? stanceSide(pose, c.x / W, c.groundY / H, W, H) : null;
+    const side = stanceOf(at);
+    const toe = i === 0 && c.toeOffFrame != null ? frames.find(f => f.frame === c.toeOffFrame) : null, off = toe ? anglePose(toe) : null;
     const gapOf = (pose: CrouchPoint[] | null) => {
       const stance = stanceOf(pose);
       if (!pose || stance === null) return null;

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { nearestPoseFrame } from '../cmj/pose-drawing';
 import { anglePose, type CrouchFrame } from './crouch';
+import { visible } from './contacts';
 import { drawCrouchFigure, figureView, markText, type Phase } from './crouch-figure';
 import PlayerBar from './PlayerBar';
 
@@ -68,7 +69,10 @@ export function usePhasePictures(url: string, frames: readonly CrouchFrame[], ph
           const canvas = document.createElement('canvas'); canvas.width = FIGURE_W; canvas.height = FIGURE_H;
           const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('no canvas');
           const around = p.focus ? pose.map((q, i) => p.focus!.includes(i) ? q : { ...q, visibility: 0 }) : pose;
-          const W = v.videoWidth, H = v.videoHeight, view = figureView(around, W, H, FIGURE_W / FIGURE_H), k = FIGURE_W / view.w;
+          // A side whose foot RTMPose had wrong and nothing could mend (left out, leg-check.ts): the picture is still cut
+          // round the feet, with MediaPipe's pose of the frame (it was cut round the body above the knees).
+          const footless = !p.focus && shown!.pose && shown!.pose !== pose && ([0, 1] as const).some(s => [27, 29, 31].every(k => !visible(pose[k + s], .3)));
+          const W = v.videoWidth, H = v.videoHeight, view = figureView(footless ? [...around, ...shown!.pose!] : around, W, H, FIGURE_W / FIGURE_H), k = FIGURE_W / view.w;
           ctx.drawImage(v, view.x, view.y, view.w, view.h, 0, 0, FIGURE_W, FIGURE_H);
           const to = (q: { x: number; y: number }) => ({ x: (q.x * W - view.x) * k, y: (q.y * H - view.y) * k });
           drawCrouchFigure(ctx, pose, to, p.marks, FIGURE_W / 48, true);
@@ -105,6 +109,7 @@ export function PhaseFigures({ url, frames, phases, onShow, guides = {}, overlay
         {images[p.key] ? <img src={images[p.key]} alt={`${p.label}の骨格と角度`} />
           : <div className="sprint10-phase-wait">{failed ? '画像を作れませんでした' : '画像を作成しています…'}</div>}
         <p>{p.marks.length ? p.marks.map(markText).join(' · ') : '角度を測れませんでした'}</p>
+        {p.note && <small className="sprint10-guide">{p.note}</small>}
         {guides[p.key] && <small className="sprint10-guide">{guides[p.key]}</small>}
       </li>)}</ol>
   </div>;

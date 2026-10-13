@@ -16,6 +16,7 @@ import { MobileCMJPose } from '../cmj/mobile-pose';
 import { untilAborted } from '../cmj/session-lifecycle';
 import type { CrouchFrame, CrouchPoint } from '../sprint10/crouch';
 import { loadRefiner, type Refiner } from '../sprint10/rtm-refine';
+import { mendRefinedFeet } from '../sprint10/leg-check';
 import { readFrames, surveyDirection } from '../hurdling/recording';
 
 type Pt = { x: number; y: number; visibility?: number };
@@ -139,6 +140,8 @@ export async function measureHighJump(file: File, signal: AbortSignal, progress:
       });
       frames.unshift(...earlier);
     }
+    // RTMPose's feet that cannot be feet are mended from MediaPipe's, or left out (sprint10/leg-check.ts), before anything is judged or drawn.
+    mendRefinedFeet(frames, width, height);
     progress(1, '解析が終わりました。');
     return { frames, width, height, refiner: refiner?.backend ?? null, direction };
   } finally { model.dispose(); }

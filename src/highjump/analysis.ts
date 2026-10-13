@@ -14,7 +14,7 @@ import { centreOfMass } from '../hurdling/analysis';
 import { anglePose, type CrouchFrame, type CrouchPoint } from '../sprint10/crouch';
 import { contactOf, contactPlants, legLength, median, plantedToes, plantsOf, toesOf, type Contact } from '../sprint10/contacts';
 import { editContacts, type Edits } from '../sprint10/moment-edits';
-import { kneeAngle, thighAngle, trunkAngle } from '../sprint10/angles';
+import { kneeAngle, stanceSide, thighAngle, trunkAngle } from '../sprint10/angles';
 import type { Mark, Phase } from '../sprint10/crouch-figure';
 import { calibrate, vec, type Calibration, type UprightPoints, type Vec } from './camera';
 
@@ -138,22 +138,25 @@ export function analyzeHighJump(frames: readonly CrouchFrame[], options: HighJum
 
   // Posture: each value the median of the frame and its neighbours (single frames whose leg came off the body: recorded).
   const index = new Map(seen.map((f, i) => [f.frame, i]));
-  const stance = (p: CrouchPoint[], contact: Contact) => Math.abs(p[31].x * W - contact.x) <= Math.abs(p[32].x * W - contact.x) ? 0 : 1;
+  // The stance leg: the side whose toe is nearest the contact's place on the ground, whatever its score (a toe RTMPose
+  // misplaced is left out and put on its ankle, sprint10/leg-check.ts). Across the picture alone, the swing foot passing
+  // over the stance foot was taken for it (the crouch start, angles.ts stanceSide).
+  const stance = (p: CrouchPoint[], contact: Contact) => stanceSide(p, contact.x / W, contact.groundY / H, W, H, ANY_SCORE);
   const around = (frame: number, value: (p: CrouchPoint[]) => number | null) => {
     const i = index.get(frame); if (i === undefined) return null;
     const vs = [i - 1, i, i + 1].filter(j => j >= 0 && j < seen.length).map(j => value(seen[j].pose!)).filter((v): v is number => v !== null);
     return vs.length ? median(vs) : null;
   };
   const comOf = (p: CrouchPoint[]) => centreOfMass(p, ANY_SCORE);
-  const lean = (p: CrouchPoint[]) => { const s = stance(p, T), a = p[27 + s], m = comOf(p); if (!m) return null;
+  const lean = (p: CrouchPoint[]) => { const s = stance(p, T), m = comOf(p); if (!m || s === null) return null; const a = p[27 + s];
     return Math.atan2((a.x - m.x) * W * direction, (a.y - m.y) * H) * 180 / Math.PI; };
-  const knee = (p: CrouchPoint[]) => kneeAngle(p, stance(p, T), W, H, leg);
+  const knee = (p: CrouchPoint[]) => { const s = stance(p, T); return s === null ? null : kneeAngle(p, s, W, H, leg); };
   if (T.touchdownFrame !== null) {
     base.posture.lean = around(T.touchdownFrame, lean);
     // A touchdown set by hand on a frame without the athlete's pose (確認 lets any frame be chosen) has no line drawn:
     // read as there, it threw and the page was replaced by its error screen.
     const k = index.get(T.touchdownFrame), f = k === undefined ? undefined : seen[k];
-    const m = f?.pose ? comOf(f.pose) : null, a = f?.pose ? f.pose[27 + stance(f.pose, T)] : null;
+    const s = f?.pose ? stance(f.pose, T) : null, m = f?.pose ? comOf(f.pose) : null, a = f?.pose && s !== null ? f.pose[27 + s] : null;
     if (f && m && a) base.leanLine = { frame: f.frame, ankle: { x: a.x, y: a.y }, com: m };
     base.posture.kneeTouchdown = around(T.touchdownFrame, knee);
     base.posture.trunkTouchdown = around(T.touchdownFrame, p => trunkAngle(p, W, H, direction, leg));
@@ -161,7 +164,7 @@ export function analyzeHighJump(frames: readonly CrouchFrame[], options: HighJum
   if (T.toeOffFrame != null) {
     base.posture.kneeToeOff = around(T.toeOffFrame, knee);
     base.posture.trunkToeOff = around(T.toeOffFrame, p => trunkAngle(p, W, H, direction, leg));
-    base.posture.swingThigh = around(T.toeOffFrame, p => thighAngle(p, (1 - stance(p, T)) as 0 | 1, W, H, direction, leg));
+    base.posture.swingThigh = around(T.toeOffFrame, p => { const s = stance(p, T); return s === null ? null : thighAngle(p, (1 - s) as 0 | 1, W, H, direction, leg); });
   }
   if (T.touchdownFrame !== null && T.toeOffFrame != null) {
     const least = seen.filter(f => f.frame >= T.touchdownFrame! && f.frame <= T.toeOffFrame!).map(f => ({ frame: f.frame, v: around(f.frame, knee) }))
@@ -222,12 +225,12 @@ export function analyzeHighJump(frames: readonly CrouchFrame[], options: HighJum
   // The trunk named by the way it leans (at the takeoff it leans back: 「体幹 −11°」 read badly).
   const trunk = (p: CrouchPoint[]): Mark | null => { const v = trunkAngle(p, W, H, direction, leg);
     return v === null ? null : { kind: 'trunk', label: v < 0 ? '体幹の後傾' : '体幹の前傾', value: Math.abs(v) }; };
-  const kneeMark = (p: CrouchPoint[], contact: Contact, label: string): Mark | null => { const s = stance(p, contact), v = kneeAngle(p, s, W, H, leg);
-    return v === null ? null : { kind: 'knee', side: s, label, value: v }; };
+  const kneeMark = (p: CrouchPoint[], contact: Contact, label: string): Mark | null => { const s = stance(p, contact), v = s === null ? null : kneeAngle(p, s, W, H, leg);
+    return v === null || s === null ? null : { kind: 'knee', side: s, label, value: v }; };
   if (P) add('penult', '踏切の1歩前の接地', at(P.touchdownFrame), p => [trunk(p), kneeMark(p, P, '支持脚の膝')]);
   add('touchdown', '踏切の接地', at(T.touchdownFrame), p => [kneeMark(p, T, '踏切膝'), trunk(p)]);
   add('least', '踏切脚の膝が最も曲がった時', at(base.posture.leastFrame), p => [kneeMark(p, T, '踏切膝')]);
-  add('toeOff', '踏切の離地', at(T.toeOffFrame), p => { const s = stance(p, T), o = (1 - s) as 0 | 1, thigh = thighAngle(p, o, W, H, direction, leg);
-    return [kneeMark(p, T, '踏切膝'), thigh === null ? null : { kind: 'thigh', side: o, label: '振り上げ脚の大腿', value: thigh }, trunk(p)]; });
+  add('toeOff', '踏切の離地', at(T.toeOffFrame), p => { const s = stance(p, T), o = s === null ? null : (1 - s) as 0 | 1, thigh = o === null ? null : thighAngle(p, o, W, H, direction, leg);
+    return [kneeMark(p, T, '踏切膝'), thigh === null || o === null ? null : { kind: 'thigh', side: o, label: '振り上げ脚の大腿', value: thigh }, trunk(p)]; });
   return base;
 }
