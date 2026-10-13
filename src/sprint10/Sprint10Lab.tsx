@@ -4,7 +4,7 @@ import { analyzeSprint, continuityLimit, SPRINT10_ANALYSIS_VERSION, SPRINT10_NOT
 import type { CrouchFrame, CrouchPoint } from './crouch';
 import { CrouchReplay, frameInterval, insideFrame, type ReplayEvent } from './CrouchViews';
 import { footDown } from './crouch-edit';
-import { runContacts, sectionTimes, stepTimes, type StepTime } from './sprint-contacts';
+import { runContacts, sectionTimes, SPRINT_CONTACT, stepTimes, type StepTime } from './sprint-contacts';
 import { gateMoments, gateShifts, legPixels, pelvisAt, type GateKey } from './gate-check';
 import { target50, TAU, TAU_RANGE } from './target50';
 import { contactMoments, effectsBetween, relatedValues, type Edits, type ReviewMoment, type ReviewValue } from './moment-edits';
@@ -351,7 +351,7 @@ export default function Sprint10Lab() {
           <details className="sprint10-more" open><summary>数値の見方</summary>
             <p>タイムは骨盤中心のライン通過間隔です。合図からのスタートタイム・全身の重心の測定ではありません。</p>
             {target && <p>目標50mタイム：区間の位置（{sectionStartM}m地点から）と通過時間から最高速度（約{target.topSpeed.toFixed(2)} m/s）を求め、その最高速度へ一般的な加速で近づいた場合の50mタイムです（静止から速度が v = 最高速度 ×（1 − e^(−t/τ)）で上がる式：Furusawa ら 1927、Samozino ら 2016。時定数τは選手の速さによらず約1秒で、τ = {TAU}秒を使用：Clark & Ryan 2022）。動き出しからの時間で、合図への反応時間は含みません。τが{TAU_RANGE[0]}〜{TAU_RANGE[1]}秒なら{target.range[0].toFixed(2)}〜{target.range[1].toFixed(2)}秒です。実際の50mタイムがこれより遅いときは、スタートからの加速に伸びしろがあります。区間の入口が実際の距離（スタートから）と合っていることが前提です。</p>}
-            <p>接地・離地は、つま先が地面の高さまで下りた時・地面から離れた時を、選手を追った骨格（MediaPipe）の動きから判定しています（クラウチングスタート・ハードルと同じ方法）。選手が画面に小さく映ると数コマずれることがあるため、「確認」で1コマ単位で直してください。直すと接地時間・滞空時間がすぐ変わります。平均接地時間・平均滞空時間は、2本の線の間で接地した歩の平均です。10m・最高速度区間での判定の精度は、まだ確かめていません。</p>
+            <p>接地・離地は、つま先が地面の高さまで下りた時・地面から離れた時を、選手を追った骨格（MediaPipe）の動きから判定しています（クラウチングスタート・ハードルと同じ方法）。離地は、動画のコマで靴の先が地面から離れた瞬間と比べて合わせました（7本・51歩：ずれは平均0.008秒）。接地は、動画によって遅く出る歩があります（1秒120コマの動画で最大0.05秒）。気になる歩は「確認」で1コマ単位で直してください。直すと接地時間・滞空時間がすぐ変わります。平均接地時間・平均滞空時間は、2本の線の間で接地した歩の平均です。</p>
             <p>「確認」で線を越えるコマを直すと、直したコマの分だけ通過の時刻をずらして計算し直します（コマの間の細かい時刻と、脚の入れ替わりは自動の判定のままです）。</p>
             {SPRINT10_NOTES.map(w => <p key={w}>{w}</p>)}</details>
         </div>
@@ -367,7 +367,7 @@ export default function Sprint10Lab() {
             onRevert={key => setEdits(e => { const next = { ...e }; delete next[key]; return next; })} onRevertAll={() => setEdits({})}
             onDone={closeCheck} preview={preview} source={() => '骨格'} leg={legPixels(samples, timeline.height)}
             point={(m, frame) => { if (m.kind !== 'crossing') return null; const pts = ptsOf.get(frame), p = pts === undefined ? null : pelvisAt(samples, pts, gap); return p && p.y !== null ? { x: p.x, y: p.y } : null; }}
-            down={(m, f) => { if (m.kind !== 'crossing') return footDown(f, m, timeline.width, timeline.height, leg);
+            down={(m, f) => { if (m.kind !== 'crossing') return footDown(f, m, timeline.width, timeline.height, leg, SPRINT_CONTACT.liftBand);
               const p = pelvisAt(samples, f.pts, gap); return p && m.focus ? (p.x - m.focus.x) * Math.sign(finish - start) > 0 : null; }}
             doneText="すべての瞬間を確認しました。値は上の数値と「歩ごと」に反映されています。" doneLabel="歩ごとの値を見る" />}
         </div>

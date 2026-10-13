@@ -4,7 +4,7 @@
  * (contacts.ts, hurdling/analysis.ts), with the frames the user set (moment-edits.ts), and each step's contact and flight
  * times. The section's own measures (time, steps, cadence, stride: analysis.ts) are not taken from these. */
 import type { CrouchFrame, CrouchPoint } from './crouch';
-import { contactOf, contactPlants, legLength, plantedToes, plantsOf, toesOf, visible, type Contact } from './contacts';
+import { contactOf, contactPlants, GROUND_BAND, legLength, plantedToes, plantsOf, toesOf, visible, type Contact } from './contacts';
 import { editContacts, type Edits } from './moment-edits';
 
 /** Plants this many leg lengths above the lowest are not on the ground (as the hurdle). */
@@ -14,6 +14,14 @@ const GROUND_SPREAD = .4;
 const STANCE_SECONDS = .4;
 /** A stretch without the runner this close (s) before a touchdown or after a toe-off leaves its time unknown. */
 const LOST_REACH = .06;
+/** The steps' touchdown and toe-off bands (leg lengths above the plant's ground level; contacts.ts contactOf). Read
+ * against the picture (2026-10-13, dev-validation/sprint10-to-20261013: the last frame with the shoe's tip on the
+ * ground, 51 toe-offs of 7 videos, flying and from a standing start, 240 and 120 fps, day and night), the toe-offs with
+ * LIFT_BAND (0.05) and the times at the frames came 15 ms early on average (up to 42 ms): the toe point rises with the
+ * heel while the shoe's tip is still down, as in the crouch start. 0.09 with the times at the frames' edges (below):
+ * 2 ms early on average (|mean| 8 ms, at most 29; by video from 9 early to 9 late). The touchdowns keep GROUND_BAND:
+ * on 19 read (3 videos) wider bands made the well-judged ones early while a 120 fps clip stayed 15 ms and more late. */
+export const SPRINT_CONTACT = { liftBand: .09, groundBand: GROUND_BAND };
 export interface RunContacts { contacts: Contact[]; leg: number; direction: number }
 
 /** The contacts in time order (`edits`: the user's frames by `td{n}` / `to{n}`); null without enough of the runner.
@@ -35,7 +43,7 @@ export function runContacts(frames: readonly CrouchFrame[], W: number, H: number
   if (!all.length) return { contacts: [], leg, direction };
   const ground = Math.max(...all.map(p => p.y));
   const plants = contactPlants(all.filter(p => ground - p.y < GROUND_SPREAD * leg), leg, direction);
-  let contacts = plants.map((p, i) => contactOf(p, i + 1, toes, leg, seen.at(-1)!.pts, seen[0].pts));
+  let contacts = plants.map((p, i) => contactOf(p, i + 1, toes, leg, seen.at(-1)!.pts, seen[0].pts, SPRINT_CONTACT.liftBand, SPRINT_CONTACT.groundBand));
   if (standing) {
     let k = 0;
     while (k < contacts.length && (contacts[k].touchdown === null || (contacts[k].toeOff ?? Infinity) - contacts[k].touchdown! > STANCE_SECONDS)) k++;
@@ -55,6 +63,19 @@ export function runContacts(frames: readonly CrouchFrame[], W: number, H: number
     return lostBefore || lostAfter ? { ...c, ...(lostBefore ? { touchdown: null, touchdownFrame: null } : {}), ...(lostAfter ? { toeOff: null, toeOffFrame: null } : {}) } : c;
   });
   if (edits && Object.keys(edits).length) contacts = editContacts(contacts, edits, frames);
+  // Each moment at the edge of its frame (as the crouch start's, crouch.ts frameEdge): a touchdown before its first frame
+  // on the ground, a toe-off after its last. Judged on the poses, halfway to the posed frame before / after (a 240 fps
+  // video is analysed at 120); set by hand on a frame of the video, halfway to the video's frame before / after. Times at
+  // the frames themselves made each contact a frame short and each flight a frame long (2026-10-13).
+  const timeline = [...frames].sort((a, b) => a.pts - b.pts), posed = timeline.filter(f => f.pose);
+  const edge = (list: readonly CrouchFrame[], frame: number, side: -1 | 1) => {
+    const i = list.findIndex(f => f.frame === frame), next = list[i + side], back = list[i - side];
+    return i < 0 ? null : next ? (list[i].pts + next.pts) / 2 : back ? list[i].pts + (list[i].pts - back.pts) / 2 : list[i].pts;
+  };
+  const byHand = (key: string) => edits?.[key] !== undefined && timeline.some(f => f.frame === edits[key]);
+  contacts = contacts.map(c => ({ ...c,
+    touchdown: c.touchdown === null || c.touchdownFrame === null ? c.touchdown : edge(byHand(`td${c.index}`) ? timeline : posed, c.touchdownFrame, -1) ?? c.touchdown,
+    toeOff: c.toeOff === null || c.toeOffFrame == null ? c.toeOff : edge(byHand(`to${c.index}`) ? timeline : posed, c.toeOffFrame, 1) ?? c.toeOff }));
   return { contacts, leg, direction };
 }
 

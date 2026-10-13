@@ -91,10 +91,10 @@ export function contactPlants(plants: Plant[], leg: number, direction: number, m
  * the shoe leave (recorded). A contact cut by the end of the video has no toe-off;
  * with `firstSeen`, one already on the ground when the athlete was first seen has
  * no touchdown. `liftBand`: the crouch start's own (crouch.ts CROUCH_CONTACT), checked again against the picture. */
-export function contactOf(p: Plant, index: number, toes: Toe[], leg: number, lastSeen: number, firstSeen = -Infinity, liftBand = LIFT_BAND): Contact {
+export function contactOf(p: Plant, index: number, toes: Toe[], leg: number, lastSeen: number, firstSeen = -Infinity, liftBand = LIFT_BAND, groundBand = GROUND_BAND): Contact {
   const near = toes.filter(q => Math.abs(q.x - p.x) < PLANT_RADIUS * 2 * leg && q.t >= p.from - .1 && q.t <= p.to + .1)
     .sort((a, b) => a.t - b.t);
-  const first = near.find(q => p.y - q.y < GROUND_BAND * leg) ?? null;
+  const first = near.find(q => p.y - q.y < groundBand * leg) ?? null;
   const last = [...near].reverse().find(q => p.y - q.y < liftBand * leg) ?? null;
   const cut = last === null || lastSeen - last.t < .02, early = first === null || first.t - firstSeen < .02;
   return { index, x: p.x, groundY: p.y, touchdown: early ? null : first.t, touchdownFrame: early ? null : first.frame,

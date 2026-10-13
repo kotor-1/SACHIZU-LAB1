@@ -103,6 +103,58 @@ describe('the number boxes', () => {
   });
 });
 
+describe('the toe-offs where the shoe\'s tip leaves the ground (read again against the picture, 2026-10-13)', () => {
+  // The frames each step is down: from its first frame on the ground to its last.
+  const downFrames = (k: number) => { const a = Math.ceil((FIRST + k * STEP) * 120 - 1e-9), b = Math.floor((FIRST + k * STEP + CONTACT) * 120 + 1e-9); return [a, b]; };
+  it('times a contact from the edge before its first frame down to the edge after its last', () => {
+    const r = runContacts(frames(), W, H)!;
+    for (const c of r.contacts.filter(c => c.touchdown !== null && c.toeOff !== null)) {
+      const k = Math.round((c.touchdownFrame! / 120 - FIRST) / STEP), [a, b] = downFrames(k);
+      expect([c.touchdownFrame, c.toeOffFrame]).toEqual([a, b]);
+      expect(c.touchdown!).toBeCloseTo((a - .5) / 120, 9);
+      expect(c.toeOff!).toBeCloseTo((b + .5) / 120, 9);
+    }
+  });
+  it('keeps the toe down while the heel rises, the toe point up to 0.07 leg lengths above the ground', async () => {
+    const { LIFT_BAND, legLength } = await import('../src/sprint10/contacts');
+    const { SPRINT_CONTACT } = await import('../src/sprint10/sprint-contacts');
+    expect(SPRINT_CONTACT.liftBand).toBe(.09); expect(LIFT_BAND).toBe(.05);   // the other events keep theirs
+    // The toe point rises in the last 4 frames of each contact (to 0.07 leg lengths) while the tip is still down.
+    const plain = frames(), leg = legLength(plain.filter(f => f.pose), W, H);
+    const rising = plain.map(f => {
+      const pose = f.pose!.map(p => ({ ...p }));
+      for (const side of [0, 1]) {
+        const k = Math.floor((f.pts - FIRST) / STEP), [, b] = k >= 0 && k % 2 === side ? downFrames(k) : [0, -9];
+        if (b - f.frame >= 0 && b - f.frame < 4) pose[31 + side] = { ...pose[31 + side], y: pose[31 + side].y - (4 - (b - f.frame)) / 4 * .07 * leg / H };
+      }
+      return { ...f, pose };
+    });
+    const r = runContacts(rising, W, H)!;
+    for (const c of r.contacts.filter(c => c.toeOff !== null && c.touchdown !== null)) {
+      const k = Math.round((c.touchdownFrame! / 120 - FIRST) / STEP);
+      expect(c.toeOffFrame).toBe(downFrames(k)[1]);   // 0.05 put it up to 2 frames early
+    }
+  });
+  it('marks a frame down in 確認 by the band the step is judged with', async () => {
+    const { footDown } = await import('../src/sprint10/crouch-edit');
+    const { SPRINT_CONTACT } = await import('../src/sprint10/sprint-contacts');
+    const { legLength } = await import('../src/sprint10/contacts');
+    const plain = frames(), leg = legLength(plain.filter(f => f.pose), W, H), f = plain[0];
+    // one toe 0.07 leg lengths above its ground level (the heel up, the tip down), the other far off
+    const pose = f.pose!.map(p => ({ ...p }));
+    pose[31] = { x: 500 / W, y: (GROUND - .07 * leg) / H, visibility: .9 }; pose[32] = { x: 1500 / W, y: (GROUND - 120) / H, visibility: .9 };
+    const m = { kind: 'toeOff', focus: { x: 500 / W, y: GROUND / H }, ground: GROUND / H };
+    expect(footDown({ ...f, pose }, m, W, H, leg, SPRINT_CONTACT.liftBand)).toBe(true);   // the 10 m judges it down
+    expect(footDown({ ...f, pose }, m, W, H, leg)).toBe(false);                           // the hurdle's and the jumps' band
+  });
+  it('times a frame set by hand at its edge too', () => {
+    const f = frames(), r = runContacts(f, W, H)!, c = r.contacts.find(k => k.touchdownFrame !== null && k.toeOffFrame != null)!;
+    const moved = runContacts(f, W, H, { [`to${c.index}`]: c.toeOffFrame! + 1 })!.contacts.find(k => k.index === c.index)!;
+    expect(moved.toeOffFrame).toBe(c.toeOffFrame! + 1);
+    expect(moved.toeOff!).toBeCloseTo((c.toeOffFrame! + 1.5) / 120, 9);
+  });
+});
+
 describe('a stretch where the runner was not followed', () => {
   it('gives no touchdown time for a step set down while the runner was lost', () => {
     // The runner not followed from 0.68 s to 0.80 s: the step set down at 0.70 s is first seen at 0.80 s.

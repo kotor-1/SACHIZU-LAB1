@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import type { CrouchFrame, CrouchResult } from './crouch';
+import { CROUCH_CONTACT, type CrouchFrame, type CrouchResult } from './crouch';
 import { legLength } from './contacts';
 import { applyEdits, effectsOf, footDown, type Edits, type Moment } from './crouch-edit';
 import type { PixelMoment } from './crouch-pixels';
@@ -26,6 +26,6 @@ export function CrouchReview({ url, frames, width: W, height: H, pixels, auto, r
   }, [auto, result, edits, frames, W, H]);
   return <MomentReview url={url} frames={frames} width={W} height={H} list={list} edits={edits} checked={checked} at={at} onAt={onAt}
     onSet={onSet} onRevert={onRevert} onRevertAll={onRevertAll} onDone={onDone} preview={preview}
-    down={(m, f) => { const s = share(m); return s ? (s.has(f.frame) ? s.get(f.frame)! >= .5 : null) : footDown(f, m as Moment, W, H, leg); }}
+    down={(m, f) => { const s = share(m); return s ? (s.has(f.frame) ? s.get(f.frame)! >= .5 : null) : footDown(f, m as Moment, W, H, leg, CROUCH_CONTACT.liftBand); }}
     source={m => share(m) ? '足元の画像' : '骨格'} doneText="すべての瞬間を確認しました。値は「ポイント」「歩ごと」に反映されています。" />;
 }

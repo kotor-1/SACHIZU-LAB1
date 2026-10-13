@@ -3,8 +3,8 @@
  * judgment can be a frame or more off (the user, 2026-10-06: 「暗かったりスマホのグレードが低かったりすると、正しく接地や
  * 離地が判定できずずれてしまいます」「自動解析→ズレていたら手動で微調整→自動的に数値もそれに伴ってすぐに変化する」).
  * Nothing is judged again: the times and the angles at the moments are taken from the frames the user chose. */
-import { GROUND_BAND, legLength, median, PLANT_RADIUS, TOE, visible } from './contacts';
-import { CROUCH_CONTACT, frameEdge, posture, stepsOf, type CrouchFrame, type CrouchResult } from './crouch';
+import { GROUND_BAND, legLength, LIFT_BAND, median, PLANT_RADIUS, TOE, visible } from './contacts';
+import { frameEdge, posture, stepsOf, type CrouchFrame, type CrouchResult } from './crouch';
 
 export type MomentKind = 'clearance' | 'touchdown' | 'toeOff';
 export interface Moment {
@@ -108,16 +108,19 @@ export function moments(auto: CrouchResult, edits: Edits, result: CrouchResult, 
 }
 
 /** Whether the foot is down in a frame, as the automatic judgment sees it: for a touchdown or toe-off, a toe near the
- * place within the band of its ground level (GROUND_BAND for a touchdown, the crouch start's toe-off band for a toe-off);
- * for the block, a toe still near the front block. null when no toe is seen there. */
-export function footDown(f: CrouchFrame, m: Pick<Moment, 'focus' | 'ground'> & { kind: string }, W: number, H: number, leg: number): boolean | null {
+ * place within the band of its ground level (GROUND_BAND for a touchdown; for a toe-off the event's own band, `liftBand`:
+ * the crouch start's CROUCH_CONTACT, the 10 m's SPRINT_CONTACT, LIFT_BAND for the hurdle, the jumps and the throws, as
+ * they judge it — the crouch start's band shown for all from 10/12 to 10/13 had marked the hurdle's frames after its
+ * toe-off down); for the block, a toe still near the front block. null when no toe is seen there. */
+export function footDown(f: CrouchFrame, m: Pick<Moment, 'focus' | 'ground'> & { kind: string }, W: number, H: number, leg: number,
+  liftBand = LIFT_BAND): boolean | null {
   if (!f.pose || !m.focus) return null;
   const toe = nearestToe(f.pose, m.focus.x, W);
   if (!toe || !visible(toe, .3)) return null;
   const dx = Math.abs(toe.x - m.focus.x) * W;
   if (m.kind === 'clearance') return dx < .1 * leg;
   if (dx > PLANT_RADIUS * 4 * leg) return false;
-  return (m.ground! - toe.y) * H < (m.kind === 'touchdown' ? GROUND_BAND : CROUCH_CONTACT.liftBand) * leg;
+  return (m.ground! - toe.y) * H < (m.kind === 'touchdown' ? GROUND_BAND : liftBand) * leg;
 }
 
 /** What a moment's frame changes: the values that use it, before and after (rounded as shown). */
