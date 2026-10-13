@@ -33,23 +33,23 @@ export function ComPathChart({ result, width, height }: { result: HurdleResult; 
     <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`重心の軌跡：最高点はハードルの${place}${above ? `、${above}` : ''}、地面から${peak.y.toFixed(2)}m`}>
       {yTicks.map(v => <g key={`y${v}`}><line x1={LEFT} x2={W - RIGHT} y1={Y(v)} y2={Y(v)} className="grid" />
         <text x={LEFT - 6} y={Y(v)} textAnchor="end" dominantBaseline="middle">{v.toFixed(2)}</text></g>)}
-      <line x1={LEFT} x2={W - RIGHT} y1={base} y2={base} stroke="#b8cec5" />
+      <line x1={LEFT} x2={W - RIGHT} y1={base} y2={base} stroke="#3a424c" />
       {xTicks.map(v => <text key={`x${v}`} x={X(v)} y={H - 6} textAnchor="middle">{v === 0 ? '0' : v.toFixed(1)}</text>)}
-      {bar === null ? <line x1={X(0)} x2={X(0)} y1={TOP} y2={base} stroke="#c0392b" strokeWidth={2} strokeDasharray="4 3" />
-        : <g><line x1={X(0)} x2={X(0)} y1={Y(bar)} y2={base} stroke="#c0392b" strokeWidth={3} />
-          <line x1={X(0) - 10} x2={X(0) + 10} y1={Y(bar)} y2={Y(bar)} stroke="#c0392b" strokeWidth={5} strokeLinecap="round" />
-          <line x1={X(0)} x2={X(0)} y1={TOP} y2={Y(bar)} stroke="#c0392b" strokeWidth={1} strokeDasharray="3 3" /></g>}
-      <text x={X(0) + 6} y={base - 6} className="value" style={{ fill: '#c0392b' }}>ハードル</text>
-      {feet.map(f => <g key={f.label}><path d={`M${X(f.x) - 5},${base} L${X(f.x) + 5},${base} L${X(f.x)},${base - 8}Z`} fill="#3f5f55" />
+      {bar === null ? <line x1={X(0)} x2={X(0)} y1={TOP} y2={base} stroke="#ff8a7a" strokeWidth={2} strokeDasharray="4 3" />
+        : <g><line x1={X(0)} x2={X(0)} y1={Y(bar)} y2={base} stroke="#ff8a7a" strokeWidth={3} />
+          <line x1={X(0) - 10} x2={X(0) + 10} y1={Y(bar)} y2={Y(bar)} stroke="#ff8a7a" strokeWidth={5} strokeLinecap="round" />
+          <line x1={X(0)} x2={X(0)} y1={TOP} y2={Y(bar)} stroke="#ff8a7a" strokeWidth={1} strokeDasharray="3 3" /></g>}
+      <text x={X(0) + 6} y={base - 6} className="value" style={{ fill: '#ff8a7a' }}>ハードル</text>
+      {feet.map(f => <g key={f.label}><path d={`M${X(f.x) - 5},${base} L${X(f.x) + 5},${base} L${X(f.x)},${base - 8}Z`} fill="#a3abb6" />
         <text x={X(f.x)} y={base - 12} textAnchor="middle">{f.label}</text></g>)}
-      {pts.map((p, i) => <circle key={i} cx={X(p.x)} cy={Y(p.y)} r={1.8} fill="#8aa89d" />)}
-      <path d={curve.map((p, i) => `${i ? 'L' : 'M'}${X(p.x).toFixed(1)},${Y(p.y).toFixed(1)}`).join('')} fill="none" stroke="#e08a00" strokeWidth={2.5} />
-      <line x1={X(peak.x)} x2={X(peak.x)} y1={Y(peak.y)} y2={base} stroke="#e08a00" strokeWidth={1} strokeDasharray="2 3" />
-      <circle cx={X(peak.x)} cy={Y(peak.y)} r={5} fill="#e08a00" stroke="#fff" strokeWidth={1.5} />
-      <text x={X(peak.x)} y={Y(peak.y) - (above ? 24 : 10)} textAnchor={anchor} className="value" style={{ fill: '#b06a00' }}>最高点：{place}</text>
-      {above && <text x={X(peak.x)} y={Y(peak.y) - 10} textAnchor={anchor} className="value" style={{ fill: '#b06a00' }}>{above}</text>}
+      {pts.map((p, i) => <circle key={i} cx={X(p.x)} cy={Y(p.y)} r={1.8} fill="#7d8691" />)}
+      <path d={curve.map((p, i) => `${i ? 'L' : 'M'}${X(p.x).toFixed(1)},${Y(p.y).toFixed(1)}`).join('')} fill="none" stroke="#f5b84a" strokeWidth={2.5} />
+      <line x1={X(peak.x)} x2={X(peak.x)} y1={Y(peak.y)} y2={base} stroke="#f5b84a" strokeWidth={1} strokeDasharray="2 3" />
+      <circle cx={X(peak.x)} cy={Y(peak.y)} r={5} fill="#f5b84a" stroke="#fff" strokeWidth={1.5} />
+      <text x={X(peak.x)} y={Y(peak.y) - (above ? 24 : 10)} textAnchor={anchor} className="value" style={{ fill: '#f7d48b' }}>最高点：{place}</text>
+      {above && <text x={X(peak.x)} y={Y(peak.y) - 10} textAnchor={anchor} className="value" style={{ fill: '#f7d48b' }}>{above}</text>}
     </svg>
-    <ul className="sprint10-legend"><li><span style={{ borderTop: '3px solid #e08a00' }} />重心の放物線</li><li><span style={{ borderTop: '2px dotted #8aa89d' }} />各コマの重心</li><li><span style={{ borderTop: '3px solid #c0392b' }} />ハードル</li></ul>
+    <ul className="sprint10-legend"><li><span style={{ borderTop: '3px solid #f5b84a' }} />重心の放物線</li><li><span style={{ borderTop: '2px dotted #7d8691' }} />各コマの重心</li><li><span style={{ borderTop: '3px solid #ff8a7a' }} />ハードル</li></ul>
     <p className="sprint10-hint">縦軸は地面からの重心の高さ、横軸はハードルからの距離（踏切側がマイナス）。縮尺は{result.ruler.source === 'hurdle' ? 'ハードルの高さ' : '重心の放物線（重力）'}から求め、撮影条件で±5%程度ずれます（最高点の位置では1〜3cm）。</p>
   </figure>;
 }

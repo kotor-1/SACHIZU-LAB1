@@ -57,7 +57,7 @@ export function ToeCycleResults({ report: r, sole, pelvisMean, legs = 'BOTH', fp
   const values = sole.headlineMean === null ? [] : shadow ? r.cycles.flatMap(c => c.result ? [c.result.value] : [])
     : sole.cycles.flatMap(c => c.value !== null ? [c.value] : []);
   const lastThree = values.length >= 3 ? values.slice(-3).reduce((a, b) => a + b, 0) / 3 : null;
-  return <section aria-label="つま先軌跡によるRJ予測結果">
+  return <section className="rj-result" aria-label="つま先軌跡によるRJ予測結果">
     <div className="rj-auto-headline">
       <p>{singleLeg(legs) ? `片脚RJ（${LEG_LABELS[legs]}）· ` : ''}平均RSI（推定）</p>
       <strong data-testid="toe-cycle-rsi">{fmt(sole.headlineMean)} <small>m/s</small></strong>

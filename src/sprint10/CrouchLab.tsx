@@ -162,7 +162,7 @@ export default function CrouchLab() {
     a.href = href; a.download = 'crouch-start-result.json'; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
   }
   return <>
-    <p className="sprint10-note">試験機能・精度未検証。三脚で固定したカメラで真横から、構え（ブロック）から{MAX_STEPS}歩目までが映るように撮影してください。1秒120コマ以上（240推奨）・通常速度の時間軸の動画を使います。映っている歩だけ（最大{MAX_STEPS}歩）を解析します。</p>
+    <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能・精度未検証。三脚で固定したカメラで真横から、構え（ブロック）から{MAX_STEPS}歩目までが映るように撮影してください。1秒120コマ以上（240推奨）・通常速度の時間軸の動画を使います。映っている歩だけ（最大{MAX_STEPS}歩）を解析します。</p></details>
     <section className="sprint10-card"><h2>1　動画を選ぶ</h2>
       <label className="sprint10-upload"><input className="sprint10-file-input" type="file" aria-label="クラウチングスタートの動画を選ぶ" accept="video/mp4,video/quicktime,.mov,.mp4,.m4v" disabled={busy}
         onChange={e => changeFile(e.target.files?.[0] ?? null)} />
@@ -194,7 +194,7 @@ export default function CrouchLab() {
         <button type="button" aria-label="スタートラインを右へ" disabled={!ready || busy} onClick={() => move(start + NUDGE)}>▶</button>
       </div></div>
     </section>
-    <section className="sprint10-card"><h2>3　解析する</h2>
+    <section className="sprint10-card sprint10-run"><h2>3　解析する</h2>
       <button className="sprint10-primary" disabled={!ready || busy} onClick={() => void analyze()}>解析する</button>
       {busy && <button onClick={() => { owner.current?.abort(); owner.current = null; setBusy(false); setMessage('解析を中止しました。'); }}>中止</button>}
       <p role="status">{message || '動画を選び、スタートラインを合わせると解析できます。'}</p>

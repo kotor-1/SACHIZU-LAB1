@@ -58,15 +58,15 @@ export default function CrouchCharts({ result }: { result: CrouchResult }) {
     <div className="sprint10-seg" role="group" aria-label="グラフを選ぶ">{CHARTS.map(([id, label]) =>
       <button key={id} type="button" aria-pressed={shown === id} onClick={() => setShown(id)}>{label}</button>)}</div>
     {shown === 'time' && <StepChart title="接地時間・滞空時間" unit="秒" steps={steps} digits={3} series={[
-      { label: '接地時間', color: '#127a55', values: result.steps.map(s => s.contactSeconds) },
-      { label: '滞空時間', color: '#2a6fdb', values: result.steps.map(s => s.flightSeconds) },
-      { label: 'トップ選手の例（接地）', color: '#127a55', values: elite(ELITE_EXAMPLE.contact), dashed: true },
-      { label: 'トップ選手の例（滞空）', color: '#2a6fdb', values: elite(ELITE_EXAMPLE.flight), dashed: true }]} />}
+      { label: '接地時間', color: '#5fd38d', values: result.steps.map(s => s.contactSeconds) },
+      { label: '滞空時間', color: '#7cb4ff', values: result.steps.map(s => s.flightSeconds) },
+      { label: 'トップ選手の例（接地）', color: '#5fd38d', values: elite(ELITE_EXAMPLE.contact), dashed: true },
+      { label: 'トップ選手の例（滞空）', color: '#7cb4ff', values: elite(ELITE_EXAMPLE.flight), dashed: true }]} />}
     {shown === 'pitch' && <StepChart title="ピッチ" unit="歩/秒" steps={steps} digits={2} series={[
-      { label: 'ピッチ', color: '#8a4fd8', values: result.steps.map(s => s.pitch) }]} />}
+      { label: 'ピッチ', color: '#c39bff', values: result.steps.map(s => s.pitch) }]} />}
     {shown === 'angle' && <StepChart title="接地時の角度" unit="°" steps={steps} digits={0} series={[
-      { label: '脛（鉛直から前へ）', color: '#0b9bc4', values: result.steps.map(s => s.shankAngle) },
-      { label: '体幹（鉛直から前へ）', color: '#e08a00', values: result.steps.map(s => s.trunkAngle) }]} />}
+      { label: '脛（鉛直から前へ）', color: '#4dd6e8', values: result.steps.map(s => s.shankAngle) },
+      { label: '体幹（鉛直から前へ）', color: '#f5b84a', values: result.steps.map(s => s.trunkAngle) }]} />}
   </div>;
 }
 

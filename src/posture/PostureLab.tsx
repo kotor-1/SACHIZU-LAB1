@@ -125,8 +125,8 @@ export default function PostureLab() {
         <p className="sprint10-hint">スマホを置いて離れ、枠の中に立つと、頭から足先まで入ってまっすぐ止まったところで自動で撮ります（3秒数えて「ピッ」）。正面→横→後ろの順に声で案内します。</p>
         <div className="posture-options">
           <div className="sprint10-seg" role="group" aria-label="使うカメラ">
-            <button type="button" aria-pressed={facing === 'environment'} onClick={() => setFacing('environment')}>外カメラ（撮る人がいる）</button>
-            <button type="button" aria-pressed={facing === 'user'} onClick={() => setFacing('user')}>内カメラ（ひとりで）</button>
+            <button type="button" aria-pressed={facing === 'environment'} onClick={() => setFacing('environment')}>外カメラ<span style={{ whiteSpace: 'nowrap' }}>（撮る人がいる）</span></button>
+            <button type="button" aria-pressed={facing === 'user'} onClick={() => setFacing('user')}>内カメラ<span style={{ whiteSpace: 'nowrap' }}>（ひとりで）</span></button>
           </div>
           <fieldset className="posture-views"><legend>撮る向き</legend>{VIEWS.map(v => <label key={v} className="sprint10-check">
             <input type="checkbox" checked={chosen.includes(v)} onChange={e => setChosen(c => VIEWS.filter(x => x === v ? e.target.checked : c.includes(x)))} />{VIEW_NAMES[v]}</label>)}</fieldset>

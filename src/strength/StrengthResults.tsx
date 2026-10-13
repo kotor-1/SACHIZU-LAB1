@@ -107,9 +107,9 @@ function RepChart({ reps, columns }: { reps: Rep[]; columns: Column[] }) {
       {marks.map(m => <g key={m}><line x1={LEFT} x2={W - RIGHT} y1={y(m)} y2={y(m)} className="grid" />
         <text x={LEFT - 6} y={y(m)} textAnchor="end" dominantBaseline="middle">{m}</text></g>)}
       {reps.map((r, i) => <text key={r.index} x={x(i)} y={H - 7} textAnchor="middle">{r.index}</text>)}
-      <path d={path} fill="none" stroke="#127a55" strokeWidth={2.5} />
-      {points.map((p, i) => p && <g key={i}><circle cx={p.x} cy={p.y} r={3.5} fill="#127a55" />
-        <text x={p.x} y={p.y - 7} textAnchor="middle" className="value" style={{ fill: '#127a55' }}>{p.v.toFixed(c.digits)}</text></g>)}
+      <path d={path} fill="none" stroke="#c5f23a" strokeWidth={2.5} />
+      {points.map((p, i) => p && <g key={i}><circle cx={p.x} cy={p.y} r={3.5} fill="#c5f23a" />
+        <text x={p.x} y={p.y - 7} textAnchor="middle" className="value" style={{ fill: '#c5f23a' }}>{p.v.toFixed(c.digits)}</text></g>)}
     </svg>
     {band && <p className="sprint10-hint">帯は目安の範囲（{band[0]}〜{band[1]}{c.unit}）。横軸は回数。</p>}
   </figure>;

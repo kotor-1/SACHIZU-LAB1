@@ -176,7 +176,7 @@ export default function LongJumpLab() {
     <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
     <header><p className="sprint10-eyebrow">EVENT / LONG JUMP</p><h1>走り幅跳び：助走の最後</h1>
       <p>踏切に入る最後の数歩：助走速度（目安）と、最後の2歩のリズム、踏切接地の姿勢。踏切の離地の速さと角度。</p></header>
-    <p className="sprint10-note">試験機能。三脚で固定したカメラで、助走路に対して真横から、踏切の2〜3歩前から踏切の後の空中までが映るように撮影してください（着地は映らなくてかまいません）。踏切の後の空中が0.5秒ほど映っていると、その空中の動きから速さの縮尺が決まります。1秒120コマ以上（240推奨）・通常速度の時間軸の動画を使います。</p>
+    <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能。三脚で固定したカメラで、助走路に対して真横から、踏切の2〜3歩前から踏切の後の空中までが映るように撮影してください（着地は映らなくてかまいません）。踏切の後の空中が0.5秒ほど映っていると、その空中の動きから速さの縮尺が決まります。1秒120コマ以上（240推奨）・通常速度の時間軸の動画を使います。</p></details>
     <section className="sprint10-card"><h2>1　動画を選ぶ</h2>
       <label className="sprint10-upload"><input className="sprint10-file-input" type="file" aria-label="走り幅跳びの動画を選ぶ" accept="video/mp4,video/quicktime,.mov,.mp4,.m4v" disabled={busy}
         onChange={e => changeFile(e.target.files?.[0] ?? null)} />
@@ -187,7 +187,7 @@ export default function LongJumpLab() {
         value={heightText} onChange={e => setHeightText(e.target.value)} aria-label="選手の身長（cm）" /><small>cm</small></label>
       <p className="sprint10-hint">身長を入れると、選手の胴の長さから速さの縮尺を求めます。踏切板と砂場が映っていれば、解析の後に「物差し」を合わせるとさらに正確になります。走る向きと選手は自動で見つけます。</p>
     </section>
-    <section className="sprint10-card"><h2>2　解析する</h2>
+    <section className="sprint10-card sprint10-run"><h2>2　解析する</h2>
       <button className="sprint10-primary" disabled={!file || busy} onClick={() => void analyze()}>解析する</button>
       {busy && <button onClick={() => { owner.current?.abort(); owner.current = null; setBusy(false); setMessage('解析を中止しました。'); }}>中止</button>}
       <p role="status">{message || '動画を選ぶと解析できます。'}</p>
@@ -306,7 +306,7 @@ function SpeedChart({ result: r }: { result: LongJumpResult }) {
   return <figure className="sprint10-chart"><figcaption>踏切に入る速さ<small>（重心の前に進む速さ、m/s、目安）</small></figcaption>
     <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`踏切に入る速さ：${bars.map(b => `${b.label} ${b.v.toFixed(1)}`).join('、')} m/s`}>
       {bars.map((b, i) => <g key={b.label}>
-        <rect x={10 + i * bw + 6} y={y(b.v)} width={bw - 12} height={H - bottom - y(b.v)} rx={4} fill={b.label === '踏切接地' ? '#e08a00' : '#135a48'} />
+        <rect x={10 + i * bw + 6} y={y(b.v)} width={bw - 12} height={H - bottom - y(b.v)} rx={4} fill={b.label === '踏切接地' ? '#f5b84a' : '#7cb4ff'} />
         <text x={10 + i * bw + bw / 2} y={y(b.v) - 6} textAnchor="middle" className="value">{b.v.toFixed(1)}</text>
         <text x={10 + i * bw + bw / 2} y={H - 10} textAnchor="middle">{b.label}</text></g>)}
     </svg></figure>;

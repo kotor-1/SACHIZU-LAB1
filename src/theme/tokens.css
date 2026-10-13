@@ -1,0 +1,35 @@
+/* The app's colours, "Night" (the user chose it on 2026-10-13: a black ground with one lime accent). Every screen's
+ * stylesheet takes its colours from these, so a change here changes them all. Lime is for the main action and the
+ * current choice; good / caution / info / error keep their own hues, told apart by lightness too. Lines, labels and
+ * markers drawn over a video keep their own bright colours (they sit on the picture, not on the page). */
+:root {
+  --sz-bg: #0c0e11;
+  --sz-bg-glass: rgba(12, 14, 17, .9);
+  --sz-surface: #161a1f;
+  --sz-surface-2: #1d2228;
+  --sz-surface-3: #262c34;
+  --sz-line: #2a3038;
+  --sz-line-strong: #3a424c;
+  --sz-text: #f2f4f7;
+  --sz-text-2: #c9d0d8;
+  --sz-muted: #a3abb6;
+  --sz-faint: #7d8691;
+  --sz-accent: #c5f23a;
+  --sz-accent-hover: #d4f96b;
+  --sz-accent-ink: #0c0e11;
+  --sz-accent-soft: rgba(197, 242, 58, .14);
+  --sz-good: #5fd38d;
+  --sz-good-bg: rgba(95, 211, 141, .14);
+  --sz-warn: #f5b84a;
+  --sz-warn-text: #f7d48b;
+  --sz-warn-bg: rgba(245, 184, 74, .13);
+  --sz-warn-fill: #f5a524;
+  --sz-info: #7cb4ff;
+  --sz-info-bg: rgba(124, 180, 255, .13);
+  --sz-bad: #ff7b72;
+  --sz-bad-bg: rgba(255, 123, 114, .14);
+  --sz-bad-fill: #c4363b;
+  --sz-video: #000;
+  --sz-focus: #c5f23a;
+  --sz-font: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', Meiryo, system-ui, -apple-system, sans-serif;
+}

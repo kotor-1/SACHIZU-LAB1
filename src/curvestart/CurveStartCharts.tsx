@@ -74,16 +74,16 @@ export function LeanChart({ result }: { result: CurveStartResult }) {
   return <figure className="sprint10-chart">
     <figcaption>体の内傾<small>（足から骨盤への線と鉛直の角度、°。−が内側）</small></figcaption>
     <svg viewBox={`0 0 ${LW} ${LH}`} role="img" aria-label={`体の内傾：まっすぐの区間 ${result.lean.straight?.toFixed(1) ?? '—'}°、曲がってから ${result.lean.curve?.toFixed(1) ?? '—'}°`}>
-      {until !== null && <><rect x={X(until)} y={Y(-lo)} width={LW - R0 - X(until)} height={Y(-hi) - Y(-lo)} fill="rgba(46,160,67,.15)" />
-        <text x={LW - R0 - 3} y={Y(-hi) + 11} fontSize={9} fill="#2e7d4f" textAnchor="end">必要な内傾の目安 {lo}〜{hi}°</text>
+      {until !== null && <><rect x={X(until)} y={Y(-lo)} width={LW - R0 - X(until)} height={Y(-hi) - Y(-lo)} fill="rgba(95,211,141,.16)" />
+        <text x={LW - R0 - 3} y={Y(-hi) + 11} fontSize={9} fill="#5fd38d" textAnchor="end">必要な内傾の目安 {lo}〜{hi}°</text>
         <line x1={X(until)} x2={X(until)} y1={T0} y2={LH - B0} stroke="#ffb347" strokeWidth={1.5} /></>}
       {[5, 0, -5, -10].map(v => <g key={v}><line x1={L0} x2={LW - R0} y1={Y(v)} y2={Y(v)} className="grid" />
         <text x={L0 - 5} y={Y(v)} textAnchor="end" dominantBaseline="middle">{v > 0 ? `+${v}` : v}</text></g>)}
       {Array.from({ length: xmax / 2 + 1 }, (_, i) => i * 2).map(m => <text key={m} x={X(m)} y={LH - 8} textAnchor="middle">{m} m</text>)}
-      <line x1={X(L)} x2={X(L)} y1={T0} y2={LH - B0} stroke="#7d8f87" strokeDasharray="3 3" />
-      <line x1={L0} x2={LW - R0} y1={Y(0)} y2={Y(0)} stroke="#123a30" />
+      <line x1={X(L)} x2={X(L)} y1={T0} y2={LH - B0} stroke="#7d8691" strokeDasharray="3 3" />
+      <line x1={L0} x2={LW - R0} y1={Y(0)} y2={Y(0)} stroke="#7d8691" />
       {result.steps.map(q => q.lean === null ? null : <circle key={q.i} cx={X(q.along)} cy={Y(Math.max(LMIN, Math.min(LMAX, q.lean)))} r={2.6} fill={q.side === 'L' ? '#ff9a9a' : '#9ab6ff'} />)}
-      <path d={d(pairs.map(p => [X(p.along), Y(Math.max(LMIN, Math.min(LMAX, p.deg)))]))} fill="none" stroke="#123a30" strokeWidth={2.4} />
+      <path d={d(pairs.map(p => [X(p.along), Y(Math.max(LMIN, Math.min(LMAX, p.deg)))]))} fill="none" stroke="#f2f4f7" strokeWidth={2.4} />
     </svg>
   </figure>;
 }

@@ -163,7 +163,7 @@ export default function CurveStartLab() {
     <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
     <header><p className="sprint10-eyebrow">EVENT / CURVE START</p><h1>カーブスタートの解析</h1>
       <p>カーブの線に惑わされずに、ブロックからまっすぐ出られたか。その後、カーブに沿って自然に内傾して走れたか。走った軌跡を描きます。</p></header>
-    <p className="sprint10-note">試験機能。200 m・400 m・リレーなど、曲走路からのスタートを、スマホを三脚に固定してブロックの真後ろ（スタートラインの3〜5 m後ろ、高さ1.3 m以上）から撮影します。選手のレーンの左右の白線が、ブロックから15 m先まで映るようにしてください（レーン幅1.22 mが物差しになります）。構えから走り出しまでを撮り、選手が遠ざかるまで撮り続けます。</p>
+    <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能。200 m・400 m・リレーなど、曲走路からのスタートを、スマホを三脚に固定してブロックの真後ろ（スタートラインの3〜5 m後ろ、高さ1.3 m以上）から撮影します。選手のレーンの左右の白線が、ブロックから15 m先まで映るようにしてください（レーン幅1.22 mが物差しになります）。構えから走り出しまでを撮り、選手が遠ざかるまで撮り続けます。</p></details>
     <section className="sprint10-card"><h2>1　動画を選ぶ</h2>
       <label className="sprint10-upload"><input className="sprint10-file-input" type="file" aria-label="カーブスタートの動画を選ぶ" accept="video/mp4,video/quicktime,.mov,.mp4,.m4v" disabled={busy}
         onChange={e => changeFile(e.target.files?.[0] ?? null)} />
@@ -202,7 +202,7 @@ export default function CurveStartLab() {
         </div>
       </div>
     </section>
-    <section className="sprint10-card"><h2>3　解析する</h2>
+    <section className="sprint10-card sprint10-run"><h2>3　解析する</h2>
       <button className="sprint10-primary" disabled={!ready || busy} onClick={() => void analyze()}>解析する</button>
       {measured && used && !same(used, points) && !busy && <button className="sprint10-recalc" onClick={() => setUsed(points)}>今の点で計算し直す</button>}
       {busy && <button onClick={() => { owner.current?.abort(); owner.current = null; setBusy(false); setMessage('解析を中止しました。'); }}>中止</button>}

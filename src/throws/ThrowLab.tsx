@@ -269,9 +269,9 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
     <header><p className="sprint10-eyebrow">EVENT / {jav ? 'JAVELIN' : 'SHOT PUT'}</p><h1>{title}</h1>
       <p>{jav ? 'ブロック脚（前足）の接地からリリースまで：ブロック脚の膝の角度と、投げの時間。'
         : 'グライドまたは立ち投げ：局面ごとの時間と、パワーポジションの姿勢。'}</p></header>
-    <p className="sprint10-note">試験機能。三脚で固定したカメラで、投げる方向に対して真横から全身と足元が映るように撮影してください。{jav
+    <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能。三脚で固定したカメラで、投げる方向に対して真横から全身と足元が映るように撮影してください。{jav
       ? 'ブロック脚の接地の少し前からリリースの後までが映るようにします。'
-      : 'グライドの構えから（立ち投げは構えから）リリースの後までが映るようにします。回転投法には対応していません。'}1秒120コマ以上（240推奨）・通常速度の時間軸の動画を使います。</p>
+      : 'グライドの構えから（立ち投げは構えから）リリースの後までが映るようにします。回転投法には対応していません。'}1秒120コマ以上（240推奨）・通常速度の時間軸の動画を使います。</p></details>
     <section className="sprint10-card"><h2>1　動画を選ぶ</h2>
       <label className="sprint10-upload"><input className="sprint10-file-input" type="file" aria-label={`${jav ? 'ジャベリックスロー・やり投げ' : '砲丸投'}の動画を選ぶ`} accept="video/mp4,video/quicktime,.mov,.mp4,.m4v" disabled={busy}
         onChange={e => changeFile(e.target.files?.[0] ?? null)} />
@@ -309,7 +309,7 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
         value={heightText} onChange={e => setHeightText(e.target.value)} aria-label="選手の身長（cm）" /><small>cm</small></label>
       <p className="sprint10-hint">身長を入れると、リリースの速度（時速、目安）と、高さ・足幅などをm単位（目安）でも出します。角度と身長に対する割合は、入れなくても出ます。</p>
     </section>
-    <section className="sprint10-card"><h2>3　解析する</h2>
+    <section className="sprint10-card sprint10-run"><h2>3　解析する</h2>
       <button className="sprint10-primary" disabled={!ready || busy || !settingsReady} onClick={() => void analyze()}>解析する</button>
       {busy && <button onClick={() => { owner.current?.abort(); owner.current = null; setBusy(false); setMessage('解析を中止しました。'); }}>中止</button>}
       <p role="status">{message || (settingsReady ? '動画を選び、線を選手に合わせると解析できます。' : `動画を選び、線を選手に合わせ、${jav ? '投げる手' : '投げる手と投法'}を選ぶと解析できます。`)}</p>

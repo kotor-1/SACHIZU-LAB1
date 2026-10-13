@@ -181,7 +181,7 @@ export default function HighJumpLab() {
     <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
     <header><p className="sprint10-eyebrow">EVENT / HIGH JUMP</p><h1>走高跳（はさみ跳び）の解析</h1>
       <p>踏切で得た上向きの速さと空中で上がった高さ、最後の2歩のリズム、踏切接地の後傾。</p></header>
-    <p className="sprint10-note">試験機能。三脚で固定したスマホを水平に置き、踏切の動きの真横から、踏切の3歩前から踏切の後の上昇までが映るように撮影してください。左右両方の支柱の根元とバーが画面に入るようにします（支柱とバーの高さが物差しになります）。1秒240コマ（スロー）推奨・通常速度の時間軸の動画を使います。</p>
+    <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能。三脚で固定したスマホを水平に置き、踏切の動きの真横から、踏切の3歩前から踏切の後の上昇までが映るように撮影してください。左右両方の支柱の根元とバーが画面に入るようにします（支柱とバーの高さが物差しになります）。1秒240コマ（スロー）推奨・通常速度の時間軸の動画を使います。</p></details>
     <section className="sprint10-card"><h2>1　動画を選ぶ</h2>
       <label className="sprint10-upload"><input className="sprint10-file-input" type="file" aria-label="走高跳の動画を選ぶ" accept="video/mp4,video/quicktime,.mov,.mp4,.m4v" disabled={busy}
         onChange={e => changeFile(e.target.files?.[0] ?? null)} />
@@ -222,7 +222,7 @@ export default function HighJumpLab() {
         <button type="button" aria-label="1cm上げる" disabled={busy} onClick={() => setBar((setting.barCm ?? 119) + 1)}>＋</button>
       </div>
     </section>
-    <section className="sprint10-card"><h2>3　解析する</h2>
+    <section className="sprint10-card sprint10-run"><h2>3　解析する</h2>
       <button className="sprint10-primary" disabled={!ready || busy || !barOk(setting.barCm)} onClick={() => void analyze()}>解析する</button>
       {measured && used && !same(used, setting) && barOk(setting.barCm) && !busy && <button className="sprint10-recalc" onClick={() => setUsed(setting)}>今の点とバーの高さで計算し直す</button>}
       {busy && <button onClick={() => { owner.current?.abort(); owner.current = null; setBusy(false); setMessage('解析を中止しました。'); }}>中止</button>}

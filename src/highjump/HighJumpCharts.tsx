@@ -23,18 +23,18 @@ export function LiftChart({ result, barHeight }: { result: HighJumpResult; barHe
       {yTicks.map(v => <g key={`y${v}`}><line x1={LEFT} x2={W - RIGHT} y1={Y(v)} y2={Y(v)} className="grid" />
         <text x={LEFT - 6} y={Y(v)} textAnchor="end" dominantBaseline="middle">{v.toFixed(1)}</text></g>)}
       {xTicks.map(v => <text key={`x${v}`} x={X(v)} y={H - 8} textAnchor="middle">{v === 0 ? '離地' : v.toFixed(1)}</text>)}
-      <line x1={X(0)} x2={X(0)} y1={TOP} y2={H - BOTTOM} stroke="#3f5f55" strokeDasharray="2 3" />
-      <line x1={LEFT} x2={W - RIGHT} y1={Y(barHeight)} y2={Y(barHeight)} stroke="#c0392b" strokeWidth={2} strokeDasharray="6 4" />
-      <text x={LEFT + 4} y={Y(barHeight) + 14} className="value" style={{ fill: '#c0392b' }}>バー {barHeight.toFixed(2)}m</text>
-      {shown.map((p, i) => <circle key={i} cx={X(p.t)} cy={Y(p.z)} r={p.fitted ? 2.4 : 1.6} fill={p.fitted ? '#3f5f55' : '#9fb8ae'} />)}
-      <path d={curve.map((p, i) => `${i ? 'L' : 'M'}${X(p.t).toFixed(1)},${Y(p.z).toFixed(1)}`).join('')} fill="none" stroke="#e08a00" strokeWidth={2.5} />
-      <line x1={X(peakT)} x2={X(peakT)} y1={Y(l.peak)} y2={Y(l.h1)} stroke="#e08a00" strokeWidth={1.5} strokeDasharray="3 3" />
-      <line x1={X(0) - 4} x2={X(peakT) + 4} y1={Y(l.h1)} y2={Y(l.h1)} stroke="#e08a00" strokeWidth={1} strokeDasharray="2 3" />
-      <text x={X(peakT) - 6} y={Y(l.h1 + .7 * l.h2)} textAnchor="end" className="value" style={{ fill: '#b06a00' }}>+{Math.round(l.h2 * 100)}cm</text>
-      <circle cx={X(peakT)} cy={Y(l.peak)} r={5} fill="#e08a00" stroke="#fff" strokeWidth={1.5} />
-      <text x={X(peakT)} y={Y(l.peak) - 10} textAnchor={anchor} className="value" style={{ fill: '#b06a00' }}>最高点 {l.peak.toFixed(2)}m</text>
+      <line x1={X(0)} x2={X(0)} y1={TOP} y2={H - BOTTOM} stroke="#a3abb6" strokeDasharray="2 3" />
+      <line x1={LEFT} x2={W - RIGHT} y1={Y(barHeight)} y2={Y(barHeight)} stroke="#ff8a7a" strokeWidth={2} strokeDasharray="6 4" />
+      <text x={LEFT + 4} y={Y(barHeight) + 14} className="value" style={{ fill: '#ff8a7a' }}>バー {barHeight.toFixed(2)}m</text>
+      {shown.map((p, i) => <circle key={i} cx={X(p.t)} cy={Y(p.z)} r={p.fitted ? 2.4 : 1.6} fill={p.fitted ? '#a3abb6' : '#6b7480'} />)}
+      <path d={curve.map((p, i) => `${i ? 'L' : 'M'}${X(p.t).toFixed(1)},${Y(p.z).toFixed(1)}`).join('')} fill="none" stroke="#f5b84a" strokeWidth={2.5} />
+      <line x1={X(peakT)} x2={X(peakT)} y1={Y(l.peak)} y2={Y(l.h1)} stroke="#f5b84a" strokeWidth={1.5} strokeDasharray="3 3" />
+      <line x1={X(0) - 4} x2={X(peakT) + 4} y1={Y(l.h1)} y2={Y(l.h1)} stroke="#f5b84a" strokeWidth={1} strokeDasharray="2 3" />
+      <text x={X(peakT) - 6} y={Y(l.h1 + .7 * l.h2)} textAnchor="end" className="value" style={{ fill: '#f7d48b' }}>+{Math.round(l.h2 * 100)}cm</text>
+      <circle cx={X(peakT)} cy={Y(l.peak)} r={5} fill="#f5b84a" stroke="#fff" strokeWidth={1.5} />
+      <text x={X(peakT)} y={Y(l.peak) - 10} textAnchor={anchor} className="value" style={{ fill: '#f7d48b' }}>最高点 {l.peak.toFixed(2)}m</text>
     </svg>
-    <ul className="sprint10-legend"><li><span style={{ borderTop: '3px solid #e08a00' }} />離地直後から求めた放物線</li><li><span style={{ borderTop: '3px dotted #3f5f55' }} />各コマの重心（濃い点で速さを計算）</li><li><span style={{ borderTop: '2px dashed #c0392b' }} />バー</li></ul>
+    <ul className="sprint10-legend"><li><span style={{ borderTop: '3px solid #f5b84a' }} />離地直後から求めた放物線</li><li><span style={{ borderTop: '3px dotted #a3abb6' }} />各コマの重心（濃い点で速さを計算）</li><li><span style={{ borderTop: '2px dashed #ff8a7a' }} />バー</li></ul>
     <p className="sprint10-hint">離地の直後（0.1秒）の重心の動きから上向きの速さを求め、重力で減速する放物線として最高点まで延ばしています。バー上では骨格が乱れるため、それより後の点は計算に使っていません。</p>
   </figure>;
 }

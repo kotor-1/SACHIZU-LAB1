@@ -188,7 +188,7 @@ export default function HurdleLab() {
     <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
     <header><p className="sprint10-eyebrow">EVENT / HURDLES</p><h1>ハードルの解析</h1>
       <p>踏切から着地まで：重心が最高点になる位置、接地と空中の時間、各局面の姿勢の角度。</p></header>
-    <p className="sprint10-note">試験機能。三脚で固定したカメラで真横から、ハードル1台と、その手前1〜2歩から着地の後1〜2歩までが映るように撮影してください。カメラはバーくらいの高さで水平に（下に向けない）、走路に直角に向け、ハードルを画面の中央にします。1秒120コマ以上（240推奨）・通常速度の時間軸の動画を使います。</p>
+    <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能。三脚で固定したカメラで真横から、ハードル1台と、その手前1〜2歩から着地の後1〜2歩までが映るように撮影してください。カメラはバーくらいの高さで水平に（下に向けない）、走路に直角に向け、ハードルを画面の中央にします。1秒120コマ以上（240推奨）・通常速度の時間軸の動画を使います。</p></details>
     <section className="sprint10-card"><h2>1　動画を選ぶ</h2>
       <label className="sprint10-upload"><input className="sprint10-file-input" type="file" aria-label="ハードルの動画を選ぶ" accept="video/mp4,video/quicktime,.mov,.mp4,.m4v" disabled={busy}
         onChange={e => changeFile(e.target.files?.[0] ?? null)} />
@@ -231,7 +231,7 @@ export default function HurdleLab() {
         {HURDLE_HEIGHTS.map(h => <button key={h} type="button" aria-pressed={setting.height === h} disabled={busy}
           onClick={() => setSetting(s => ({ ...s, height: h }))}>{(h * 100).toFixed(h * 100 % 1 ? 1 : 0)}<small>cm</small></button>)}</div>
     </section>
-    <section className="sprint10-card"><h2>3　解析する</h2>
+    <section className="sprint10-card sprint10-run"><h2>3　解析する</h2>
       <button className="sprint10-primary" disabled={!ready || busy || setting.height === null} onClick={() => void analyze()}>解析する</button>
       {measured && used && !same(used, setting) && !busy && <button className="sprint10-recalc" onClick={() => setUsed(setting)}>今の線と高さで計算し直す</button>}
       {busy && <button onClick={() => { owner.current?.abort(); owner.current = null; setBusy(false); setMessage('解析を中止しました。'); }}>中止</button>}

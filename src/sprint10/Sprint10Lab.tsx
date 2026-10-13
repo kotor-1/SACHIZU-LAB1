@@ -77,8 +77,10 @@ export default function Sprint10Lab() {
   const video = useRef<HTMLVideoElement>(null), owner = useRef<AbortController | null>(null);
   const resultCard = useRef<HTMLElement>(null), showResult = useRef(false);
   const [file, setFile] = useState<File | null>(null), [url, setUrl] = useState('');
-  const [start, setStart] = useState(.12), [finish, setFinish] = useState(.88);
-  const [mode, setMode] = useState<SprintStart>('standing'), [crouch, setCrouch] = useState(false);
+  // The home's tiles open a mode directly: ?lab=sprint10&mode=flying or &mode=crouch (otherwise the start 10 m).
+  const [opened] = useState(() => typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('mode'));
+  const [start, setStart] = useState(DEFAULT_GATES[opened === 'flying' ? 'flying' : 'standing'][0]), [finish, setFinish] = useState(DEFAULT_GATES[opened === 'flying' ? 'flying' : 'standing'][1]);
+  const [mode, setMode] = useState<SprintStart>(opened === 'flying' ? 'flying' : 'standing'), [crouch, setCrouch] = useState(opened === 'crouch');
   // Flying section: where it begins on the track (label only) and its real length (the scale).
   const [sectionStartM, setSectionStartM] = useState(50), [sectionLengthM, setSectionLengthM] = useState(10);
   const distanceM = mode === 'flying' ? sectionLengthM : 10;
@@ -292,7 +294,7 @@ export default function Sprint10Lab() {
       <label>区間の長さ<NumberField value={sectionLengthM} min={1} max={100} disabled={busy}
         onValue={v => { setSectionLengthM(v); setConfirmed(false); setReview(''); }} /><span>m</span></label>
       <p>{sectionLabel}として記録します。長さは2本のラインの実際の間隔です。</p></div>}
-    <p className="sprint10-note">試験機能・精度未検証。固定カメラで真横に近い方向から、1人の全身と{mode === 'flying' ? '区間全体' : '10m区間'}を撮影してください。通常速度の時間軸の動画を使用します。スロー書き出し動画の速度倍率は自動補正しません。</p>
+    <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能・精度未検証。固定カメラで真横に近い方向から、1人の全身と{mode === 'flying' ? '区間全体' : '10m区間'}を撮影してください。通常速度の時間軸の動画を使用します。スロー書き出し動画の速度倍率は自動補正しません。</p></details>
     <section className="sprint10-card"><h2>1　動画を選ぶ</h2>
       <label className="sprint10-upload"><input className="sprint10-file-input" type="file" aria-label={`${sectionLabel}の動画を選ぶ`} accept="video/mp4,video/quicktime,.mov,.mp4,.m4v" disabled={busy} onChange={e => changeFile(e.target.files?.[0] ?? null)} />
         <span className="sprint10-upload-button" aria-hidden="true"><Upload size={19} />{file ? '別の動画を選ぶ' : '動画を選ぶ'}</span></label>
@@ -329,7 +331,7 @@ export default function Sprint10Lab() {
       </div>)}</div>
       <button className="sprint10-confirm" disabled={!ready || busy || Math.abs(start - finish) < .1 || distanceM <= 0} onClick={() => setConfirmed(true)}>{confirmed ? '✓ ライン設定済み' : 'この2本のラインで決定'}</button>
     </section>
-    <section className="sprint10-card"><h2>3　解析する</h2><button className="sprint10-primary" disabled={!ready || !confirmed || busy} onClick={() => void analyze()}>解析する</button>
+    <section className="sprint10-card sprint10-run"><h2>3　解析する</h2><button className="sprint10-primary" disabled={!ready || !confirmed || busy} onClick={() => void analyze()}>解析する</button>
       {busy && <button onClick={cancel}>中止</button>}
       <p role="status">{message || '動画を選び、2本のラインを決定すると解析できます。'}</p>
       {busy && <progress max="1" value={progress} aria-label="解析の進み具合" />}
