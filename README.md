@@ -45,6 +45,8 @@ Actions方式は手動起動用の設定を残していますが、現行の公�
 
 リポジトリ名や公開パスを変える場合は `DEPLOY_BASE_PATH` をビルド時に設定してください。GitHub Pagesの無料枠・利用条件・容量／帯域上限が適用されます。独自ドメインは不要です。
 
+Fly.io（2026-10-14〜）：同じ公開アプリを https://sachizu-lab.fly.dev/ でも配信しています（東京リージョン、shared-cpu-1x・メモリ256MBの1台、使われていない間は止まり、アクセスがあると起動します。ボリュームなし）。`npm run build:fly`（公開パス `/` で `dist-fly` に出力）の後、`fly deploy --ha=false` で反映します。設定は `fly.toml`、`Dockerfile`（nginx:1.27-alpine）、`nginx.conf`、`.dockerignore`（`dist-fly` と `nginx.conf` だけを送ります）です。
+
 ## 計測の制約
 
 RJに「FullとHeavyを比較」を追加しました。同じ元動画・全フレームをFull→Heavyの順に処理し、RSI計算側を固定して比較します。通常解析はFullのままです。Heavyは初回約30MBの受信があり、数分以上かかる場合があります。画面を開いたまま待ち、比較完了後に両モデルの採用回数・追跡率・処理時間を確認し、比較JSONを保存できます。高いRSIや多い採用回数は精度の保証ではありません。RTMPose/RTMWの比較はまだ含みません。
