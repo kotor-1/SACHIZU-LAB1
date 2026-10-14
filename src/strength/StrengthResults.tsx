@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CrouchFrame } from '../sprint10/crouch';
 import type { Phase } from '../sprint10/crouch-figure';
 import { CrouchReplay, frameInterval, insideFrame, PhaseFigures, type ReplayEvent } from '../sprint10/CrouchViews';
+import type { PoseEditing } from '../sprint10/pose-edits';
 import { ticks } from '../sprint10/CrouchCharts';
 import type { Rep, StrengthResult } from './analysis';
 import { columnsOf, phaseGuides, strengthAdvice, summaryOf, type Column } from './advice';
@@ -13,9 +14,11 @@ const TABLES = [['form', '姿勢'], ['tempo', 'テンポ']] as const;
 
 /** The result on the phone (the user, 2026-10-05: 「縦長で使いにくい」): a few numbers, then tabs; one table and one
  * graph at a time. Pictures and the slow replay need the video (not the camera without its recording). */
-export default function StrengthResults({ result, frames, width, height, url, refiner, fine, camera, onSave }: {
+export default function StrengthResults({ result, frames, measured, width, height, url, refiner, fine, camera, onSave, editing }: {
   result: StrengthResult; frames: readonly CrouchFrame[]; width: number; height: number; url: string | null;
-  refiner: 'webgpu' | 'wasm' | null; fine: boolean; camera: boolean; onSave: () => void }) {
+  refiner: 'webgpu' | 'wasm' | null; fine: boolean; camera: boolean; onSave: () => void;
+  /** The frames as measured: a new analysis (the shown `frames` change with the skeleton set by hand too). */ measured?: readonly CrouchFrame[];
+  /** The skeleton set by hand on the pictures (sprint10/pose-edits.ts). */ editing?: PoseEditing }) {
   void width; void height;
   const card = useRef<HTMLElement>(null), tabsRef = useRef<HTMLDivElement>(null), panels = useRef<HTMLDivElement>(null), replay = useRef<HTMLVideoElement>(null);
   const [tab, setTab] = useState<Tab>('advice'), [table, setTable] = useState<typeof TABLES[number][0]>('form');
@@ -27,7 +30,8 @@ export default function StrengthResults({ result, frames, width, height, url, re
     { label: `${r.index}回目の${result.exercise === 'squat' ? '最も深い所' : '最も倒した所'}`, short: `${r.index} 底`, pts: r.bottom }]), [result]);
   const seekTo = useRef<number | null>(null);
   const tabs: [Tab, string][] = url ? [['advice', 'ポイント'], ['reps', '回ごと'], ['pose', '姿勢'], ['replay', 'スロー']] : [['advice', 'ポイント'], ['reps', '回ごと']];
-  useEffect(() => { setTab('advice'); card.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }); }, [frames]);
+  // Back to the first tab for a new analysis only (not when a skeleton set by hand changes the frames).
+  useEffect(() => { setTab('advice'); card.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }); }, [measured ?? frames]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const v = replay.current;
     if (tab !== 'replay' || !v || seekTo.current === null) return;
@@ -64,7 +68,7 @@ export default function StrengthResults({ result, frames, width, height, url, re
         </div>
         {url && <div id="strength-panel-pose" role="tabpanel" aria-labelledby="strength-tab-pose" hidden={tab !== 'pose'}>
           <p className="sprint10-hint">点線は鉛直（太ももは水平）、弧が測った角度。{result.exercise === 'slrdl' ? 'オレンジの線は肩・股関節・浮かせた足首（180°で一直線）。' : ''}画像を左右にスワイプして回を切り替えます。</p>
-          {tab === 'pose' && phases.length ? <PhaseFigures url={url} frames={shown} phases={phases} onShow={show} guides={phaseGuides(result)} /> : null}
+          {tab === 'pose' && phases.length ? <PhaseFigures url={url} frames={shown} phases={phases} onShow={show} guides={phaseGuides(result)} editing={editing} /> : null}
         </div>}
         {url && <div id="strength-panel-replay" role="tabpanel" aria-labelledby="strength-tab-replay" hidden={tab !== 'replay'} className="sprint10-replay">
           <CrouchReplay url={url} video={replay} frames={shown} phases={phases} events={events} />

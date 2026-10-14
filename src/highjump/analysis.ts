@@ -47,6 +47,8 @@ export interface HighJumpOptions {
   focal?: number;
   /** The frames the user set for the judged moments (`td{n}`, `to{n}` of contact n; sprint10/moment-edits.ts). */
   edits?: Edits;
+  /** Frames whose skeleton the user set by hand (sprint10/pose-edits.ts): a moment on one takes its posture from it alone. */
+  handFrames?: ReadonlySet<number>;
 }
 export interface Lift {
   /** Upward speed of the centre of mass at the toe-off (m/s), its height then (m), the rise it gives (m) and the peak (m), and the peak above the bar (m). */
@@ -144,6 +146,8 @@ export function analyzeHighJump(frames: readonly CrouchFrame[], options: HighJum
   const stance = (p: CrouchPoint[], contact: Contact) => stanceSide(p, contact.x / W, contact.groundY / H, W, H, ANY_SCORE);
   const around = (frame: number, value: (p: CrouchPoint[]) => number | null) => {
     const i = index.get(frame); if (i === undefined) return null;
+    // A frame whose skeleton was set by hand: its own value, as drawn.
+    if (options.handFrames?.has(frame)) return value(seen[i].pose!);
     const vs = [i - 1, i, i + 1].filter(j => j >= 0 && j < seen.length).map(j => value(seen[j].pose!)).filter((v): v is number => v !== null);
     return vs.length ? median(vs) : null;
   };

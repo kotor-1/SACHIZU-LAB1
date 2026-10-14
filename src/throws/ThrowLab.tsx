@@ -14,6 +14,7 @@ import { legLength, median } from '../sprint10/contacts';
 import { footDown } from '../sprint10/crouch-edit';
 import { contactMoments, effectsBetween, poseFlags, relatedValues, type Edits, type ReviewMoment, type ReviewValue } from '../sprint10/moment-edits';
 import { leaveReview, MomentReview } from '../sprint10/MomentReview';
+import { usePoseEdits } from '../sprint10/pose-edits';
 import '../sprint10/sprint10.css';
 import { keepAwake } from '../cmj/keep-awake';
 
@@ -81,8 +82,12 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
   const options: ThrowOptions | null = useMemo(() => measured && hand ? { width: measured.width, height: measured.height, event, hand, style: style ?? undefined } : null,
     [measured, event, hand, style]);
   const auto: ThrowResult | null = useMemo(() => measured && options ? analyzeThrow(measured.frames, options) : null, [measured, options]);
-  const result: ThrowResult | null = useMemo(() => measured && options && auto ? Object.keys(edits).length ? analyzeThrow(measured.frames, withEdits(options, edits)) : auto : null,
-    [measured, options, auto, edits]);
+  // The skeleton's points the user set by hand (sprint10/pose-edits.ts, 2026-10-14): the frames with them give the result,
+  // the pictures and the replay; the contacts stay on the toes, which cannot be moved.
+  const pose = usePoseEdits(measured?.frames);
+  const result: ThrowResult | null = useMemo(() => measured && options && auto ? Object.keys(edits).length || pose.hand.size
+    ? analyzeThrow(pose.frames, withEdits({ ...options, handFrames: pose.hand }, edits)) : auto : null,
+    [measured, options, auto, edits, pose.frames, pose.hand]);
   // The flight is searched for after drawing (about a second of work), again only when the release moves: a contact set
   // in the check leaves it as it is.
   const releaseKey = result && !result.reason && result.release ? `${result.hand}:${result.release.frame}` : '';
@@ -157,10 +162,10 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
   }, [measured]);
   const preview = useCallback((m: ReviewMoment, frame: number) => {
     if (!measured || !options || !result) return [];
-    const at = (n: number) => valuesOf(analyzeThrow(measured.frames, withEdits(options, { ...edits, [m.key]: m.key === 'release' ? posed(n) : n })));
+    const at = (n: number) => valuesOf(analyzeThrow(pose.frames, withEdits({ ...options, handFrames: pose.hand }, { ...edits, [m.key]: m.key === 'release' ? posed(n) : n })));
     const now = valuesOf(result), then = frame === m.frame ? now : at(frame);
     return effectsBetween(now, then, relatedValues(now, at(m.frame + 2), at(m.frame - 2)));
-  }, [measured, options, result, edits, posed]);
+  }, [measured, options, result, edits, posed, pose.frames, pose.hand]);
   const [tab, setTab] = useState<Tab>('advice'), tabs = useRef<HTMLDivElement>(null), panels = useRef<HTMLDivElement>(null);
   const seekTo = useRef<number | null>(null);
   useEffect(() => { setTab('advice'); if (measured) resultCard.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }); }, [measured]);
@@ -227,7 +232,7 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
   function save() {
     if (!result) return;
     const blob = new Blob([JSON.stringify({ version: THROW_VERSION, file: file?.name, line, hand, style, heightCm: heightM ? heightM * 100 : null, releaseFrame: edits.release ?? null, result,
-      release, flight: flight?.path ?? null, ...(editedCount ? { edited: { frames: edits, auto } } : {}), checked: [...checked] }, null, 2)], { type: 'application/json' });
+      release, flight: flight?.path ?? null, ...(editedCount ? { edited: { frames: edits, auto } } : {}), ...(pose.hand.size ? { skeletonSetByHand: pose.edits } : {}), checked: [...checked] }, null, 2)], { type: 'application/json' });
     const href = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = href; a.download = `${event === 'jav' ? 'javelin' : 'shot-put'}-result.json`; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
   }
@@ -349,7 +354,7 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
           <div id="throw-panel-pose" role="tabpanel" aria-labelledby="throw-tab-pose" hidden={tab !== 'pose'}>
             <ul className="sprint10-mark-legend" aria-label="線の色">{LEGEND[event].map(([color, label]) => <li key={label}><i style={{ background: color }} />{label}</li>)}</ul>
             <p className="sprint10-hint">点線は鉛直、弧が測った角度。上体は鉛直からの傾き（前傾・後傾）です。画像を左右にスワイプして局面を切り替えます。</p>
-            {result.moments.length ? <PhaseFigures url={url} frames={measured.frames} phases={result.moments} onShow={show} guides={guides} /> : <p>角度を測れる局面がありませんでした。</p>}
+            {result.moments.length ? <PhaseFigures url={url} frames={pose.frames} phases={result.moments} onShow={show} guides={guides} editing={pose.editing} /> : <p>角度を測れる局面がありませんでした。</p>}
           </div>
           <div id="throw-panel-numbers" role="tabpanel" aria-labelledby="throw-tab-numbers" hidden={tab !== 'numbers'}>
             <h3>局面の時間</h3>
@@ -361,11 +366,11 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
           <div id="throw-panel-release" role="tabpanel" aria-labelledby="throw-tab-release" hidden={tab !== 'release'}>
             <ReleasePanel result={result} release={release} searching={!!implement && !flight} found={implement !== null} heightM={heightM} />
             {release?.angle != null && result.moments.some(m => m.key === 'release') &&
-              <PhaseFigures url={url} frames={measured.frames} phases={result.moments.filter(m => m.key === 'release')} onShow={show} overlay={overlay}
+              <PhaseFigures url={url} frames={pose.frames} phases={result.moments.filter(m => m.key === 'release')} onShow={show} overlay={overlay} editing={pose.editing}
                 guides={{ release: '緑の点：投げた直後の用具の位置（動画から求めた飛び方）' }} />}
           </div>
           <div id="throw-panel-replay" role="tabpanel" aria-labelledby="throw-tab-replay" hidden={tab !== 'replay'} className="sprint10-replay">
-            <CrouchReplay url={url} video={replay} frames={measured.frames} phases={result.moments} events={events} />
+            <CrouchReplay url={url} video={replay} frames={pose.frames} phases={result.moments} events={events} />
             <div className="throw-release-fix">
               <button type="button" onClick={() => openCheck('release')}>リリースのコマを直す</button>
             </div>

@@ -34,8 +34,11 @@ const NEAR = 3, TOE_SEEN = .5, MISSING = 2;
  * at the touchdowns, the block-to-first-touchdown time and the posture as the front foot leaves the block. A frame chosen
  * is the first with the foot down (touchdown) or the last (toe-off, clearance); its time is at the frame's edge
  * (frameEdge), as the automatic moments' are. */
-export function applyEdits(auto: CrouchResult, edits: Edits, frames: readonly CrouchFrame[], W: number, H: number): CrouchResult {
-  if (auto.reason || !Object.keys(edits).length) return auto;
+export function applyEdits(auto: CrouchResult, edits: Edits, frames: readonly CrouchFrame[], W: number, H: number,
+  /** Frames whose skeleton the user set by hand (pose-edits.ts; `frames` are with the points set): the angles are taken
+   * again, and the set's or the clearance's posture from its own frame alone when that is one of them (as shown). */
+  hand: ReadonlySet<number> = new Set()): CrouchResult {
+  if (auto.reason || (!Object.keys(edits).length && !hand.size)) return auto;
   const byFrame = new Map(frames.map(f => [f.frame, f]));
   const chosen = (key: string) => { const n = edits[key]; return n === undefined ? undefined : byFrame.get(n); };
   const contacts = auto.contacts.map(c => {
@@ -45,15 +48,19 @@ export function applyEdits(auto: CrouchResult, edits: Edits, frames: readonly Cr
   });
   const seen = frames.filter(f => f.pose), leg = legLength(seen, W, H);
   const steps = stepsOf(contacts, frames, W, H, auto.direction, leg);
-  let blockClearance = auto.blockClearance, firstFlight = auto.firstFlight;
-  const clear = chosen('clearance');
-  if (clear && auto.blocks) {
-    const i = seen.findIndex(f => f.frame === clear.frame);
-    if (i >= 0) blockClearance = { ...posture(seen.slice(Math.max(0, i - 2), i + 3), auto.blocks.front, W, H, auto.direction, leg, seen[i]),
-      pts: frameEdge(frames, clear.frame, 1) ?? clear.pts };
+  let blockClearance = auto.blockClearance, firstFlight = auto.firstFlight, set = auto.set;
+  const clear = chosen('clearance'), byHand = (f: CrouchFrame) => [f];
+  if ((clear || (auto.blockClearance && hand.has(auto.blockClearance.frame))) && auto.blocks) {
+    const at = clear?.frame ?? auto.blockClearance!.frame, i = seen.findIndex(f => f.frame === at);
+    if (i >= 0) blockClearance = { ...posture(hand.has(at) ? byHand(seen[i]) : seen.slice(Math.max(0, i - 2), i + 3), auto.blocks.front, W, H, auto.direction, leg, seen[i]),
+      pts: clear ? frameEdge(frames, clear.frame, 1) ?? clear.pts : auto.blockClearance!.pts };
+  }
+  if (auto.set && auto.blocks && hand.has(auto.set.frame)) {
+    const f = seen.find(q => q.frame === auto.set!.frame);
+    if (f) set = { ...posture(byHand(f), auto.blocks.front, W, H, auto.direction, leg, f), pts: auto.set.pts };
   }
   if ((clear || edits.td1 !== undefined) && blockClearance && contacts[0]?.touchdown != null) firstFlight = contacts[0].touchdown - blockClearance.pts;
-  return { ...auto, contacts, steps, blockClearance, firstFlight };
+  return { ...auto, contacts, steps, set, blockClearance, firstFlight };
 }
 
 /** The moments in time order, with the user's frames, where to look, and which are worth a look (`result`: the result

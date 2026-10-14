@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, Upload } from 'lucide-react';
 import { cameraConstraints } from '../cmj/camera-geometry';
 import { recordCamera } from '../cmj/camera-recording';
@@ -7,7 +7,8 @@ import { waitForCurrentFrame } from '../cmj/media-ready';
 import type { CrouchFrame } from '../sprint10/crouch';
 import { drawCrouchFigure } from '../sprint10/crouch-figure';
 import { analyzeStrength, EXERCISES, STRENGTH_VERSION, type Exercise, type Rep, type StrengthResult } from './analysis';
-import { liveMarks, sideOn } from './figure';
+import { editableOf, liveMarks, movedToRaw, sideOn } from './figure';
+import { usePoseEdits } from '../sprint10/pose-edits';
 import { repCue, STRENGTH_GUIDE } from './advice';
 import { Voice } from './voice';
 import StrengthResults from './StrengthResults';
@@ -71,7 +72,13 @@ export default function StrengthLab() {
   useEffect(() => { const hidden = () => { if (document.hidden && live) owner.current?.abort(); };
     document.addEventListener('visibilitychange', hidden); return () => document.removeEventListener('visibilitychange', hidden); }, [live]);
 
-  const result: StrengthResult | null = useMemo(() => measured ? analyzeStrength(measured.frames, { width: measured.width, height: measured.height, exercise }) : null, [measured, exercise]);
+  // The skeleton's points the user set by hand on the pictures (sprint10/pose-edits.ts, 2026-10-14), as the measured
+  // pose's (figure.ts movedToRaw); a rep's bottom set by hand takes its angles from that frame.
+  const toRaw = useCallback((f: CrouchFrame, moved: Record<number, { x: number; y: number }>) => movedToRaw(f, moved, exercise), [exercise]);
+  const pose = usePoseEdits(measured?.frames, toRaw);
+  const editing = useMemo(() => ({ ...pose.editing, editable: editableOf(exercise) }), [pose.editing, exercise]);
+  const result: StrengthResult | null = useMemo(() => measured ? analyzeStrength(pose.frames, { width: measured.width, height: measured.height, exercise, handFrames: pose.hand }) : null,
+    [measured, exercise, pose.frames, pose.hand]);
   useEffect(() => { if (import.meta.env.DEV && measured) (window as unknown as { __strength?: unknown }).__strength = { measured, result }; }, [measured, result]);
 
   function changeFile(next: File | null) {
@@ -171,7 +178,7 @@ export default function StrengthLab() {
   function save() {
     if (!result || !measured) return;
     const blob = new Blob([JSON.stringify({ version: STRENGTH_VERSION, exercise, source: measured.from, file: measured.from === 'video' ? file?.name : undefined,
-      refiner: measured.refiner, fine: !!measured.fine, result: { ...result, postures: undefined }, postures: result.postures,
+      refiner: measured.refiner, fine: !!measured.fine, result: { ...result, postures: undefined }, postures: result.postures, ...(pose.hand.size ? { skeletonSetByHand: pose.edits } : {}),
       // The camera's points (no video kept to analyse again): to look into a count that went wrong.
       ...(measured.from === 'camera' ? { frames: measured.frames, size: { width: measured.width, height: measured.height } } : {}) }, null, 2)], { type: 'application/json' });
     const href = URL.createObjectURL(blob), a = document.createElement('a');
@@ -225,7 +232,7 @@ export default function StrengthLab() {
       {busy && !live && <button onClick={() => { owner.current?.abort(); owner.current = null; setBusy(false); setMessage('解析を中止しました。'); }}>中止</button>}
       {busy && !live && <progress max="1" value={progress} aria-label="解析の進み具合" />}
     </section>}
-    {result && measured && <StrengthResults result={result} frames={measured.frames} width={measured.width} height={measured.height}
+    {result && measured && <StrengthResults result={result} frames={pose.frames} measured={measured.frames} width={measured.width} height={measured.height} editing={editing}
       url={measured.url} refiner={measured.refiner} fine={!!measured.fine} camera={measured.from === 'camera'} onSave={save} />}
     <footer>{STRENGTH_VERSION} · 動画とカメラの映像はこの端末内で処理し、外部へ送信しません。</footer>
   </main>;

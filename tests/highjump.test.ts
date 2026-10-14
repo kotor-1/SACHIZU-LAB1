@@ -4,6 +4,9 @@ import { analyzeHighJump, SPACING } from '../src/highjump/analysis';
 import { highJumpAdvice } from '../src/highjump/advice';
 import { firstRunner } from '../src/highjump/recording';
 import type { CrouchFrame, CrouchPoint } from '../src/sprint10/crouch';
+import { withPoseEdits } from '../src/sprint10/pose-edits';
+import { kneeAngle, stanceSide } from '../src/sprint10/angles';
+import { legLength } from '../src/sprint10/contacts';
 
 // A synthetic scissors jump filmed by a level phone in front of the bar, at a slant to it, side-on to the last
 // steps (as つばき's video): uprights 4.05 m apart, bar 1.20 m; the camera 1.1 m high, 6.5 m in front.
@@ -126,5 +129,22 @@ describe('high jump: moments set by hand', () => {
     expect(r.times.lastStep! - auto.times.lastStep!).toBeCloseTo(-2 / 240, 9);
     expect(r.rhythm).not.toBe(auto.rhythm);
     expect(r.lift).not.toBeNull();
+  });
+});
+
+describe('high jump: the skeleton set by hand (sprint10/pose-edits.ts)', () => {
+  it('takes a moment\'s posture from its frame alone once its skeleton was set (the others\' median otherwise)', () => {
+    const all = frames(), auto = analyzeHighJump(all, { width: W, height: H, uprights: UPRIGHTS, barHeight: BAR });
+    const T = auto.contacts[auto.takeoff!], td = T.touchdownFrame!, f = all.find(q => q.frame === td)!;
+    const side = stanceSide(f.refined!, T.x / W, T.groundY / H, W, H, 0)!, k = f.refined![25 + side];
+    const edited = withPoseEdits(all, { [td]: { [25 + side]: { x: k.x + .02, y: k.y - .01 } } });
+    const leg = legLength(edited.filter(q => q.pose).map(q => q.refined ? { ...q, pose: q.refined } : q), W, H);
+    const own = kneeAngle(edited.find(q => q.frame === td)!.refined!, side, W, H, leg)!;
+    const hand = analyzeHighJump(edited, { width: W, height: H, uprights: UPRIGHTS, barHeight: BAR, handFrames: new Set([td]) });
+    expect(hand.posture.kneeTouchdown).toBeCloseTo(own, 6);
+    expect(hand.moments.find(m => m.key === 'touchdown')!.marks.find(m => m.kind === 'knee')!.value).toBeCloseTo(own, 6);
+    const median = analyzeHighJump(edited, { width: W, height: H, uprights: UPRIGHTS, barHeight: BAR });
+    expect(median.posture.kneeTouchdown).not.toBeCloseTo(own, 1);
+    expect(hand.contacts).toEqual(auto.contacts);
   });
 });

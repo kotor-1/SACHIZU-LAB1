@@ -210,3 +210,21 @@
 .sprint10 .sprint10-run{position:sticky;bottom:0;z-index:6;margin:12px calc(-1*var(--sz-pad)) 0;padding:12px var(--sz-pad) calc(12px + env(safe-area-inset-bottom));border:0;border-top:1px solid var(--sz-line);border-radius:18px 18px 0 0;background:var(--sz-bg-glass);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
 .sprint10-run>h2{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}.sprint10 .sprint10-run .sprint10-primary{width:100%}.sprint10-run>p[role=status]{margin:8px 0 0;font-size:13px;line-height:1.45;color:var(--sz-muted);text-align:center}.sprint10-run>progress{margin-top:8px}.sprint10 .sprint10-run>button:not(.sprint10-primary){width:100%;margin-top:8px}
 @media(prefers-reduced-motion:reduce){.sprint10-howto>summary::after{transition:none}}
+/* The skeleton set by hand (PoseEditor.tsx, 2026-10-14): the picture with draggable points, the points by name, arrows, decide. */
+.pose-editor{display:grid;gap:8px}
+.pose-editor canvas{display:block;width:100%;aspect-ratio:4/3;border-radius:10px;background:var(--sz-video);touch-action:none;cursor:pointer}
+.pose-editor-hint{margin:0;font-size:13px;line-height:1.5;color:var(--sz-text-2);font-weight:400}
+.sprint10 .pose-editor-points button{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:4px 12px;font-size:14px}
+.pose-editor-points i{width:12px;height:12px;border-radius:50%;border:3px solid;box-sizing:border-box;flex:none}
+.pose-editor-nudge{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.sprint10 .pose-editor-nudge button{min-height:44px;padding:0;font-size:20px;background:var(--sz-surface-3)}
+.pose-editor-actions{display:flex;flex-wrap:wrap;gap:8px}
+.sprint10 .pose-editor-actions button{min-height:48px;padding:6px 14px;font-size:15px;font-weight:700}
+.sprint10 .pose-editor-actions .sprint10-primary{flex:1 1 100%}
+.sprint10 .pose-editor-actions .sprint10-primary.pending{animation:pose-pending 1s ease-in-out infinite}
+@keyframes pose-pending{0%,100%{background:var(--sz-accent);color:var(--sz-accent-ink)}50%{background:#ffd400;color:#14231f}}
+@media (prefers-reduced-motion:reduce){.sprint10 .pose-editor-actions .sprint10-primary.pending{animation:none;background:#ffd400;color:#14231f}}
+.pose-edit-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.sprint10 .pose-edit-row button{min-height:40px;padding:4px 12px;font-size:14px;font-weight:700;background:var(--sz-surface-3)}
+.pose-edited{font-size:13px;font-weight:700;color:var(--sz-warn-text)}
+.pose-editor-pending{margin:0;padding:8px 12px;border-radius:12px;background:var(--sz-warn-bg);color:var(--sz-warn-text);font-size:13px;font-weight:700;line-height:1.5}

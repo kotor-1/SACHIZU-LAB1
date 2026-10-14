@@ -18,7 +18,9 @@ export const hinge = (e: Exercise) => e !== 'squat';
 /** v1.1 (2026-10-09/10): the near side's points on both legs, the angles' frames read with RTMPose-m 384×288 (mirrored
  * too); saved results before it measured the midpoint of the legs with RTMPose-m 256×192. */
 export const STRENGTH_VERSION = 'strength-v1.1';
-export interface StrengthOptions { width: number; height: number; exercise: Exercise }
+export interface StrengthOptions { width: number; height: number; exercise: Exercise;
+  /** Frames whose skeleton the user set by hand (sprint10/pose-edits.ts): a rep's bottom on one takes its posture from it alone. */
+  handFrames?: ReadonlySet<number> }
 
 /** Points used below 0.3 visibility are left out (as the crouch start). */
 const SEEN = .3;
@@ -333,7 +335,7 @@ export function analyzeStrength(frames: readonly CrouchFrame[], o: StrengthOptio
     const top = standing({ ...(fine.length ? restingPosture(fine, postures[r.s]) : all), foot: all.foot });
     // The bottom: each angle's median over BOTTOM_FRAMES on either side (a frame's points jitter a degree or two).
     const bottomAt = range(Math.max(r.s, r.b - BOTTOM_FRAMES), Math.min(r.e, r.b + BOTTOM_FRAMES) + 1), fineLow = finest(bottomAt);
-    const low = restingPosture(fineLow.length ? fineLow : bottomAt.map(i => postures[i]), postures[r.b]);
+    const low = o.handFrames?.has(frames[r.b].frame) ? postures[r.b] : restingPosture(fineLow.length ? fineLow : bottomAt.map(i => postures[i]), postures[r.b]);
     // Peaks in the rep over a running median of three frames (one frame's jitter is no rise).
     const inRep = postures.slice(r.s, r.e + 1);
     const rises = median3(inRep.map(p => p.foot === null || top.foot === null ? null : p.foot - top.foot));

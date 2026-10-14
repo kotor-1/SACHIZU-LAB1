@@ -19,7 +19,7 @@
 import { anglePose, type CrouchFrame, type CrouchPoint } from '../sprint10/crouch';
 import { legLength, median, plantedToes, plantsOf, quantile, toesOf, visible, CONTACT_MIN, GROUND_BAND, LIFT_BAND, PLANT_JOIN, PLANT_RADIUS, type Contact, type Plant, type Toe } from '../sprint10/contacts';
 import { editContacts, type Edits } from '../sprint10/moment-edits';
-import { trunkAngle } from '../sprint10/angles';
+import { stanceSide, trunkAngle } from '../sprint10/angles';
 import type { Mark, Phase } from '../sprint10/crouch-figure';
 import { centreOfMass } from '../hurdling/analysis';
 import type { FlightPath } from './implement';
@@ -89,6 +89,8 @@ export interface ThrowOptions {
   releaseFrame?: number | null;
   /** The frames the user set for the contacts (`td{n}`, `to{n}` of contact n; sprint10/moment-edits.ts). */
   edits?: Edits;
+  /** Frames whose skeleton the user set by hand (sprint10/pose-edits.ts): a moment on one takes its angles from it alone. */
+  handFrames?: ReadonlySet<number>;
 }
 export interface Moment { frame: number; pts: number }
 export interface ThrowTimes {
@@ -140,10 +142,9 @@ type Point = { x: number; y: number };
 const seconds = (a: Moment | null | undefined, b: Moment | null | undefined) => a && b ? b.pts - a.pts : null;
 
 /** The pose model's side (0 left, 1 right landmarks) whose toe is nearest a contact's place. */
-function sideAt(pose: CrouchPoint[], c: Contact, W: number, H: number): 0 | 1 | null {
-  const d = [31, 32].map(k => visible(pose[k], .3) ? Math.hypot(pose[k].x * W - c.x, pose[k].y * H - c.groundY) : Infinity);
-  return d[0] === Infinity && d[1] === Infinity ? null : d[0] <= d[1] ? 0 : 1;
-}
+/** The stance leg at a contact: the toe (the heel or the ankle for a toe not seen: one RTMPose misplaced is left out,
+ * sprint10/leg-check.ts) nearest the contact's place on the ground. */
+const sideAt = (pose: CrouchPoint[], c: Contact, W: number, H: number) => stanceSide(pose, c.x / W, c.groundY / H, W, H);
 
 /** Plants of feet on the ground: still ones (see STILL_DRIFT), joined when at one
  * place and close in time, lasting a contact's least time. */
@@ -294,6 +295,9 @@ export function analyzeThrow(frames: readonly CrouchFrame[], options: ThrowOptio
   const frontKnee = knee(frontSide), rearKnee = knee(rearSide), trunk = (p: CrouchPoint[]) => trunkAngle(p, W, H, direction, leg);
   const around = (m: Moment | null, f: (p: CrouchPoint[]) => number | null) => {
     if (!m) return null;
+    // A moment whose frame's skeleton was set by hand: that frame's angle, as drawn.
+    const own = options.handFrames?.has(m.frame) ? seen.find(q => q.frame === m.frame) : undefined;
+    if (own) return f(own.pose!);
     const v = seen.filter(q => Math.abs(q.pts - m.pts) <= ANGLE_SECONDS).map(q => f(q.pose!)).filter((x): x is number => x !== null);
     return v.length ? median(v) : null;
   };

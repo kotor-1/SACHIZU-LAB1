@@ -16,6 +16,7 @@ import { applyEdits, moments } from './crouch-edit';
 import { refineByPixels, regionsOf, type PixelRegion, type RegionPictures } from './crouch-pixels';
 import { readPictures } from './crouch-pixels-read';
 import { CrouchReview } from './CrouchReview';
+import { usePoseEdits } from './pose-edits';
 import { keepAwake } from '../cmj/keep-awake';
 
 /** One ◀/▶ tap moves the line by 0.2% of the frame width. */
@@ -57,10 +58,16 @@ export default function CrouchLab() {
   // uses the result with them (the user, 2026-10-06: 「自動解析→ズレていたら手動で微調整→自動的に数値もそれに伴ってすぐに変化する」).
   const [edits, setEdits] = useState<Record<string, number>>({}), [checked, setChecked] = useState<ReadonlySet<string>>(new Set()), [moment, setMoment] = useState<string | null>(null);
   useEffect(() => { setEdits({}); setChecked(new Set()); setMoment(null); }, [measured]);
-  const result: CrouchResult | null = useMemo(() => auto && measured ? applyEdits(auto, edits, measured.frames, measured.width, measured.height) : auto, [auto, edits, measured]);
+  // The skeleton's points the user set by hand (pose-edits.ts, 2026-10-14): the frames with them give the angles, the
+  // pictures and the replay; a moment whose frame was set takes its angles from that frame.
+  const pose = usePoseEdits(measured?.frames);
+  const result: CrouchResult | null = useMemo(() => auto && measured ? applyEdits(auto, edits, pose.frames, measured.width, measured.height, pose.hand) : auto,
+    [auto, edits, measured, pose.frames, pose.hand]);
   const list = useMemo(() => auto && result && measured ? moments(auto, edits, result, measured.frames, measured.width, measured.height, fromPixels) : [], [auto, edits, result, measured, fromPixels]);
   const waiting = list.filter(m => m.flag && !checked.has(m.key)).length, editedCount = Object.keys(edits).length;
-  const editedSteps = new Set(Object.keys(edits).flatMap(k => k === 'clearance' ? [] : k.startsWith('td') ? [+k.slice(2), +k.slice(2) - 1] : [+k.slice(2)]));
+  // Steps with a moment moved, or with the skeleton set by hand at their touchdown: marked ✎ in the table.
+  const editedSteps = new Set([...Object.keys(edits).flatMap(k => k === 'clearance' ? [] : k.startsWith('td') ? [+k.slice(2), +k.slice(2) - 1] : [+k.slice(2)]),
+    ...(result?.contacts ?? []).flatMap(c => c.touchdownFrame != null && pose.hand.has(c.touchdownFrame) ? [c.index] : [])]);
   // The pictures of the phases are made again only when a phase's frame or angles change (not for a toe-off).
   const phasesNow: Phase[] = result && !result.reason ? crouchPhases(result) : [];
   const phaseKey = JSON.stringify(phasesNow.map(p => [p.key, p.frame, p.marks.map(k => k.value)]));
@@ -155,7 +162,7 @@ export default function CrouchLab() {
     if (!result) return;
     const blob = new Blob([JSON.stringify({ version: CROUCH_VERSION, file: file?.name, startX: start, result,
       research: research ? { sex, rows: research.rows } : null,
-      ...(editedCount ? { edited: { frames: edits, auto } } : {}), checked: [...checked],
+      ...(editedCount ? { edited: { frames: edits, auto } } : {}), ...(pose.hand.size ? { skeletonSetByHand: pose.edits } : {}), checked: [...checked],
       fromPictures: [...fromPixels] }, null, 2)],
       { type: 'application/json' });
     const href = URL.createObjectURL(blob), a = document.createElement('a');
@@ -215,14 +222,14 @@ export default function CrouchLab() {
             {id === 'check' && waiting > 0 && <span className="sprint10-badge" aria-label={`要確認 ${waiting}か所`}>{waiting}</span>}</button>)}</div>
         <div ref={panels} className="sprint10-panels">
           <div id="crouch-panel-advice" role="tabpanel" aria-labelledby="crouch-tab-advice" hidden={tab !== 'advice'}>
-            {research && measured && <CrouchResearch summary={research} sex={sex} onSex={setSex} url={url} frames={measured.frames} direction={result?.direction ?? 1} />}
+            {research && measured && <CrouchResearch summary={research} sex={sex} onSex={setSex} url={url} frames={pose.frames} direction={result?.direction ?? 1} editing={pose.editing} />}
             {advice.length > 0 && <div className="cr-flow"><h3>歩ごとの流れ</h3>
               {flowChecks.length > 0 && <ul className="sprint10-advice" aria-label="歩ごとの流れで確かめたい所">{flowChecks.map(a => <li key={a.topic + a.text} className="check">
                 <span aria-hidden="true">!</span><div><strong>{a.topic}</strong>{a.text}</div></li>)}</ul>}
               {flowGood.length > 0 && <p className="cr-flow-ok">✓ {flowGood.join('・')}{flowChecks.length ? 'は' : 'とも'}、加速の流れどおりです。</p>}</div>}
           </div>
           <div id="crouch-panel-force" role="tabpanel" aria-labelledby="crouch-tab-force" hidden={tab !== 'force'}>
-            {measured && <ForceView kind="crouch" contacts={result.contacts} frames={measured.frames} width={measured.width} height={measured.height}
+            {measured && <ForceView kind="crouch" contacts={result.contacts} frames={pose.frames} width={measured.width} height={measured.height}
               direction={result.direction} sex={sex} onSex={setSex} block={result.moveStart != null && result.blockClearance
                 ? { moveStart: result.moveStart, clearance: result.blockClearance.pts } : null} />}
           </div>
@@ -235,7 +242,7 @@ export default function CrouchLab() {
           <div id="crouch-panel-pose" role="tabpanel" aria-labelledby="crouch-tab-pose" hidden={tab !== 'pose'}>
             <ul className="sprint10-mark-legend" aria-label="線の色">{LEGEND.map(([color, label]) => <li key={label}><i style={{ background: color }} />{label}</li>)}</ul>
             <p className="sprint10-hint">点線は鉛直、弧が測った角度。画像を左右にスワイプして局面を切り替えます。</p>
-            {phases.length ? <PhaseFigures url={url} frames={measured!.frames} phases={phases} onShow={show}
+            {phases.length ? <PhaseFigures url={url} frames={pose.frames} phases={phases} onShow={show} editing={pose.editing}
               guides={{ set: `目安：前膝 ${GUIDE.frontKnee[0]}〜${GUIDE.frontKnee[1]}°・後膝 ${GUIDE.rearKnee[0]}〜${GUIDE.rearKnee[1]}°` }} /> : <p>角度を測れる局面がありませんでした。</p>}
           </div>
           <div id="crouch-panel-steps" role="tabpanel" aria-labelledby="crouch-tab-steps" hidden={tab !== 'steps'}>
@@ -247,7 +254,7 @@ export default function CrouchLab() {
             <CrouchCharts result={result} />
           </div>
           <div id="crouch-panel-replay" role="tabpanel" aria-labelledby="crouch-tab-replay" hidden={tab !== 'replay'} className="sprint10-replay">
-            <CrouchReplay url={url} video={replay} frames={measured!.frames} phases={phases} events={events} />
+            <CrouchReplay url={url} video={replay} frames={pose.frames} phases={phases} events={events} />
             <p className="sprint10-hint">判定した瞬間の前後では、測った線と角度を表示します。1/8は実際の8分の1の速さです（1秒240コマの動画で毎秒30コマ）。</p>
           </div>
         </div>

@@ -14,6 +14,7 @@ import { legLength } from '../sprint10/contacts';
 import { footDown } from '../sprint10/crouch-edit';
 import { contactMoments, effectsBetween, poseFlags, relatedValues, type ReviewMoment, type ReviewValue } from '../sprint10/moment-edits';
 import { leaveReview, MomentReview } from '../sprint10/MomentReview';
+import { usePoseEdits } from '../sprint10/pose-edits';
 import '../sprint10/sprint10.css';
 import './highjump.css';
 import { keepAwake } from '../cmj/keep-awake';
@@ -68,7 +69,11 @@ export default function HighJumpLab() {
   useEffect(() => { setEdits({}); setChecked(new Set()); setMoment(null); }, [measured]);
   const options = useMemo(() => measured && used && used.barCm ? { width: measured.width, height: measured.height, uprights: uprights(used), barHeight: used.barCm / 100 } : null, [measured, used]);
   const auto: HighJumpResult | null = useMemo(() => measured && options ? analyzeHighJump(measured.frames, options) : null, [measured, options]);
-  const result: HighJumpResult | null = useMemo(() => measured && options && auto ? Object.keys(edits).length ? analyzeHighJump(measured.frames, { ...options, edits }) : auto : null, [measured, options, auto, edits]);
+  // The skeleton's points the user set by hand (sprint10/pose-edits.ts, 2026-10-14): the frames with them give the result,
+  // the pictures and the replay; the contacts stay on the toes, which cannot be moved.
+  const pose = usePoseEdits(measured?.frames);
+  const result: HighJumpResult | null = useMemo(() => measured && options && auto ? Object.keys(edits).length || pose.hand.size ? analyzeHighJump(pose.frames, { ...options, edits, handFrames: pose.hand }) : auto : null,
+    [measured, options, auto, edits, pose.frames, pose.hand]);
   // The contacts are judged on RTMPose's points where there are any (analysis.ts): the strip's bars and the flags too.
   const poseFrames = useMemo(() => measured ? measured.frames.map(f => f.refined ? { ...f, pose: f.refined } : f) : [], [measured]);
   const list: ReviewMoment[] = useMemo(() => !auto || auto.reason || !measured ? [] : poseFlags(contactMoments(auto.contacts, edits, measured.frames, measured.width, measured.height,
@@ -77,10 +82,10 @@ export default function HighJumpLab() {
   const leg = useMemo(() => measured ? legLength(poseFrames.filter(f => f.pose), measured.width, measured.height) : 0, [poseFrames, measured]);
   const preview = useCallback((m: ReviewMoment, frame: number) => {
     if (!measured || !options || !result) return [];
-    const at = (n: number) => valuesOf(analyzeHighJump(measured.frames, { ...options, edits: { ...edits, [m.key]: n } }));
+    const at = (n: number) => valuesOf(analyzeHighJump(pose.frames, { ...options, edits: { ...edits, [m.key]: n }, handFrames: pose.hand }));
     const now = valuesOf(result), then = frame === m.frame ? now : at(frame);
     return effectsBetween(now, then, relatedValues(now, at(m.frame + 2), at(m.frame - 2)));
-  }, [measured, options, result, edits]);
+  }, [measured, options, result, edits, pose.frames, pose.hand]);
   const advice = useMemo(() => result && !result.reason ? highJumpAdvice(result) : [], [result]);
   const checks = advice.filter(a => a.level === 'check').length;
   const events: ReplayEvent[] = useMemo(() => {
@@ -171,7 +176,7 @@ export default function HighJumpLab() {
   function save() {
     if (!result) return;
     const blob = new Blob([JSON.stringify({ version: HIGH_JUMP_VERSION, file: file?.name, setting: used, result,
-      ...(editedCount ? { edited: { frames: edits, auto } } : {}), checked: [...checked] }, null, 2)], { type: 'application/json' });
+      ...(editedCount ? { edited: { frames: edits, auto } } : {}), ...(pose.hand.size ? { skeletonSetByHand: pose.edits } : {}), checked: [...checked] }, null, 2)], { type: 'application/json' });
     const href = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = href; a.download = 'highjump-result.json'; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
   }
@@ -263,7 +268,7 @@ export default function HighJumpLab() {
           <div id="highjump-panel-pose" role="tabpanel" aria-labelledby="highjump-tab-pose" hidden={tab !== 'pose'}>
             <ul className="sprint10-mark-legend" aria-label="線の色">{LEGEND.map(([color, label]) => <li key={label}><i style={{ background: color }} />{label}</li>)}</ul>
             <p className="sprint10-hint">点線は鉛直、弧が測った角度。「踏切の接地」の赤い線は足首から重心への線で、鉛直からの傾きが後傾です。画像を左右にスワイプして局面を切り替えます。</p>
-            {result.moments.length ? <PhaseFigures url={url} frames={measured!.frames} phases={result.moments} onShow={show} overlay={overlay}
+            {result.moments.length ? <PhaseFigures url={url} frames={pose.frames} phases={result.moments} onShow={show} overlay={overlay} editing={pose.editing}
               guides={{ touchdown: `後傾 ${result.posture.lean == null ? '—' : `${Math.round(result.posture.lean)}°`}（参考：小6・中学生のはさみ跳び ${G.lean.scissors[0]}〜${G.lean.scissors[1]}°）`,
                 least: `参考：高校の背面跳び ${G.knee.highSchool[1]}°・世界トップ ${G.knee.elite[1]}°` }} /> : <p>角度を測れる局面がありませんでした。</p>}
           </div>
@@ -272,7 +277,7 @@ export default function HighJumpLab() {
             <p className="sprint10-hint">—：映っていないため出せない値。「1歩」は接地から次の接地までの時間で、最後の1歩がその前より短いのがリズムアップ（タタタン）です。参考：中学生のはさみ跳び {G.stepBefore[0]}〜{G.stepBefore[1]}秒 → {G.lastStep[0]}〜{G.lastStep[1]}秒。</p>
           </div>
           <div id="highjump-panel-replay" role="tabpanel" aria-labelledby="highjump-tab-replay" hidden={tab !== 'replay'} className="sprint10-replay">
-            <CrouchReplay url={url} video={replay} frames={measured!.frames} phases={result.moments} events={events} />
+            <CrouchReplay url={url} video={replay} frames={pose.frames} phases={result.moments} events={events} />
             <p className="sprint10-hint">判定した瞬間の前後では、測った線と角度を表示します。1/8は実際の8分の1の速さです。</p>
           </div>
         </div>

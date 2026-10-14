@@ -65,3 +65,25 @@ export function repPhases(result: StrengthResult): Phase[] {
   return out;
 }
 export type { Rep };
+
+/** The points a strength picture lets be set by hand (sprint10/pose-edits.ts): its pose is one leg's (both sides made one,
+ * nearPose) with the shoulders and hips at their middle, so one of each; on one leg also the lifted leg's knee and ankle. */
+export const editableOf = (exercise: Exercise): number[] => exercise === 'slrdl' ? [11, 12, 23, 25, 27, 26, 28] : [11, 12, 23, 25, 27];
+/** The points moved on a strength picture (sideOn's pose) as the measured pose's: a point the picture makes of both sides
+ * (on both legs every one, a weighted middle; on one leg the shoulders and hips) moves both sides alike, so it moves as
+ * moved; on one leg the standing leg's points (side 0 on the picture) and the lifted leg's (side 1) move their own side. */
+export function movedToRaw(frame: CrouchFrame, moved: Record<number, { x: number; y: number }>, exercise: Exercise): Record<number, { x: number; y: number }> {
+  const raw = frame.refined ?? frame.pose, shown = sideOn([frame], exercise)[0], drawn = shown.refined ?? shown.pose;
+  if (!raw || !drawn) return {};
+  const out: Record<number, { x: number; y: number }> = {}, stance = stanceSide(raw), done = new Set<number>();
+  for (const [key, q] of Object.entries(moved)) {
+    const i = +key, dx = q.x - drawn[i].x, dy = q.y - drawn[i].y, left = i % 2 ? i : i - 1;
+    const own = exercise === 'slrdl' && i >= 25 && stance !== null;
+    // A point made of both sides moves them once (the shoulders come as both of a pair, at one place on the picture).
+    if (!own && done.has(left)) continue;
+    done.add(left);
+    for (const j of own ? [i % 2 ? i + stance! : left + 1 - stance!] : [left, left + 1]) out[j] = { x: raw[j].x + dx, y: raw[j].y + dy };
+  }
+  return out;
+}
+

@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { analyzeThrow, releaseMeasures, type ThrowOptions } from '../src/throws/analysis';
 import { throwAdvice } from '../src/throws/advice';
 import type { CrouchFrame, CrouchPoint } from '../src/sprint10/crouch';
+import { withPoseEdits } from '../src/sprint10/pose-edits';
+import { kneeAngle } from '../src/sprint10/angles';
+import { legLength } from '../src/sprint10/contacts';
 
 // Synthetic throws filmed from the side at 120 fps, 1920x1080, thrown to the
 // right; the ground at y = 900 px. Thigh and shank are 210 px; each foot is
@@ -183,5 +186,19 @@ describe('throws: moments set by hand', () => {
     const r = run(frames, { event: 'jav', releaseFrame: auto.release!.frame + 2, edits: { [`td${F.index}`]: F.touchdownFrame! - 1 } });
     expect(r.releaseSetByUser).toBe(true);
     expect(r.times.delivery! - auto.times.delivery!).toBeCloseTo(3 / FPS, 9);
+  });
+});
+
+describe('throws: the skeleton set by hand (sprint10/pose-edits.ts)', () => {
+  it('takes a moment\'s angle from its frame alone once its skeleton was set (the frames round it otherwise)', () => {
+    const { frames } = build(JAV), auto = run(frames, { event: 'jav' }), at = auto.deliveryStart!.frame;
+    const side = (auto.moments.find(m => m.key === 'front')!.marks.find(m => m.kind === 'knee') as { side: 0 | 1 }).side;
+    const f = frames.find(q => q.frame === at)!, k = f.refined![25 + side];
+    const edited = withPoseEdits(frames, { [at]: { [25 + side]: { x: k.x + .03, y: k.y } } });
+    const hand = run(edited, { event: 'jav', handFrames: new Set([at]) });
+    const leg = legLength(edited.filter(q => q.pose).map(q => q.refined ? { ...q, pose: q.refined } : q), W, H);
+    expect(hand.frontKnee.atStart).toBeCloseTo(kneeAngle(edited.find(q => q.frame === at)!.refined!, side, W, H, leg)!, 6);
+    expect(hand.frontKnee.atStart).not.toBeCloseTo(auto.frontKnee.atStart!, 0);
+    expect(hand.contacts).toEqual(auto.contacts);
   });
 });

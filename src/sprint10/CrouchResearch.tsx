@@ -3,7 +3,9 @@ import { anglePose, type CrouchFrame } from './crouch';
 import { markColor, type Mark } from './crouch-figure';
 import { firstShown, type ResearchRow, type ResearchSummary, type Sex, type Verdict } from './crouch-research';
 import { drawResearchTarget, SWING_COLOR, TARGET_COLOR } from './crouch-research-figure';
-import { usePhasePictures, type FigureOverlay } from './CrouchViews';
+import { LostNote, PoseEditRow, usePhasePictures, type FigureOverlay } from './CrouchViews';
+import PoseEditor from './PoseEditor';
+import type { PoseEditing } from './pose-edits';
 
 /** The verdicts in words (the marks ◎○△ were not understood at a glance, the user 2026-10-10). A value not judged is
  * 判定なし, not 参考, since the values compared with are called 参考値 (2026-10-12). */
@@ -32,8 +34,10 @@ function markOf(row: ResearchRow): { marks: Mark[]; color: string; name: string;
 
 /** One value on the athlete's own picture at its moment: the athlete's line and the studies' range in green. The times
  * (no picture) are told as now → the studies. */
-function ResearchPicture({ row, url, frames, direction }: { row: ResearchRow; url: string; frames: readonly CrouchFrame[]; direction: number }) {
+function ResearchPicture({ row, url, frames, direction, editing }: { row: ResearchRow; url: string; frames: readonly CrouchFrame[]; direction: number;
+  editing?: PoseEditing }) {
   const { marks, color, name, focus } = markOf(row);
+  const [open, setOpen] = useState(false);
   const drawn = !!(url && row.moment && row.figure && row.num !== null && marks.length + (row.figure?.kind === 'gap' ? 1 : 0));
   const phases = useMemo(() => drawn && row.moment ? [{ key: row.key, label: row.moment.name, frame: row.moment.frame, pts: row.moment.pts, marks, focus }] : [],
     [drawn, row.key, row.moment?.frame, row.num]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -41,11 +45,15 @@ function ResearchPicture({ row, url, frames, direction }: { row: ResearchRow; ur
     const f = frames.find(q => q.frame === p.frame), pose = f ? anglePose(f) : null;
     if (pose) drawResearchTarget(ctx, pose, to, row, direction || 1, unit);
   }, [row, frames, direction]);
-  const { images, failed } = usePhasePictures(url, frames, phases, overlay);
+  const { images, failed, stills } = usePhasePictures(url, frames, phases, overlay);
+  const at = row.moment ? frames.find(f => f.frame === row.moment!.frame) ?? null : null, shown = drawn ? at : null;
+  const hand = !!(at && editing?.edited.has(at.frame));
   return <div className="cr-pic" aria-live="polite">
     <div className="cr-pic-head"><strong>{row.moment ? `${row.moment.name}：${row.short}` : row.label}</strong>
       <span className="cr-pic-value">{row.value}</span><span className={`cr-word ${row.verdict}`}>{wordOf(row)}</span></div>
-    {drawn ? images[row.key] ? <img src={images[row.key]} alt={`${row.label}：この選手の${name}（${row.value}）と、${row.target}`} />
+    {drawn && editing && open && shown && stills[row.key] ? <PoseEditor still={stills[row.key]} frame={shown} editable={editing.editable} marks={marks} edited={hand}
+        onDone={moved => { editing.onSet(shown.frame, moved); setOpen(false); }} onCancel={() => setOpen(false)} onReset={() => { editing.onReset(shown.frame); setOpen(false); }} />
+      : drawn ? images[row.key] ? <img src={images[row.key]} alt={`${row.label}：この選手の${name}（${row.value}）と、${row.target}`} />
       : <div className="sprint10-phase-wait">{failed ? '画像を作れませんでした' : '画像を作成しています…'}</div>
       : row.num !== null && <p className="cr-time">いま {row.value}<span>→ {row.target}</span></p>}
     {drawn && <p className="cr-key" aria-hidden="true">
@@ -53,6 +61,12 @@ function ResearchPicture({ row, url, frames, direction }: { row: ResearchRow; ur
       <span><i style={{ background: TARGET_COLOR }} />{row.target}</span>
       {row.figure?.kind === 'gap' && <span><i className="white" />支持脚のもも</span>}</p>}
     <p>{row.text}</p>
+    {drawn && editing && shown && !open && <PoseEditRow label={row.moment!.name} hand={hand} ready={!!stills[row.key]} onOpen={() => setOpen(true)} onReset={() => editing.onReset(shown.frame)} />}
+    {/* A value the skeleton set by hand cannot be measured with: no picture, but why, and the way back. */}
+    {!drawn && hand && editing && at && <>
+      <LostNote names={[row.short]} />
+      <PoseEditRow label={row.moment!.name} hand ready={false} onReset={() => editing.onReset(at.frame)} />
+    </>}
   </div>;
 }
 
@@ -60,8 +74,8 @@ function ResearchPicture({ row, url, frames, direction }: { row: ResearchRow; ur
  * 「長いし文章ばかり」, the chips with ◎○△ and a scale 「まだわかりにくい」: which angle, what to do, how to read it):
  * what is good, what to work on in order with how, the chosen value on the athlete's own picture with the studies'
  * range in green, and every value in a list folded away. The first shown is what to work on first. */
-export default function CrouchResearch({ summary, sex, onSex, url, frames, direction }: { summary: ResearchSummary; sex: Sex; onSex: (s: Sex) => void;
-  url: string; frames: readonly CrouchFrame[]; direction: number }) {
+export default function CrouchResearch({ summary, sex, onSex, url, frames, direction, editing }: { summary: ResearchSummary; sex: Sex; onSex: (s: Sex) => void;
+  url: string; frames: readonly CrouchFrame[]; direction: number; editing?: PoseEditing }) {
   const [picked, setPicked] = useState<string | null>(null), picture = useRef<HTMLDivElement>(null);
   const key = picked !== null && summary.rows.some(r => r.key === picked) ? picked : firstShown(summary);
   const row = summary.rows.find(r => r.key === key) ?? null, groups = [...new Set(summary.rows.map(r => r.group))];
@@ -81,7 +95,7 @@ export default function CrouchResearch({ summary, sex, onSex, url, frames, direc
         <span className="cr-now">いま {r.value} → {r.target}</span>{r.cue && <span className="cr-cue">コツ：{r.cue}</span>}</li>)}</ol>
         : <p>参考値と比べて、はっきり直すところはありません。</p>}</div>
     <p className="cr-hint">項目を押すと、下の画像が変わります。</p>
-    {row && <div ref={picture}><ResearchPicture row={row} url={url} frames={frames} direction={direction} /></div>}
+    {row && <div ref={picture}><ResearchPicture row={row} url={url} frames={frames} direction={direction} editing={editing} /></div>}
     <details className="cr-all"><summary>全部の項目を見る（{summary.rows.length}）</summary>
       <ul>{groups.map(g => <li key={g}><span className="cr-phase">{g.split(' ').map(part => <span key={part}>{part}</span>)}</span><div className="cr-items">
         {summary.rows.filter(r => r.group === g).map(r => <button key={r.key} type="button" className={`cr-item ${r.verdict}`} aria-pressed={r.key === key}

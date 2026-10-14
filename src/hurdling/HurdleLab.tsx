@@ -13,6 +13,7 @@ import { legLength } from '../sprint10/contacts';
 import { footDown } from '../sprint10/crouch-edit';
 import { contactMoments, effectsBetween, poseFlags, relatedValues, type ReviewMoment, type ReviewValue } from '../sprint10/moment-edits';
 import { leaveReview, MomentReview } from '../sprint10/MomentReview';
+import { usePoseEdits } from '../sprint10/pose-edits';
 import '../sprint10/sprint10.css';
 import { keepAwake } from '../cmj/keep-awake';
 
@@ -63,7 +64,11 @@ export default function HurdleLab() {
   const options = useMemo(() => measured && used ? { width: measured.width, height: measured.height,
     hurdleX: used.x, barY: used.barY, groundY: used.groundY, hurdleHeight: used.height ?? undefined } : null, [measured, used]);
   const auto: HurdleResult | null = useMemo(() => measured && options ? analyzeHurdle(measured.frames, options) : null, [measured, options]);
-  const result: HurdleResult | null = useMemo(() => measured && options && auto ? Object.keys(edits).length ? analyzeHurdle(measured.frames, { ...options, edits }) : auto : null, [measured, options, auto, edits]);
+  // The skeleton's points the user set by hand (sprint10/pose-edits.ts, 2026-10-14): the frames with them give the result,
+  // the pictures and the replay; the contacts stay on the toes, which cannot be moved.
+  const pose = usePoseEdits(measured?.frames);
+  const result: HurdleResult | null = useMemo(() => measured && options && auto ? Object.keys(edits).length || pose.hand.size ? analyzeHurdle(pose.frames, { ...options, edits }) : auto : null,
+    [measured, options, auto, edits, pose.frames, pose.hand]);
   // The contacts are judged on RTMPose's points where there are any (analysis.ts): the strip's bars and the flags too.
   const poseFrames = useMemo(() => measured ? measured.frames.map(f => f.refined ? { ...f, pose: f.refined } : f) : [], [measured]);
   const list: ReviewMoment[] = useMemo(() => !auto || auto.reason || !measured ? [] : poseFlags(contactMoments(auto.contacts, edits, measured.frames, measured.width, measured.height,
@@ -72,11 +77,11 @@ export default function HurdleLab() {
   const leg = useMemo(() => measured ? legLength(poseFrames.filter(f => f.pose), measured.width, measured.height) : 0, [poseFrames, measured]);
   const preview = useCallback((m: ReviewMoment, frame: number) => {
     if (!measured || !options || !result) return [];
-    const at = (n: number) => valuesOf(analyzeHurdle(measured.frames, { ...options, edits: { ...edits, [m.key]: n } }));
+    const at = (n: number) => valuesOf(analyzeHurdle(pose.frames, { ...options, edits: { ...edits, [m.key]: n } }));
     const now = valuesOf(result), then = frame === m.frame ? now : at(frame);
     // The values that depend on the moment: those a frame on (or back) changes.
     return effectsBetween(now, then, relatedValues(now, at(m.frame + 2), at(m.frame - 2)));
-  }, [measured, options, result, edits]);
+  }, [measured, options, result, edits, pose.frames]);
   const advice = useMemo(() => result && !result.reason ? hurdleAdvice(result) : [], [result]);
   const checks = advice.filter(a => a.level === 'check').length;
   const events: ReplayEvent[] = useMemo(() => {
@@ -174,7 +179,7 @@ export default function HurdleLab() {
   function save() {
     if (!result) return;
     const blob = new Blob([JSON.stringify({ version: HURDLE_VERSION, file: file?.name, setting: used, result,
-      ...(editedCount ? { edited: { frames: edits, auto } } : {}), checked: [...checked] }, null, 2)], { type: 'application/json' });
+      ...(editedCount ? { edited: { frames: edits, auto } } : {}), ...(pose.hand.size ? { skeletonSetByHand: pose.edits } : {}), checked: [...checked] }, null, 2)], { type: 'application/json' });
     const href = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = href; a.download = 'hurdle-result.json'; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
   }
@@ -272,7 +277,7 @@ export default function HurdleLab() {
           <div id="hurdle-panel-pose" role="tabpanel" aria-labelledby="hurdle-tab-pose" hidden={tab !== 'pose'}>
             <ul className="sprint10-mark-legend" aria-label="線の色">{LEGEND.map(([color, label]) => <li key={label}><i style={{ background: color }} />{label}</li>)}</ul>
             <p className="sprint10-hint">点線は鉛直、弧が測った角度。「重心最高点」の画像の白い点は各コマの重心、赤い点線はハードルの線です。画像を左右にスワイプして局面を切り替えます。</p>
-            {result.moments.length ? <PhaseFigures url={url} frames={measured!.frames} phases={result.moments} onShow={show} overlay={overlay}
+            {result.moments.length ? <PhaseFigures url={url} frames={pose.frames} phases={result.moments} onShow={show} overlay={overlay} editing={pose.editing}
               guides={{ landing: `参考：トップ選手の着地の膝 男子 ${G.landingKnee.men}°・女子 ${G.landingKnee.women}° 前後` }} /> : <p>角度を測れる局面がありませんでした。</p>}
           </div>
           <div id="hurdle-panel-times" role="tabpanel" aria-labelledby="hurdle-tab-times" hidden={tab !== 'times'}>
@@ -282,7 +287,7 @@ export default function HurdleLab() {
             <ReferenceTable result={result} />
           </div>
           <div id="hurdle-panel-replay" role="tabpanel" aria-labelledby="hurdle-tab-replay" hidden={tab !== 'replay'} className="sprint10-replay">
-            <CrouchReplay url={url} video={replay} frames={measured!.frames} phases={result.moments} events={events} />
+            <CrouchReplay url={url} video={replay} frames={pose.frames} phases={result.moments} events={events} />
             <p className="sprint10-hint">判定した瞬間の前後では、測った線と角度を表示します。1/8は実際の8分の1の速さです。</p>
           </div>
         </div>

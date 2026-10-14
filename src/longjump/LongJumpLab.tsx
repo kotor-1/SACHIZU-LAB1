@@ -14,6 +14,7 @@ import { legLength } from '../sprint10/contacts';
 import { footDown } from '../sprint10/crouch-edit';
 import { contactMoments, effectsBetween, poseFlags, relatedValues, type ReviewMoment, type ReviewValue } from '../sprint10/moment-edits';
 import { leaveReview, MomentReview } from '../sprint10/MomentReview';
+import { usePoseEdits } from '../sprint10/pose-edits';
 import '../sprint10/sprint10.css';
 import './longjump.css';
 import { keepAwake } from '../cmj/keep-awake';
@@ -70,13 +71,16 @@ export default function LongJumpLab() {
   const [edits, setEdits] = useState<Record<string, number>>({}), [checked, setChecked] = useState<ReadonlySet<string>>(new Set()), [moment, setMoment] = useState<string | null>(null);
   useEffect(() => { setEdits({}); setChecked(new Set()); setMoment(null); }, [measured]);
   const editsOrNone = Object.keys(edits).length ? edits : undefined;
+  // The skeleton's points the user set by hand (sprint10/pose-edits.ts, 2026-10-14): the frames with them give the result,
+  // the pictures and the replay; the contacts stay on the toes, which cannot be moved.
+  const pose = usePoseEdits(measured?.frames);
   const auto: LongJumpResult | null = useMemo(() => measured ? analyzeLongJump(measured.frames, { width: measured.width, height: measured.height, athleteHeight }) : null, [measured, athleteHeight]);
-  const plain: LongJumpResult | null = useMemo(() => measured && auto ? editsOrNone ? analyzeLongJump(measured.frames, { width: measured.width, height: measured.height, athleteHeight, edits: editsOrNone }) : auto : null,
-    [measured, auto, athleteHeight, editsOrNone]);
+  const plain: LongJumpResult | null = useMemo(() => measured && auto ? editsOrNone || pose.hand.size ? analyzeLongJump(pose.frames, { width: measured.width, height: measured.height, athleteHeight, edits: editsOrNone }) : auto : null,
+    [measured, auto, athleteHeight, editsOrNone, pose.frames, pose.hand]);
   const options = useMemo(() => measured ? { width: measured.width, height: measured.height, athleteHeight,
     ruler: ruler.use && ruler.points && distance ? { points: ruler.points, distance } : null } : null, [measured, athleteHeight, ruler.use, ruler.points, distance]);
-  const result: LongJumpResult | null = useMemo(() => measured && plain && options?.ruler ? analyzeLongJump(measured.frames, { ...options, edits: editsOrNone }) : plain,
-    [measured, plain, options, editsOrNone]);
+  const result: LongJumpResult | null = useMemo(() => measured && plain && options?.ruler ? analyzeLongJump(pose.frames, { ...options, edits: editsOrNone }) : plain,
+    [measured, plain, options, editsOrNone, pose.frames]);
   // The contacts are judged on RTMPose's points where there are any (analysis.ts): the strip's bars and the flags too.
   const poseFrames = useMemo(() => measured ? measured.frames.map(f => f.refined ? { ...f, pose: f.refined } : f) : [], [measured]);
   const list: ReviewMoment[] = useMemo(() => !auto || auto.reason || auto.takeoff === null || !measured ? [] : poseFlags(contactMoments(auto.contacts, edits, measured.frames, measured.width, measured.height,
@@ -86,10 +90,10 @@ export default function LongJumpLab() {
   const leg = useMemo(() => measured ? legLength(poseFrames.filter(f => f.pose), measured.width, measured.height) : 0, [poseFrames, measured]);
   const preview = useCallback((m: ReviewMoment, frame: number) => {
     if (!measured || !options || !result) return [];
-    const at = (n: number) => valuesOf(analyzeLongJump(measured.frames, { ...options, edits: { ...edits, [m.key]: n } }));
+    const at = (n: number) => valuesOf(analyzeLongJump(pose.frames, { ...options, edits: { ...edits, [m.key]: n } }));
     const now = valuesOf(result), then = frame === m.frame ? now : at(frame);
     return effectsBetween(now, then, relatedValues(now, at(m.frame + 2), at(m.frame - 2)));
-  }, [measured, options, result, edits]);
+  }, [measured, options, result, edits, pose.frames]);
   const takeoff = plain && !plain.reason && plain.takeoff !== null ? plain.contacts[plain.takeoff] : null;
   const rulerAt = measured && takeoff?.touchdown != null ? insideFrame(takeoff.touchdown + rulerShift, frameInterval(measured.frames)) : null;
   const rulerStill = useStill(url, rulerOpen ? rulerAt : null);
@@ -153,7 +157,7 @@ export default function LongJumpLab() {
     if (!result) return;
     const blob = new Blob([JSON.stringify({ version: LONG_JUMP_VERSION, file: file?.name, heightCm: athleteHeight ? athleteHeight * 100 : null,
       ruler: ruler.use && ruler.points ? { distance, points: ruler.points, frameAt: rulerAt } : null, result,
-      ...(editedCount ? { edited: { frames: edits, auto } } : {}), checked: [...checked] }, null, 2)], { type: 'application/json' });
+      ...(editedCount ? { edited: { frames: edits, auto } } : {}), ...(pose.hand.size ? { skeletonSetByHand: pose.edits } : {}), checked: [...checked] }, null, 2)], { type: 'application/json' });
     const href = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = href; a.download = 'long-jump-result.json'; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
   }
@@ -225,14 +229,14 @@ export default function LongJumpLab() {
           <div id="lj-panel-pose" role="tabpanel" aria-labelledby="lj-tab-pose" hidden={tab !== 'pose'}>
             <ul className="sprint10-mark-legend" aria-label="線の色">{LEGEND.map(([color, label]) => <li key={label}><i style={{ background: color }} />{label}</li>)}</ul>
             <p className="sprint10-hint">点線は鉛直、弧が測った角度。画像を左右にスワイプして接地を切り替えます。</p>
-            {result.moments.length ? <PhaseFigures url={url} frames={measured.frames} phases={result.moments} onShow={show}
+            {result.moments.length ? <PhaseFigures url={url} frames={pose.frames} phases={result.moments} onShow={show} editing={pose.editing}
               guides={{ takeoff: `脚の角度（股関節→足首と水平）${result.posture.legAngle === null ? '—' : `${Math.round(result.posture.legAngle)}°`}・参考 女子${G.legAngle.women}°・男子${G.legAngle.men}°前後` }} /> : <p>接地の画像を作れませんでした。</p>}
           </div>
           <div id="lj-panel-numbers" role="tabpanel" aria-labelledby="lj-tab-numbers" hidden={tab !== 'numbers'}>
             <StepList result={result} />
           </div>
           <div id="lj-panel-replay" role="tabpanel" aria-labelledby="lj-tab-replay" hidden={tab !== 'replay'} className="sprint10-replay">
-            <CrouchReplay url={url} video={replay} frames={measured.frames} phases={result.moments} events={events} />
+            <CrouchReplay url={url} video={replay} frames={pose.frames} phases={result.moments} events={events} />
             <p className="sprint10-hint">判定した接地・離地へ移動できます。1/8は実際の8分の1の速さです。</p>
           </div>
         </div>

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { analyzeStrength, findReps, type Exercise } from '../src/strength/analysis';
 import type { CrouchFrame, CrouchPoint } from '../src/sprint10/crouch';
+import { editableOf, movedToRaw, sideOn } from '../src/strength/figure';
+import { withPoseEdits } from '../src/sprint10/pose-edits';
 
 const rad = (d: number) => d * Math.PI / 180;
 /** A side-on body facing `dir` (+1 right) in a 1000×1000 picture: shank, thigh (hip behind the knee) and trunk angles
@@ -268,5 +270,40 @@ describe('the exercise chosen', () => {
     if (rdlAsSquat.reps.length) expect(strengthAdvice(rdlAsSquat).find(a => a.topic === '種目')).toBeDefined();
     const rdl = analyzeStrength(reps(u => body(8 + 2 * u, 12 * u, 80 * u, { exercise: 'rdl' }), [1.5, 1.5]), { ...O, exercise: 'rdl' });
     expect(strengthAdvice(rdl).find(a => a.topic === '種目')).toBeUndefined();
+  });
+});
+
+describe('strength: the skeleton set by hand on its pictures (sprint10/pose-edits.ts)', () => {
+  it('moves both sides of a point the picture makes of both, once, so the picture\'s point goes where it was put', () => {
+    const f: CrouchFrame = { frame: 0, pts: 0, pose: body(20, 60, 30), refined: body(20, 60, 30, { spread: .04 }) };
+    const drawn = sideOn([f], 'squat')[0].refined!;
+    const raw = movedToRaw(f, { 25: { x: drawn[25].x + .02, y: drawn[25].y - .01 }, 11: { x: drawn[11].x - .01, y: drawn[11].y }, 12: { x: drawn[12].x - .01, y: drawn[12].y } }, 'squat');
+    expect(Object.keys(raw).map(Number).sort((a, b) => a - b)).toEqual([11, 12, 25, 26]);
+    for (const k of [25, 26]) { expect(raw[k].x).toBeCloseTo(f.refined![k].x + .02, 9); expect(raw[k].y).toBeCloseTo(f.refined![k].y - .01, 9); }
+    for (const k of [11, 12]) expect(raw[k].x).toBeCloseTo(f.refined![k].x - .01, 9);
+    const after = sideOn(withPoseEdits([f], { 0: raw }), 'squat')[0].refined!;
+    expect(after[25].x).toBeCloseTo(drawn[25].x + .02, 6); expect(after[11].x).toBeCloseTo(drawn[11].x - .01, 6);
+  });
+
+  it('on one leg moves the standing leg\'s point for the picture\'s side 0 and the lifted leg\'s for side 1', () => {
+    const p = body(10, 20, 80, { exercise: 'rdl' });
+    p[26] = { x: p[25].x - .1, y: p[25].y - .05, visibility: .9 }; p[28] = { x: p[27].x - .2, y: p[27].y - .15, visibility: .9 };   // the right leg lifted
+    const f: CrouchFrame = { frame: 0, pts: 0, pose: p, refined: p };
+    const drawn = sideOn([f], 'slrdl')[0].refined!;
+    const raw = movedToRaw(f, { 25: { x: drawn[25].x + .01, y: drawn[25].y }, 28: { x: drawn[28].x, y: drawn[28].y + .02 } }, 'slrdl');
+    expect(Object.keys(raw).map(Number).sort((a, b) => a - b)).toEqual([25, 28]);
+    expect(raw[25].x).toBeCloseTo(p[25].x + .01, 9); expect(raw[28].y).toBeCloseTo(p[28].y + .02, 9);
+    expect(editableOf('slrdl')).toEqual([11, 12, 23, 25, 27, 26, 28]); expect(editableOf('squat')).toEqual([11, 12, 23, 25, 27]);
+  });
+
+  it('takes a rep\'s bottom from its frame alone once its skeleton was set', () => {
+    const frames = reps(squat, [1.5]), auto = analyzeStrength(frames, { ...O, exercise: 'squat' }), at = auto.reps[0].bottomFrame;
+    const f = frames.find(q => q.frame === at)!, drawn = sideOn([f], 'squat')[0].pose!;
+    const raw = movedToRaw(f, { 25: { x: drawn[25].x + .03, y: drawn[25].y } }, 'squat');
+    const edited = withPoseEdits(frames, { [at]: raw });
+    const hand = analyzeStrength(edited, { ...O, exercise: 'squat', handFrames: new Set([at]) });
+    expect(hand.reps[0].bottomFrame).toBe(at);
+    expect(hand.reps[0].low.knee).toBeCloseTo(hand.postures.find(p => p.frame === at)!.knee!, 9);
+    expect(hand.reps[0].low.knee).not.toBeCloseTo(auto.reps[0].low.knee!, 0);
   });
 });
