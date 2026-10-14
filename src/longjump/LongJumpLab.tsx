@@ -18,6 +18,7 @@ import { usePoseEdits } from '../sprint10/pose-edits';
 import '../sprint10/sprint10.css';
 import './longjump.css';
 import { keepAwake } from '../cmj/keep-awake';
+import TourButton from '../tour/TourButton';
 
 type Tab = 'advice' | 'check' | 'pose' | 'numbers' | 'replay';
 const TABS: [Tab, string][] = [['advice', 'ポイント'], ['check', '確認'], ['pose', '姿勢'], ['numbers', '数値'], ['replay', 'スロー']];
@@ -177,7 +178,7 @@ export default function LongJumpLab() {
       ? `縮尺は、身長と踏切前2歩の胴（肩〜腰）の長さから求めました（目安の幅 ±${SPREADS.trunk * 100}%）。踏切板と砂場が映っていれば、下の「物差し」を合わせると誤差が小さくなります。`
       : `縮尺は、踏切の後の空中の重心の放物線（重力）から求めました。この方法は試験動画で速さが約1割遅く出たため、目安の幅を±${SPREADS.gravity * 100}%にしています。身長を入れるか、下の「物差し」を合わせてください。`;
   return <main className="sprint10">
-    <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
+    <div className="lab-top"><a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><TourButton /></div>
     <header><p className="sprint10-eyebrow">EVENT / LONG JUMP</p><h1>走り幅跳び：助走の最後</h1>
       <p>踏切に入る最後の数歩：助走速度（目安）と、最後の2歩のリズム、踏切接地の姿勢。踏切の離地の速さと角度。</p></header>
     <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能。三脚で固定したカメラで、助走路に対して真横から、踏切の2〜3歩前から踏切の後の空中までが映るように撮影してください（着地は映らなくてかまいません）。踏切の後の空中が0.5秒ほど映っていると、その空中の動きから速さの縮尺が決まります。1秒120コマ以上（240推奨）・通常速度の時間軸の動画を使います。</p></details>

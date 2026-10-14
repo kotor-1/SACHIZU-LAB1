@@ -20,6 +20,7 @@ import CrouchLab from './CrouchLab';
 import ForceView from './ForceView';
 import './sprint10.css';
 import { keepAwake } from '../cmj/keep-awake';
+import TourButton from '../tour/TourButton';
 
 type Gate = 'start' | 'finish';
 /** A flying section is entered and left at speed: its gates are the entry and the exit. */
@@ -279,7 +280,7 @@ export default function Sprint10Lab() {
   const position = (which: Gate) => which === 'start' ? start : finish;
   const specific = result ? result.warnings.filter(w => !SPRINT10_NOTES.includes(w)) : [];
   return <main className="sprint10">
-    <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
+    <div className="lab-top"><a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><TourButton /></div>
     <header><p className="sprint10-eyebrow">SPRINT / {crouch ? 'CROUCH START' : mode === 'flying' ? 'MAX VELOCITY SECTION' : '10 METRES'}</p>
       <h1>{crouch ? 'クラウチングスタートの解析' : mode === 'flying' ? '最高速度区間の解析' : '10m スプリント解析'}</h1>
       <p>{crouch ? 'ブロックから最大5歩目まで、各歩の接地・滞空・ピッチと姿勢の角度を解析します。' : '2本のラインを設定するだけで、通過時間・歩数・ピッチ・歩幅を解析します。'}</p></header>

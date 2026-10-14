@@ -18,6 +18,7 @@ import { usePoseEdits } from '../sprint10/pose-edits';
 import '../sprint10/sprint10.css';
 import './highjump.css';
 import { keepAwake } from '../cmj/keep-awake';
+import TourButton from '../tour/TourButton';
 
 /** One ▲▼◀▶ tap moves the chosen point by 0.1% of the picture. */
 const NUDGE = .001;
@@ -183,7 +184,7 @@ export default function HighJumpLab() {
   const l = result?.lift ?? null, t = result?.times, pts = setting.points, cam = result?.camera ?? null;
   const setBar = (cm: number) => setSetting(s => ({ ...s, barCm: Math.max(50, Math.min(250, Math.round(cm))) }));
   return <main className="sprint10 highjump">
-    <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
+    <div className="lab-top"><a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><TourButton /></div>
     <header><p className="sprint10-eyebrow">EVENT / HIGH JUMP</p><h1>走高跳（はさみ跳び）の解析</h1>
       <p>踏切で得た上向きの速さと空中で上がった高さ、最後の2歩のリズム、踏切接地の後傾。</p></header>
     <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能。三脚で固定したスマホを水平に置き、踏切の動きの真横から、踏切の3歩前から踏切の後の上昇までが映るように撮影してください。左右両方の支柱の根元とバーが画面に入るようにします（支柱とバーの高さが物差しになります）。1秒240コマ（スロー）推奨・通常速度の時間軸の動画を使います。</p></details>

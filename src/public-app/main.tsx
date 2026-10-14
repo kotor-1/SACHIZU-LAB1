@@ -2,6 +2,8 @@ import { Component, Fragment, lazy, Suspense, useState, type ReactNode } from 'r
 import { createRoot } from 'react-dom/client';
 import '../theme/tokens.css';
 import './public.css';
+import TourHost from '../tour/TourHost';
+import TourButton from '../tour/TourButton';
 
 // Public site: CMJ, RJ and sprint (start 10 m, a maximal-velocity section and the crouch start), and under
 // 種目解析 the hurdle and the throws (2026-10-05), the high jump's scissors, the long jump's run-up and the curve start
@@ -54,6 +56,7 @@ function Home() {
   return <main className="public-home">
     <header className="public-top"><strong className="public-brand"><span>SACHIZU</span> LAB</strong><span className="public-badge">無料・ベータ版</span></header>
     <section className="public-hero"><p className="public-eyebrow">MOTION ANALYSIS</p><h1>撮って、<br />数値で確かめる。</h1><p>動画やカメラの映像は、この端末の中だけで処理します。</p></section>
+    <div className="public-tour"><TourButton /></div>
     <div className="public-filter" role="group" aria-label="種類でしぼる">
       {([['all', 'すべて'], ...GROUPS.map(g => [g.id, g.title])] as [Group | 'all', string][]).map(([id, title]) =>
         <button key={id} type="button" aria-pressed={shown === id} onClick={() => setShown(id)}>{title}</button>)}
@@ -71,6 +74,7 @@ function Home() {
   </main>;
 }
 const lab = new URLSearchParams(location.search).get('lab');
-createRoot(document.getElementById('root')!).render(<Boundary><Suspense fallback={<p role="status" className="public-loading">解析画面を読み込み中…</p>}>
+// Each screen's guided tour (src/tour): its first visit's and its first result's open by themselves once; 「使い方」 again.
+createRoot(document.getElementById('root')!).render(<><TourHost page={lab ?? 'home'} /><Boundary><Suspense fallback={<p role="status" className="public-loading">解析画面を読み込み中…</p>}>
   {lab === 'cmj' ? <CMJ /> : lab === 'rj' || lab === 'rj-toe-cycle' ? <RJ /> : lab === 'sprint10' ? <Sprint /> : lab === 'hurdle' ? <Hurdle /> : lab === 'jav' || lab === 'shot' ? <Throw event={lab} /> : lab === 'highjump' ? <HighJump /> : lab === 'longjump' ? <LongJump /> : lab === 'curve' ? <CurveStart /> : lab === 'strength' ? <Strength /> : lab === 'posture' ? <Posture /> : <Home />}
-</Suspense></Boundary>);
+</Suspense></Boundary></>);

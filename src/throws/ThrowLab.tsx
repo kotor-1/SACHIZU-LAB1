@@ -17,6 +17,7 @@ import { leaveReview, MomentReview } from '../sprint10/MomentReview';
 import { usePoseEdits } from '../sprint10/pose-edits';
 import '../sprint10/sprint10.css';
 import { keepAwake } from '../cmj/keep-awake';
+import TourButton from '../tour/TourButton';
 
 /** One ◀/▶ tap moves the line by 0.2% of the frame width. */
 const NUDGE = .002;
@@ -270,7 +271,7 @@ export default function ThrowLab({ event }: { event: ThrowEvent }) {
     : { release: `参考：トップ選手の前膝 ${G.shotRelease.frontKnee}°・後ろ膝 ${G.shotRelease.rearKnee}°前後、上体は前へ${G.shotRelease.trunk}°前後`,
       front: 'パワーポジション：比べられる参考値は見つかりませんでした' };
   return <main className="sprint10">
-    <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
+    <div className="lab-top"><a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><TourButton /></div>
     <header><p className="sprint10-eyebrow">EVENT / {jav ? 'JAVELIN' : 'SHOT PUT'}</p><h1>{title}</h1>
       <p>{jav ? 'ブロック脚（前足）の接地からリリースまで：ブロック脚の膝の角度と、投げの時間。'
         : 'グライドまたは立ち投げ：局面ごとの時間と、パワーポジションの姿勢。'}</p></header>

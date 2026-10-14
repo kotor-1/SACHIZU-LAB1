@@ -14,6 +14,7 @@ import { LeanChart, PathPicture, TopView } from './CurveStartCharts';
 import '../sprint10/sprint10.css';
 import './curvestart.css';
 import { keepAwake } from '../cmj/keep-awake';
+import TourButton from '../tour/TourButton';
 
 /** One ▲▼◀▶ tap moves the chosen point by 0.1% of the picture. */
 const NUDGE = .001;
@@ -160,7 +161,7 @@ export default function CurveStartLab() {
     : '見つかった線を表示しています（緑＝内側の白線、橙＝外側の白線、白＝スタートライン）。線がレーンの白線に重なっていれば解析できます。';
   const verdict = s?.verdict === 'early' ? '早く曲がった' : s?.verdict === 'straight' ? 'まっすぐ出られた' : null;
   return <main className="sprint10 curvestart">
-    <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
+    <div className="lab-top"><a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><TourButton /></div>
     <header><p className="sprint10-eyebrow">EVENT / CURVE START</p><h1>カーブスタートの解析</h1>
       <p>カーブの線に惑わされずに、ブロックからまっすぐ出られたか。その後、カーブに沿って自然に内傾して走れたか。走った軌跡を描きます。</p></header>
     <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能。200 m・400 m・リレーなど、曲走路からのスタートを、スマホを三脚に固定してブロックの真後ろ（スタートラインの3〜5 m後ろ、高さ1.3 m以上）から撮影します。選手のレーンの左右の白線が、ブロックから15 m先まで映るようにしてください（レーン幅1.22 mが物差しになります）。構えから走り出しまでを撮り、選手が遠ざかるまで撮り続けます。</p></details>

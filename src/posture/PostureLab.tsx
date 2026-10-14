@@ -10,6 +10,7 @@ import { loadPostureModel, type PostureModel } from './rtm';
 import { loadPhoto, phoneTilt, photoFinder, readPhoto, type Shot } from './still';
 import '../sprint10/sprint10.css';
 import './posture.css';
+import TourButton from '../tour/TourButton';
 
 export const POSTURE_VERSION = 'posture-v2.1 (2026-10-08)';
 type Tab = 'points' | View;
@@ -112,8 +113,9 @@ export default function PostureLab() {
   // Each warning once, with the views it came from.
   const warned = [...VIEWS.reduce((m, v) => { for (const w of notesOf(v)) m.set(w, [...(m.get(w) ?? []), v]); return m; }, new Map<string, View[]>())];
   const unknownTilt = taken.some(v => shots[v]!.source === 'camera' && shots[v]!.roll === null);
-  return <main className="sprint10 posture">
-    <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
+  // data-busy: photos being read, so the guided tour (src/tour) waits before opening by itself.
+  return <main className="sprint10 posture" data-busy={busy || undefined}>
+    <div className="lab-top"><a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><TourButton /></div>
     <header><p className="sprint10-eyebrow">BODY / POSTURE</p><h1>姿勢解析</h1>
       <p>正面・横・後ろの立ち姿勢から、左右の傾きと前後のずれを角度で見ます。写真を選ぶか、カメラの枠に立つと自動で撮影します。</p></header>
     <div className="sprint10-seg posture-mode" role="group" aria-label="撮り方">

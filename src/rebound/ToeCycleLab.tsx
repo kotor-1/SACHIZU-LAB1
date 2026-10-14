@@ -14,6 +14,7 @@ import PoseReplay from './PoseReplay';
 import { JUMP_LEGS, LEG_LABELS, SINGLE_LEG_READY, singleLeg, type JumpLegs } from '../cmj/single-leg';
 import { stanceLegFrames, stanceSoles } from './stance-leg';
 import './rebound.css';
+import TourButton from '../tour/TourButton';
 
 type Report = ReturnType<typeof toeCycleReport>;
 type Observation = { file: File | null; filename: string; sourceBytes: number; hash: string;
@@ -234,7 +235,7 @@ export default function ToeCycleLab() {
     setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
   }
   return <main className="rj-lab rj-public">
-    <header><a href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><span>SACHIZU LAB · RJ</span></header>
+    <header><a href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><span>SACHIZU LAB · RJ</span><TourButton /></header>
     <div className="rj-title"><span>REBOUND JUMP</span><h1>{singleLeg(legs) ? '片脚RJ' : '両足RJ'} · 自動予測</h1><p>動画または保存済みJSONから、平均RSIを推定します。身長・基準物・手動のコマ指定は不要です。</p></div>
     {SINGLE_LEG_READY && <section aria-label="跳び方"><h2>跳び方</h2>
       <div className="rj-legs" role="group" aria-label="跳び方">{JUMP_LEGS.map(id => <button key={id} type="button" className={legs === id ? 'is-selected' : ''}

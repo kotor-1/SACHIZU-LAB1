@@ -16,6 +16,7 @@ import { leaveReview, MomentReview } from '../sprint10/MomentReview';
 import { usePoseEdits } from '../sprint10/pose-edits';
 import '../sprint10/sprint10.css';
 import { keepAwake } from '../cmj/keep-awake';
+import TourButton from '../tour/TourButton';
 
 /** One ◀/▶ (▲/▼) tap moves a line by 0.2% of the frame width (height). */
 const NUDGE = .002;
@@ -190,7 +191,7 @@ export default function HurdleLab() {
   const peakNote = apex?.beforeM != null ? `±5cm${apex.beforeSeconds !== null ? `・ハードル上の${Math.abs(apex.beforeSeconds).toFixed(3)}秒${apex.beforeSeconds >= 0 ? '前' : '後'}` : ''}` : apex?.beforeSeconds != null ? 'ハードル上を通る時から' : '';
   const ratio = result?.ratio ?? null;
   return <main className="sprint10">
-    <a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a>
+    <div className="lab-top"><a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><TourButton /></div>
     <header><p className="sprint10-eyebrow">EVENT / HURDLES</p><h1>ハードルの解析</h1>
       <p>踏切から着地まで：重心が最高点になる位置、接地と空中の時間、各局面の姿勢の角度。</p></header>
     <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能。三脚で固定したカメラで真横から、ハードル1台と、その手前1〜2歩から着地の後1〜2歩までが映るように撮影してください。カメラはバーくらいの高さで水平に（下に向けない）、走路に直角に向け、ハードルを画面の中央にします。1秒120コマ以上（240推奨）・通常速度の時間軸の動画を使います。</p></details>

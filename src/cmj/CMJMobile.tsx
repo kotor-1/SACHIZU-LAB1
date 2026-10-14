@@ -9,6 +9,7 @@ import { recordCamera } from './camera-recording';
 import { cameraStopReason, displayedResult, isPreviousResult, CMJ_LIVE_VERSION } from './session-diagnostics';
 import { JUMP_LEGS, LEG_LABELS, SINGLE_LEG_READY, singleLeg, type JumpLegs } from './single-leg';
 import './mobile-ui.css';
+import TourButton from '../tour/TourButton';
 
 const phases = { PREPARING: '全身を確認しています', READY: 'いつでも跳べます', MOVING: 'ジャンプを検出しました', RECOVERING: '着地を確認しています' };
 const skeleton = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24],
@@ -243,7 +244,7 @@ export default function CMJMobile() {
   const single = mode === 'file' && singleLeg(legs);
   return <main className="cmj-mobile">
     <header className="cmj-header"><a href={import.meta.env.BASE_URL} aria-label="種目を選ぶ"><ArrowLeft size={20} /></a>
-      <span className="cmj-brand">SACHIZU <span>LAB</span></span><span className="cmj-beta">BETA</span></header>
+      <span className="cmj-brand">SACHIZU <span>LAB</span></span><span className="cmj-beta">BETA</span><TourButton /></header>
     <div className="cmj-heading"><p className="cmj-eyebrow">JUMP ANALYSIS</p><h1>そのジャンプを、<br className="cmj-mobile-break" />数値に。</h1><p>全身の動きから、ジャンプの高さを推定。</p></div>
     <div className="cmj-workspace"><section className="cmj-capture" aria-label="ジャンプ映像">
       <div className="cmj-mode" aria-label="入力方法">
