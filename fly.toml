@@ -13,6 +13,12 @@ primary_region = "nrt"
   auto_stop_machines = "stop"
   auto_start_machines = true
   min_machines_running = 0
+  # Up to 250 requests at once on the one machine (static files from nginx; about 20 people may open it together, each
+  # page asking for dozens of files): more wait their turn at Fly's proxy instead of an unstated default.
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
 
 [[vm]]
   size = "shared-cpu-1x"
