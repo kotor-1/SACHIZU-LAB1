@@ -1,0 +1,6 @@
+# Only the Fly build and the server's settings go into the image (not the source, the models' sources or node_modules);
+# never the copies a synced folder makes ("name 2.ext").
+*
+!dist-fly/
+!nginx.conf
+**/* [0-9].*

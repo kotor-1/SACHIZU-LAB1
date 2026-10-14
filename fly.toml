@@ -1,0 +1,19 @@
+# SACHIZU LAB on Fly.io (2026-10-14): the same public app as on GitHub Pages, served from Tokyo by one machine of the
+# smallest size, stopped while no one uses it (the user: 「なるべく少ない容量で」). No volume: the files are in the image.
+#   npm run build:fly && fly deploy --ha=false
+app = "sachizu-lab"
+primary_region = "nrt"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
