@@ -214,7 +214,8 @@
 .pose-editor{display:grid;gap:8px}
 .pose-editor canvas{display:block;width:100%;aspect-ratio:4/3;border-radius:10px;background:var(--sz-video);touch-action:none;cursor:pointer}
 .pose-editor-hint{margin:0;font-size:13px;line-height:1.5;color:var(--sz-text-2);font-weight:400}
-.sprint10 .pose-editor-points button{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:4px 12px;font-size:14px}
+.sprint10 .pose-editor-points{display:grid;gap:6px}
+.sprint10 .pose-editor-points button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:40px;padding:4px 8px;font-size:14px}
 .pose-editor-points i{width:12px;height:12px;border-radius:50%;border:3px solid;box-sizing:border-box;flex:none}
 .pose-editor-nudge{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .sprint10 .pose-editor-nudge button{min-height:44px;padding:0;font-size:20px;background:var(--sz-surface-3)}

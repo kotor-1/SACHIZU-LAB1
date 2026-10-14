@@ -13,14 +13,15 @@ const NUDGE = 1.5;
 const seen = (p?: CrouchPoint) => !!p && Number.isFinite(p.x) && Number.isFinite(p.y) && (p.visibility ?? 1) >= .3;
 
 /** A handle: the points it moves together (the shoulders as one: the trunk takes their middle), its name and its colour
- * (each leg its own, as the model names the sides; which is which is seen on the picture). */
-interface Handle { id: string; points: number[]; name: string; color: string; leg: string }
+ * (each leg its own, as the model names the sides; which is which is seen on the picture), and its place among the
+ * chips: a row for each leg (the shoulders with the first), a column for each joint. */
+interface Handle { id: string; points: number[]; name: string; color: string; leg: string; row: number; col: number }
 const LEG_COLORS = ['#5ec8ff', '#ff8fb1'], LEG_NAMES = ['水色の脚', 'ピンクの脚'];
 function handlesOf(editable: readonly number[]): Handle[] {
   const out: Handle[] = [];
-  if (editable.includes(11) || editable.includes(12)) out.push({ id: 'shoulders', points: [11, 12].filter(k => editable.includes(k)), name: '肩', color: '#ffffff', leg: '' });
-  for (const side of [0, 1]) for (const [base, name] of [[23, '腰'], [25, '膝'], [27, '足首']] as const)
-    if (editable.includes(base + side)) out.push({ id: `${base + side}`, points: [base + side], name, color: LEG_COLORS[side], leg: LEG_NAMES[side] });
+  if (editable.includes(11) || editable.includes(12)) out.push({ id: 'shoulders', points: [11, 12].filter(k => editable.includes(k)), name: '肩', color: '#ffffff', leg: '', row: 0, col: 0 });
+  for (const side of [0, 1]) for (const [base, name, col] of [[23, '腰', 1], [25, '膝', 2], [27, '足首', 3]] as const)
+    if (editable.includes(base + side)) out.push({ id: `${base + side}`, points: [base + side], name, color: LEG_COLORS[side], leg: LEG_NAMES[side], row: side, col });
   return out;
 }
 
@@ -57,6 +58,9 @@ export default function PoseEditor({ still: cut, frame, marks = [], editable = E
   // The points on the picture (cut round a leg, the shoulders may be off it).
   const onPicture = (h: Handle) => { const q = still ? at(h, start) : null; return !!q && q.x >= -20 && q.x <= PIC_W + 20 && q.y >= -20 && q.y <= PIC_H + 20; };
   const shown = still ? handles.filter(onPicture) : handles;
+  // The chips as a small table, all seen at once on a phone (seven in one line ran off its side): the rows and columns
+  // that have a chip.
+  const rows = [...new Set(shown.map(h => h.row))].sort((a, b) => a - b), cols = [...new Set(shown.map(h => h.col))].sort((a, b) => a - b);
 
   useEffect(() => {
     const c = canvas.current, ctx = c?.getContext('2d');
@@ -118,8 +122,9 @@ export default function PoseEditor({ still: cut, frame, marks = [], editable = E
       onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />
       : <div className="sprint10-phase-wait">{failed ? '画像を作れませんでした' : '画像を作成しています…'}</div>}
     <p className="pose-editor-hint">直したい点（肩・腰・膝・足首）を指で動かします。点を押して選び、矢印で細かく動かすこともできます。</p>
-    <div className="sprint10-chips pose-editor-points" role="group" aria-label="動かす点を選ぶ">{shown.map(h =>
-      <button key={h.id} type="button" aria-pressed={h.id === chosen} aria-label={h.leg ? `${h.name}（${h.leg}）` : h.name} onClick={() => setChosen(h.id)}>
+    <div className="sprint10-chips pose-editor-points" role="group" aria-label="動かす点を選ぶ" style={{ gridTemplateColumns: `repeat(${cols.length}, minmax(max-content, 1fr))` }}>{shown.map(h =>
+      <button key={h.id} type="button" aria-pressed={h.id === chosen} aria-label={h.leg ? `${h.name}（${h.leg}）` : h.name} onClick={() => setChosen(h.id)}
+        style={{ gridRow: rows.indexOf(h.row) + 1, gridColumn: cols.indexOf(h.col) + 1 }}>
         <i style={{ borderColor: h.color }} aria-hidden="true" />{h.name}</button>)}</div>
     <div className="pose-editor-nudge" role="group" aria-label={chosenHandle ? `${chosenHandle.name}${chosenHandle.leg ? `（${chosenHandle.leg}）` : ''}を動かす` : '点を選ぶと矢印で動かせます'}>
       {([['←', -1, 0, '左へ'], ['↑', 0, -1, '上へ'], ['↓', 0, 1, '下へ'], ['→', 1, 0, '右へ']] as const).map(([mark, dx, dy, word]) =>

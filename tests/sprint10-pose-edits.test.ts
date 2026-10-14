@@ -82,6 +82,21 @@ describe('pictures that let the skeleton be set by hand', () => {
     expect(plain).not.toContain('骨格を直す');
   });
 
+  it('set the point chips out as a small table, a row for each leg (the shoulders with the first) and a column for each joint, so all show at once on a phone', async () => {
+    const { renderToStaticMarkup } = await import('react-dom/server');
+    const { createElement } = await import('react');
+    const { default: PoseEditor } = await import('../src/sprint10/PoseEditor');
+    const still = { image: 'data:,', view: { x: 0, y: 0, w: 720, h: 540 }, W: 720, H: 540 };
+    const chips = (editable?: number[]) => {
+      const html = renderToStaticMarkup(createElement(PoseEditor, { still, frame: { frame: 0, pts: 0, pose: pose() }, editable, edited: false, onDone: () => {}, onCancel: () => {} }));
+      return [...html.matchAll(/aria-label="([^"]+)" style="grid-row:(\d+);grid-column:(\d+)"/g)].map(m => `${m[1]} ${m[2]}-${m[3]}`);
+    };
+    expect(chips()).toEqual(['肩 1-1', '腰（水色の脚） 1-2', '膝（水色の脚） 1-3', '足首（水色の脚） 1-4', '腰（ピンクの脚） 2-2', '膝（ピンクの脚） 2-3', '足首（ピンクの脚） 2-4']);
+    expect(chips([11, 12, 23, 25, 27])).toEqual(['肩 1-1', '腰（水色の脚） 1-2', '膝（水色の脚） 1-3', '足首（水色の脚） 1-4']);   // the squat's near-side figure
+    expect(chips([11, 12, 23, 25, 27, 26, 28])).toEqual(['肩 1-1', '腰（水色の脚） 1-2', '膝（水色の脚） 1-3', '足首（水色の脚） 1-4', '膝（ピンクの脚） 2-3', '足首（ピンクの脚） 2-4']);   // single-leg RDL: the raised leg's under the standing one's
+    expect(chips([23, 24, 25, 26, 27, 28])).toEqual(['腰（水色の脚） 1-1', '膝（水色の脚） 1-2', '足首（水色の脚） 1-3', '腰（ピンクの脚） 2-1', '膝（ピンクの脚） 2-2', '足首（ピンクの脚） 2-3']);
+  });
+
   it('name the angles the automatic skeleton had and the one set by hand has not (the trunk whichever way it leans, a leg on either side)', async () => {
     const { lostMarks } = await import('../src/sprint10/CrouchViews');
     const auto = [{ kind: 'trunk' as const, label: '体幹の後傾', value: 1 }, { kind: 'knee' as const, side: 1 as const, label: '支持脚の膝', value: 136 }];
