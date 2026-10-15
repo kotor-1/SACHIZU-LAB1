@@ -295,7 +295,7 @@ export default function Sprint10Lab() {
       <label>区間の長さ<NumberField value={sectionLengthM} min={1} max={100} disabled={busy}
         onValue={v => { setSectionLengthM(v); setConfirmed(false); setReview(''); }} /><span>m</span></label>
       <p>{sectionLabel}として記録します。長さは2本のラインの実際の間隔です。</p></div>}
-    <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能・精度未検証。固定カメラで真横に近い方向から、1人の全身と{mode === 'flying' ? '区間全体' : '10m区間'}を撮影してください。通常速度の時間軸の動画を使用します。スロー書き出し動画の速度倍率は自動補正しません。</p></details>
+    <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能・精度未検証。固定カメラで真横に近い方向から、1人の全身と{mode === 'flying' ? '区間全体' : '10m区間'}を撮影してください。1080p（HD）・1秒120コマが基本です（1秒240コマでも解析できますが、時間とメモリが約2倍かかり、古いスマホでは途中で止まることがあります）。1秒60コマでも解析できますが、接地・離地などの瞬間の時間が粗くなります（1コマが約0.017秒）。通常速度の時間軸の動画を使用します。スロー書き出し動画の速度倍率は自動補正しません。</p></details>
     <section className="sprint10-card"><h2>1　動画を選ぶ</h2>
       <label className="sprint10-upload"><input className="sprint10-file-input" type="file" aria-label={`${sectionLabel}の動画を選ぶ`} accept="video/mp4,video/quicktime,.mov,.mp4,.m4v" disabled={busy} onChange={e => changeFile(e.target.files?.[0] ?? null)} />
         <span className="sprint10-upload-button" aria-hidden="true"><Upload size={19} />{file ? '別の動画を選ぶ' : '動画を選ぶ'}</span></label>

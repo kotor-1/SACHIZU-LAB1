@@ -14,7 +14,7 @@ export interface TourSet {
 // The analysis screens' shared parts (sprint10.css): the filming notes, the cards 1 動画を選ぶ / 2 lines or points /
 // 3 解析する (kept at the foot of the screen), the result card with its numbers, check note, tabs and save button.
 const intro = (title: string, text: string): TourStep => ({ at: 'main > header', title, text });
-const HOWTO: TourStep = { at: '.sprint10-howto', title: '撮り方を読む', text: '撮る前に一度、ここを開いてください。カメラの置き方や向きなど、撮り方の注意が書いてあります。' };
+const HOWTO: TourStep = { at: '.sprint10-howto', title: '撮り方を読む', text: '撮る前に一度、ここを開いてください。1080p・1秒120コマが基本です。カメラの置き方や向きなど、撮り方の注意が書いてあります。' };
 const VIDEO: TourStep = { at: '.sprint10-card:has(.sprint10-upload)', title: '動画を選ぶ', text: 'スマホに保存した動画を選びます。動画はこの端末の中だけで処理し、どこにも送りません。' };
 const LINES = '.sprint10-card:has(.sprint10-player)';
 const RUN: TourStep = { at: '.sprint10-run', title: '解析する', text: '準備がそろうと押せます。動画の長さと端末によっては数分かかるので、終わるまでこの画面を開いておいてください。' };
@@ -50,7 +50,7 @@ export const SETS: Record<string, TourSet> = {
     { title: 'SACHIZU LAB へようこそ', text: '撮った動画やカメラの映像から、動きを数値で確かめるアプリです。映像はこの端末の中だけで処理し、どこにも送りません。' },
     { at: '.public-filter', title: '種類でしぼる', text: 'ジャンプ・スプリント・種目解析・トレーニング・からだから選ぶと、その種類の解析だけが並びます。' },
     { at: '.public-tiles .public-tile', title: '解析を選ぶ', text: 'タイルを押すと、その解析の画面が開きます。どの画面も、初めて開いたときに使い方を案内します。' },
-    { at: '.public-info', title: '使う前に読む', text: '撮り方のコツ（明るい場所でスマホを固定し、全身と足元を映す）と、動画の扱いは、ここを開くと読めます。' },
+    { at: '.public-info', title: '使う前に読む', text: '撮り方のコツ（明るい場所でスマホを固定し、全身と足元を映す。1080p・1秒120コマが基本）と、動画の扱いは、ここを開くと読めます。' },
     { at: '.tour-open', title: 'いつでも見直せます', text: 'この「使い方」ボタンで、いつでもこの案内をもう一度見られます。' }] } },
 
   cmj: {

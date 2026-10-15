@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { calibrate, focalPixels, makeCamera, type UprightPoints, type Vec } from '../src/highjump/camera';
 import { analyzeHighJump, SPACING } from '../src/highjump/analysis';
 import { highJumpAdvice } from '../src/highjump/advice';
-import { firstRunner } from '../src/highjump/recording';
+import { firstRunner, frameRateOf, lowFrameRate, MIN_FPS } from '../src/highjump/recording';
 import type { CrouchFrame, CrouchPoint } from '../src/sprint10/crouch';
 import { withPoseEdits } from '../src/sprint10/pose-edits';
 import { kneeAngle, stanceSide } from '../src/sprint10/angles';
@@ -146,5 +146,24 @@ describe('high jump: the skeleton set by hand (sprint10/pose-edits.ts)', () => {
     const median = analyzeHighJump(edited, { width: W, height: H, uprights: UPRIGHTS, barHeight: BAR });
     expect(median.posture.kneeTouchdown).not.toBeCloseTo(own, 1);
     expect(hand.contacts).toEqual(auto.contacts);
+  });
+});
+
+describe('high jump: the frame rate (1080p・120fps が基本, 2026-10-15)', () => {
+  const times = (fps: number, n = 60) => Array.from({ length: n }, (_, i) => i / fps);
+  it('reads the rate from the frame times, a clip mixing 240 and 120 fps parts as its middle step', () => {
+    expect(frameRateOf(times(240))).toBeCloseTo(240, 6);
+    expect(frameRateOf(times(60))).toBeCloseTo(60, 6);
+    const mixed = [...times(240, 40), ...times(120, 20).map(t => 40 / 240 + t + 1 / 120)];
+    expect(frameRateOf(mixed)).toBeCloseTo(240, 6);
+    expect(frameRateOf([0])).toBe(0);
+  });
+  it('refuses below MIN_FPS (60 fps gave no upward speed and a lean of 0°), not at 120 or 240', () => {
+    expect(MIN_FPS).toBe(100);
+    expect(lowFrameRate(60)).toMatch(/1秒約60コマ.*1秒120コマ以上/);
+    expect(lowFrameRate(30)).toMatch(/1秒約30コマ/);
+    expect(lowFrameRate(120)).toBeNull();
+    expect(lowFrameRate(240)).toBeNull();
+    expect(lowFrameRate(0)).toBeNull();
   });
 });

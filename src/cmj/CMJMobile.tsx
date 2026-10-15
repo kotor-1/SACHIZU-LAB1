@@ -4,6 +4,7 @@ import { measureVideo, type SessionUpdate } from './video-session';
 import { comFeedback } from './com-feedback';
 import { waitForCurrentFrame } from './media-ready';
 import { untilAborted } from './session-lifecycle';
+import { keepAwake } from './keep-awake';
 import { cameraConstraints, cameraDimensions } from './camera-geometry';
 import { recordCamera } from './camera-recording';
 import { cameraStopReason, displayedResult, isPreviousResult, CMJ_LIVE_VERSION } from './session-diagnostics';
@@ -104,6 +105,9 @@ export default function CMJMobile() {
     if (captured) fileSelected(captured);
     const element = video.current, control = new AbortController(); owner.current = control;
     let recorderAttempted = false, limited = false;
+    // A recorded video's analysis keeps the screen on (a slow phone takes minutes; an auto-locked screen hides the page,
+    // which stops it): taken once for this analysis, released in finally. The camera is left as it was.
+    let awake = () => {};
     setRefining(!!captured || sourceFile === recordedClip && sourceMode === 'file');
     if (sourceMode === 'camera') { setRecordedClip(null); setRecordingNote(''); liveSnapshot.current = null; }
     setBusy(true); setCancelling(false); setProblem(false); setReview(false); setState(null); setActiveResult(null);
@@ -146,6 +150,7 @@ export default function CMJMobile() {
     try {
       let summary;
       if (sourceMode === 'file' && sourceFile) {
+        awake = await keepAwake();
         element.pause();
         const recording = await import('./recording-session');
         if (control.signal.aborted) throw new DOMException('中止', 'AbortError');
@@ -188,6 +193,7 @@ export default function CMJMobile() {
       }
       else { setProblem(true); setMessage(e instanceof Error ? e.message : String(e)); setFailureReason(e instanceof Error ? e.message : String(e)); }
     } finally {
+      awake();
       const recording = backup.current;
       if (sourceMode === 'camera' && recording && owner.current === control) {
         setCancelling(true);
@@ -321,7 +327,7 @@ export default function CMJMobile() {
         <li><span>01</span><div><strong>正面・全身・明るい場所</strong><p>頭から足先まで。ジャンプしても画面内に収まる距離に。</p></div></li>
         <li><span>02</span><div><strong>スマホを動かさず固定</strong><p>前後に移動せず、同じ場所でジャンプします。</p></div></li>
         <li><span>03</span><div><strong>{single ? '腰に手を置いて、片脚で跳ぶ' : '腰に手を置いて、両脚で跳ぶ'}</strong><p>{single ? '反対の脚は床に着けずに保持します。止まる必要はありません。着地まで映してください。' : '止まる必要はありません。着地まで映してください。'}</p></div></li></ol>
-        <p className="cmj-format">録画の目安：30秒以内・3600フレーム以内（240fpsでは約15秒）。MOV・MP4推奨。高fpsの元動画を使用し、フレームを間引く書き出しは避けてください。</p></section>
+        <p className="cmj-format">撮り方の基本：1080p・120fps（スローモーション）、正面から。録画の目安：30秒以内・3600フレーム以内（120fpsでは30秒、240fpsでは約15秒）。MOV・MP4推奨。元動画をそのまま使い、フレームを間引く書き出しは避けてください。60fps以下では1〜3cmずれることがあります。</p></section>
       <details className="cmj-method"><summary>測定方法と精度について<ChevronDown size={16} /></summary>
         <p>つま先が床から離れる瞬間と、空中の重心の最高点までの時間から高さを計算します。両足が同時に床から離れた動きをジャンプとして検出するので、跳ぶ前に止まる必要はありません。</p>
         <p>片脚（録画）では、各コマで床に近い方の足を支持脚とし、そのつま先が床から離れた動きをジャンプとして検出します。上げている脚の足先は離地・着地に使いません。</p>

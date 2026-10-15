@@ -169,7 +169,7 @@ export default function CrouchLab() {
     a.href = href; a.download = 'crouch-start-result.json'; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
   }
   return <>
-    <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能・精度未検証。三脚で固定したカメラで真横から、構え（ブロック）から{MAX_STEPS}歩目までが映るように撮影してください。1秒120コマ以上（240推奨）・通常速度の時間軸の動画を使います。映っている歩だけ（最大{MAX_STEPS}歩）を解析します。</p></details>
+    <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能・精度未検証。三脚で固定したカメラで真横から、構え（ブロック）から{MAX_STEPS}歩目までが映るように撮影してください。1080p（HD）・1秒120コマが基本です（1秒240コマでも解析できますが、時間とメモリが約2倍かかり、古いスマホでは途中で止まることがあります）。1秒60コマでも解析できますが、接地・離地などの瞬間の時間が粗くなります（1コマが約0.017秒）。通常速度の時間軸の動画を使います。映っている歩だけ（最大{MAX_STEPS}歩）を解析します。</p></details>
     <section className="sprint10-card"><h2>1　動画を選ぶ</h2>
       <label className="sprint10-upload"><input className="sprint10-file-input" type="file" aria-label="クラウチングスタートの動画を選ぶ" accept="video/mp4,video/quicktime,.mov,.mp4,.m4v" disabled={busy}
         onChange={e => changeFile(e.target.files?.[0] ?? null)} />

@@ -181,7 +181,7 @@ export default function LongJumpLab() {
     <div className="lab-top"><a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><TourButton /></div>
     <header><p className="sprint10-eyebrow">EVENT / LONG JUMP</p><h1>走り幅跳び：助走の最後</h1>
       <p>踏切に入る最後の数歩：助走速度（目安）と、最後の2歩のリズム、踏切接地の姿勢。踏切の離地の速さと角度。</p></header>
-    <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能。三脚で固定したカメラで、助走路に対して真横から、踏切の2〜3歩前から踏切の後の空中までが映るように撮影してください（着地は映らなくてかまいません）。踏切の後の空中が0.5秒ほど映っていると、その空中の動きから速さの縮尺が決まります。1秒120コマ以上（240推奨）・通常速度の時間軸の動画を使います。</p></details>
+    <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能。三脚で固定したカメラで、助走路に対して真横から、踏切の2〜3歩前から踏切の後の空中までが映るように撮影してください（着地は映らなくてかまいません）。踏切の後の空中が0.5秒ほど映っていると、その空中の動きから速さの縮尺が決まります。1080p（HD）・1秒120コマが基本です（1秒240コマでも解析できますが、時間とメモリが約2倍かかり、古いスマホでは途中で止まることがあります）。1秒60コマでも解析できますが、「踏切接地の瞬間」の速さは出ず、接地・離地などの瞬間の時間も粗くなります。通常速度の時間軸の動画を使います。</p></details>
     <section className="sprint10-card"><h2>1　動画を選ぶ</h2>
       <label className="sprint10-upload"><input className="sprint10-file-input" type="file" aria-label="走り幅跳びの動画を選ぶ" accept="video/mp4,video/quicktime,.mov,.mp4,.m4v" disabled={busy}
         onChange={e => changeFile(e.target.files?.[0] ?? null)} />

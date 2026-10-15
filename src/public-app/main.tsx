@@ -67,7 +67,7 @@ function Home() {
         <span className="public-tile-icon">{t.icon}</span><b>{t.title.split('|').map((part, i) => <Fragment key={part}>{i > 0 && <wbr />}{part}</Fragment>)}</b><span>{t.text}</span></a>)}</nav>
     </section>)}
     <section className="public-info" aria-label="案内">
-      <details><summary>使う前に</summary><ul><li>明るい場所でスマホを固定。全身と足元を映してください。</li><li>録画は通常の時間軸を保った120/240fps推奨。スロー書き出し倍率は自動補正しません。</li><li>最新のブラウザを推奨。動画形式・端末によって解析できない場合があります。iPhone・Android全機種での動作は未検証です。</li><li>数値は動画からの推定です。研究・試験機能であり、測定器同等の精度や医療・競技公式判定用途を保証しません。</li></ul></details>
+      <details><summary>使う前に</summary><ul><li>明るい場所でスマホを固定。全身と足元を映してください。</li><li>録画は1080p（HD）・1秒120コマが基本です（iPhone は「設定」→「カメラ」→「スローモーション撮影」で選べます）。4Kや1秒240コマは重く、古いスマホでは時間がかかったり途中で止まったりします。</li><li>通常の時間軸を保った元の動画を使ってください。スロー書き出しの倍率は自動補正しません。</li><li>最新のブラウザを推奨。動画形式・端末によって解析できない場合があります。iPhone・Android全機種での動作は未検証です。</li><li>数値は動画からの推定です。研究・試験機能であり、測定器同等の精度や医療・競技公式判定用途を保証しません。</li></ul></details>
       <details><summary>動画とプライバシー</summary><p>選んだ動画・写真とカメラの映像はブラウザ内で処理し、このアプリからサーバーへ送信しません。会員登録・広告・アクセス解析はありません。初回のモデル取得には通信が必要です。結果は保存ボタンから端末に保存してください。ページを閉じると未保存の結果は失われます。</p><p>サイト配信時のIPアドレス等はホスティング事業者が処理する場合があります。<a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noreferrer">GitHubのプライバシーポリシー</a></p></details>
     </section>
     <footer>SACHIZU LAB · CMJ / RJ / Sprint / Hurdle / Throws / High Jump / Long Jump / Curve Start / Squat · RDL / Posture · 公開テスト版 · <a href={`${home}THIRD_PARTY_NOTICES.md`}>利用ライブラリ・ライセンス</a></footer>

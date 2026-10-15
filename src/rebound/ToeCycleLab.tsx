@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { FileJson, Upload } from 'lucide-react';
 import { MAX_RECORDING_BYTES, measureRecording, supportsExactRecording } from '../cmj/recording-session';
+import { keepAwake } from '../cmj/keep-awake';
 import { typicalInterval } from './frame-interval';
 import type { PoseFrame } from './prediction-observations';
 import { predictionSignals } from './prediction-observations';
@@ -182,7 +183,10 @@ export default function ToeCycleLab() {
     const control = new AbortController(); owner.current = control; setBusy(true); clear(); video.current?.pause();
     const current = () => owner.current === control && !control.signal.aborted;
     const started = performance.now();
+    // The screen kept on while it runs (minutes on a slow phone; a locked screen hides the page, which stops it).
+    let awake = () => {};
     try {
+      awake = await keepAwake();
       let observation = cached.current?.file === file ? cached.current : null;
       const reused = !!observation;
       if (!observation) {
@@ -226,7 +230,7 @@ export default function ToeCycleLab() {
       setMessage(`解析完了（${Math.round((performance.now() - started) / 1000)}秒）${reused ? ' · 骨格の再取得なし' : ''}。${soleResult.headlineMean === null ? '算出できなかった理由を確認してください。' : '平均RSIを表示しました。精度未検証の推定値です。'}`);
     } catch (e) {
       if (owner.current === control) setMessage(control.signal.aborted ? '停止しました。途中の結果は表示しません。' : e instanceof Error ? e.message : String(e));
-    } finally { if (owner.current === control) { owner.current = null; setBusy(false); } }
+    } finally { awake(); if (owner.current === control) { owner.current = null; setBusy(false); } }
   }
   function save() {
     if (!exportData) return;
@@ -247,7 +251,7 @@ export default function ToeCycleLab() {
       {singleLeg(legs) && <p>片脚RJ：反対の脚は床に着けずに保持してください。各コマで床に近い方の足（支持脚）のつま先と靴底で離地・着地を測ります。右・左は結果の記録用です（選手自身の左右）。</p>}
     </section>}
     <section className="rj-capture"><h2>動画を選ぶ</h2>
-      <p>固定カメラ・全身と左右の靴・床が映る元動画（120/240fps推奨。60fpsでも解析できます。30fpsでは靴底で測れず高めに出ます）。正面から、靴と床の色がはっきり違う場所で撮影してください。</p>
+      <p>固定カメラ・全身と左右の靴・床が映る元動画（1080p・120fpsが基本。240fpsは時間とメモリが約2倍かかります。60fpsでも解析できます（接地の時間が粗くなり、RSIが1割ほどずれることがあります）。30fpsでは靴底で測れず高めに出ます）。正面から、靴と床の色がはっきり違う場所で撮影してください。</p>
       <label className="rj-upload"><input className="rj-file-input" ref={videoInput} type="file" accept="video/*" aria-label="つま先軌跡RJの動画を選ぶ" disabled={busy} onChange={e => {
         const f = e.target.files?.[0] ?? null; cached.current = null; clear(); setSavedSource(null); setFile(f); setUrl(f ? URL.createObjectURL(f) : '');
         setMessage(f ? '動画を選択しました。解析を開始できます。' : 'RJの元動画を選んでください。');

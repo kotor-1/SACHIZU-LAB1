@@ -39,6 +39,18 @@ const KEEP_HEIGHT = .8, KEEP_WIDTH = .5;
  * the speed of the first PATH_FIT_SECONDS followed (the hurdle's pass 3). */
 const PATH_FIT_SECONDS = .1, PATH_TOLERANCE = .08;
 const pelvis = (p: Pt[]) => ({ x: (p[23].x + p[24].x) / 2, y: (p[23].y + p[24].y) / 2 });
+/** The fewest frames a second analysed. The upward speed is fitted on at least 8 frames in the 0.1 s after the toe-off
+ * (analysis.ts): 6 at 60 fps, so a 60 fps video gave no speed, no rise and no rhythm, and a lean of 0° from a touchdown
+ * found late (つばき thinned to 60 fps, 2026-10-15); 120 fps gave the 240 fps values. Said before anything is read. */
+export const MIN_FPS = 100;
+/** Frames a second of a video's frame times (the median step), and a refusal below MIN_FPS. */
+export function frameRateOf(pts: readonly number[]) {
+  const steps = pts.slice(1).map((t, i) => t - pts[i]).filter(d => d > 0).sort((a, b) => a - b);
+  return steps.length ? 1 / steps[steps.length >> 1] : 0;
+}
+export function lowFrameRate(fps: number) {
+  return fps > 0 && fps < MIN_FPS ? `この動画は1秒約${Math.round(fps)}コマです。走高跳は、踏切の接地・離地と離地の直後の上昇を細かく測るため、1秒120コマ以上で撮った動画で解析します（iPhone はスローモーションの 120fps か 240fps）。` : null;
+}
 
 /** People in one region of the picture (normalized to the whole picture); with `whole`, only bodies inside it. */
 function detect(model: MobileCMJPose, source: HTMLCanvasElement, region: Region, frame: { frameIndex: number; pts: number }, w: number, h: number, whole: boolean) {
@@ -73,6 +85,10 @@ export function firstRunner(samples: { frame: number; pts: number; poses: Pt[][]
 
 export async function measureHighJump(file: File, signal: AbortSignal, progress: (fraction: number, message: string) => void):
   Promise<{ frames: CrouchFrame[]; width: number; height: number; refiner: Refiner['backend'] | null; direction: number }> {
+  // The frame count and rate first (the demuxed video not kept: it holds the file), before the models are loaded.
+  const { count, fps } = await (async () => { const d = await untilAborted(demuxMP4(file), signal); return { count: d.frames.length, fps: frameRateOf(d.frames.map(f => f.pts)) }; })();
+  const slow = lowFrameRate(fps);
+  if (slow) throw new Error(slow);
   let refiner: Refiner | null = null;
   try { refiner = await untilAborted(loadRefiner(signal, text => progress(0, text)), signal); }
   catch (e) { if (signal.aborted) throw e; refiner = null; }
@@ -80,7 +96,6 @@ export async function measureHighJump(file: File, signal: AbortSignal, progress:
   try {
     await untilAborted(model.initialize(signal, message => progress(0, message)), signal);
     // 1. The direction and the runner.
-    const d = await untilAborted(demuxMP4(file), signal), count = d.frames.length;
     const step = Math.max(1, Math.floor(count / SURVEY_FRAMES)), samples: { frame: number; pts: number; poses: Pt[][] }[] = [];
     await readFrames(file, signal, i => i % step === 0, async (frame, source, w, h) => {
       samples.push({ frame: frame.frameIndex, pts: frame.pts, poses: SURVEY_REGIONS.flatMap(r => detect(model, source, r, frame, w, h, true)) });

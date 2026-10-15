@@ -190,7 +190,7 @@ export default function StrengthLab() {
     <div className="lab-top"><a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><TourButton /></div>
     <header><p className="sprint10-eyebrow">TRAINING / SQUAT · RDL</p><h1>スクワット・RDLのフォーム解析</h1>
       <p>自体重のスクワットとルーマニアンデッドリフト（両脚・片脚）を真横から撮って、1回ごとの姿勢の角度と上げ下げの時間を確かめます。録画した動画でも、カメラでその場でも。</p></header>
-    <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能。スマホを腰くらいの高さに固定し、体の真横（左右どちら向きでも）から、頭から足先まで映るように撮影してください。斜めから撮ると角度が変わります。頭から足先までが画面の高さの半分以上になるよう近づき、腕の位置（前に伸ばす・胸の前で組むなど）は毎回同じにしてください（腕の位置で上体の倒れ方が変わります）。</p></details>
+    <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能。スマホを腰くらいの高さに固定し、体の真横（左右どちら向きでも）から、頭から足先まで映るように撮影してください。斜めから撮ると角度が変わります。頭から足先までが画面の高さの半分以上になるよう近づき、腕の位置（前に伸ばす・胸の前で組むなど）は毎回同じにしてください（腕の位置で上体の倒れ方が変わります）。録画は1080p（HD）の通常のビデオ（1秒30〜60コマ）が基本です（解析は1秒30コマで行うので、スローモーションは要りません）。4Kは時間とメモリが多くかかり、古いスマホでは途中で止まることがあります。</p></details>
     <section className="sprint10-card"><h2>1　種目と方法を選ぶ</h2>
       <div className="sprint10-seg strength-seg" role="group" aria-label="種目">{(Object.keys(EXERCISES) as Exercise[]).map(id =>
         <button key={id} type="button" aria-pressed={exercise === id} disabled={busy} onClick={() => setExercise(id)}>{EXERCISES[id]}</button>)}</div>

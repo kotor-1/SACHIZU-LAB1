@@ -194,7 +194,7 @@ export default function HurdleLab() {
     <div className="lab-top"><a className="sprint10-back" href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><TourButton /></div>
     <header><p className="sprint10-eyebrow">EVENT / HURDLES</p><h1>ハードルの解析</h1>
       <p>踏切から着地まで：重心が最高点になる位置、接地と空中の時間、各局面の姿勢の角度。</p></header>
-    <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能。三脚で固定したカメラで真横から、ハードル1台と、その手前1〜2歩から着地の後1〜2歩までが映るように撮影してください。カメラはバーくらいの高さで水平に（下に向けない）、走路に直角に向け、ハードルを画面の中央にします。1秒120コマ以上（240推奨）・通常速度の時間軸の動画を使います。</p></details>
+    <details className="sprint10-howto"><summary>撮り方と注意（試験機能）</summary><p className="sprint10-note">試験機能。三脚で固定したカメラで真横から、ハードル1台と、その手前1〜2歩から着地の後1〜2歩までが映るように撮影してください。カメラはバーくらいの高さで水平に（下に向けない）、走路に直角に向け、ハードルを画面の中央にします。1080p（HD）・1秒120コマが基本です（1秒240コマでも解析できますが、時間とメモリが約2倍かかり、古いスマホでは途中で止まることがあります）。1秒60コマでも解析できますが、接地・離地などの瞬間の時間が粗くなります（1コマが約0.017秒）。通常速度の時間軸の動画を使います。</p></details>
     <section className="sprint10-card"><h2>1　動画を選ぶ</h2>
       <label className="sprint10-upload"><input className="sprint10-file-input" type="file" aria-label="ハードルの動画を選ぶ" accept="video/mp4,video/quicktime,.mov,.mp4,.m4v" disabled={busy}
         onChange={e => changeFile(e.target.files?.[0] ?? null)} />
