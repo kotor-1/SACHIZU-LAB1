@@ -26,6 +26,8 @@ export type Edits = Readonly<Record<string, number>>;
  * worth a look: the first five steps of sprinters last 0.12-0.23 s on the ground and 0.05-0.10 s in the air, and the
  * first touchdown comes 0.045±0.025 s after the block (Čoh & Tomazin 2006; Bezodis et al. 2019). */
 const CONTACT = [.07, .3], FLIGHT = [.005, .15], FIRST = [0, .12];
+/** The same ranges for the light mode's moments set by hand (crouch-pick.ts). */
+export const USUAL = { contact: CONTACT, flight: FLIGHT, first: FIRST } as const;
 /** The toe points around a moment (±NEAR frames) seen with less than TOE_SEEN confidence (median), or the pose missing
  * in MISSING of them, make it worth a look. */
 const NEAR = 3, TOE_SEEN = .5, MISSING = 2;

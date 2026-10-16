@@ -18,6 +18,8 @@ import { readPictures } from './crouch-pixels-read';
 import { CrouchReview } from './CrouchReview';
 import { usePoseEdits } from './pose-edits';
 import { keepAwake } from '../cmj/keep-awake';
+import { PickView, usePick } from './CrouchPick';
+import { pickedResult, withMendedFeet } from './crouch-pick';
 
 /** One ◀/▶ tap moves the line by 0.2% of the frame width. */
 const NUDGE = .002;
@@ -49,6 +51,9 @@ export default function CrouchLab() {
   // Development builds keep the last recording reachable for the browser checks (dev-validation/crouch/dump-poses.mjs).
   // The moments judged from the pose, then set again from the pictures round the feet where those are clear (the pose's
   // toe point wanders; in darkened test videos the touchdowns were up to 9.5 frames off, from the pictures 5.3).
+  // The light mode (crouch-pick.ts): the moments set by hand, the pose models only at their frames; its result once done.
+  const pick = usePick(file, url), light = !measured && pick.phase === 'done' && pick.size ? pick.size : null;
+  const lightFrames = useMemo(() => light ? withMendedFeet(pick.frames, light.width, light.height) : null, [light?.width, light?.height, pick.frames]);   // eslint-disable-line react-hooks/exhaustive-deps
   const pixels = useMemo(() => measured ? refineByPixels(analyzeCrouchStart(measured.frames, { width: measured.width, height: measured.height }),
     measured.pictures, measured.regions, measured.frames, measured.width, measured.height) : null, [measured]);
   const auto: CrouchResult | null = pixels?.result ?? null;
@@ -60,9 +65,12 @@ export default function CrouchLab() {
   useEffect(() => { setEdits({}); setChecked(new Set()); setMoment(null); }, [measured]);
   // The skeleton's points the user set by hand (pose-edits.ts, 2026-10-14): the frames with them give the angles, the
   // pictures and the replay; a moment whose frame was set takes its angles from that frame.
-  const pose = usePoseEdits(measured?.frames);
-  const result: CrouchResult | null = useMemo(() => auto && measured ? applyEdits(auto, edits, pose.frames, measured.width, measured.height, pose.hand) : auto,
-    [auto, edits, measured, pose.frames, pose.hand]);
+  const pose = usePoseEdits(measured?.frames ?? lightFrames);
+  const result: CrouchResult | null = useMemo(() => auto && measured ? applyEdits(auto, edits, pose.frames, measured.width, measured.height, pose.hand)
+    : light ? pickedResult(pick.picks, pose.frames, light.width, light.height, pose.hand, pick.pending) : auto,
+    [auto, edits, measured, pose.frames, pose.hand, light, pick.picks, pick.pending]);
+  // What the views need of either: every frame (the light mode's with poses only where it looked), the picture's size.
+  const data = measured ?? (light && lightFrames ? { frames: lightFrames, width: light.width, height: light.height, refiner: pick.backend } : null);
   const list = useMemo(() => auto && result && measured ? moments(auto, edits, result, measured.frames, measured.width, measured.height, fromPixels) : [], [auto, edits, result, measured, fromPixels]);
   const waiting = list.filter(m => m.flag && !checked.has(m.key)).length, editedCount = Object.keys(edits).length;
   // Steps with a moment moved, or with the skeleton set by hand at their touchdown: marked ✎ in the table.
@@ -86,30 +94,30 @@ export default function CrouchLab() {
   // The replay goes to each judged moment's frame (as 確認 shows it): the moments' times lie between frames (frameEdge).
   const events: ReplayEvent[] = useMemo(() => {
     if (!result || result.reason) return [];
-    const at = (frame: number | null | undefined, pts: number) => (frame != null ? measured?.frames.find(f => f.frame === frame)?.pts : undefined) ?? pts;
+    const at = (frame: number | null | undefined, pts: number) => (frame != null ? data?.frames.find(f => f.frame === frame)?.pts : undefined) ?? pts;
     return [...(result.set ? [{ label: '構え', short: '構え', pts: result.set.pts }] : []),
       ...(result.blockClearance ? [{ label: 'ブロックを離れる', short: '離れる', pts: at(result.blockClearance.frame, result.blockClearance.pts) }] : []),
       ...result.contacts.flatMap(c => [...(c.touchdown !== null ? [{ label: `${c.index}歩目の接地`, short: `${c.index}歩目 接地`, pts: at(c.touchdownFrame, c.touchdown) }] : []),
         ...(c.toeOff !== null ? [{ label: `${c.index}歩目の離地`, short: `${c.index}歩目 離地`, pts: at(c.toeOffFrame, c.toeOff) }] : [])])];
-  }, [result, measured]);
+  }, [result, data]);
   // The result is shown one part at a time under tabs that stay at the top of
   // the screen (all parts one under another were too long on a phone, the
   // user 2026-10-05: 「縦長で使いにくい」).
   const [tab, setTab] = useState<Tab>('advice'), tabs = useRef<HTMLDivElement>(null), panels = useRef<HTMLDivElement>(null);
   const seekTo = useRef<number | null>(null);
-  useEffect(() => { setTab('advice'); if (result) resultCard.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }); }, [measured]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setTab('advice'); if (result) resultCard.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }); }, [measured, !!light]);   // eslint-disable-line react-hooks/exhaustive-deps
   // A phase asked for from its picture is shown once the replay is on screen
   // (a video kept hidden may not know its length yet).
   useEffect(() => {
     const v = replay.current;
     if (tab !== 'replay' || !v || seekTo.current === null) return;
-    const t = insideFrame(seekTo.current, measured ? frameInterval(measured.frames) : 1 / 240); seekTo.current = null;
+    const t = insideFrame(seekTo.current, data ? frameInterval(data.frames) : 1 / 240); seekTo.current = null;
     const go = () => { v.pause(); v.currentTime = t; };
     if (v.readyState >= 1) go(); else v.addEventListener('loadedmetadata', go, { once: true });
-  }, [tab, measured]);
+  }, [tab, data]);
 
   function changeFile(next: File | null) {
-    owner.current?.abort(); owner.current = null; setBusy(false);
+    owner.current?.abort(); owner.current = null; setBusy(false); pick.reset();
     setFile(next); setUrl(next ? URL.createObjectURL(next) : ''); setLoaded(false); setMeasured(null); setMessage('');
   }
   function move(x: number) { if (!busy) setStart(Math.max(.01, Math.min(.99, x))); }
@@ -121,7 +129,7 @@ export default function CrouchLab() {
   async function analyze() {
     if (!file || busy) return;
     const control = new AbortController(); owner.current = control; let awake = () => {};
-    setBusy(true); setMeasured(null); setProgress(0); setMessage('');
+    pick.reset(); setBusy(true); setMeasured(null); setProgress(0); setMessage('');
     try {
       awake = await keepAwake();
       const data = await measureCrouchStart(file, start, control.signal, (fraction, text) => { if (control.signal.aborted) return; setProgress(fraction); setMessage(text); });
@@ -156,11 +164,15 @@ export default function CrouchLab() {
   function revert(key: string) { setEdits(e => { const next = { ...e }; delete next[key]; return next; }); }
   /** The check, from the first moment worth a look not yet checked. */
   function openCheck() { const first = list.find(q => q.flag && !checked.has(q.key)) ?? list.find(q => !checked.has(q.key)); if (first) setMoment(first.key); choose('check'); }
+  /** The light mode from the start: the moments set by hand from the frame the player shows (the set is often there). */
+  function startPick() { if (busy) return; setMeasured(null); setMessage(''); void pick.begin(video.current?.currentTime ?? 0, start); }
+  const picking = pick.phase === 'loading' || pick.phase === 'picking' || pick.phase === 'finishing' || pick.phase === 'failed';
   /** A phase in the slow replay: its tab, paused on its frame. */
-  function show(p: Phase) { seekTo.current = measured?.frames.find(f => f.frame === p.frame)?.pts ?? p.pts; choose('replay'); }
+  function show(p: Phase) { seekTo.current = data?.frames.find(f => f.frame === p.frame)?.pts ?? p.pts; choose('replay'); }
   function save() {
     if (!result) return;
-    const blob = new Blob([JSON.stringify({ version: CROUCH_VERSION, file: file?.name, startX: start, result,
+    const blob = new Blob([JSON.stringify({ version: light ? result.version : CROUCH_VERSION, file: file?.name, startX: start, result,
+      ...(light ? { picked: { frames: pick.picks, looked: pick.looked } } : {}),
       research: research ? { sex, rows: research.rows } : null,
       ...(editedCount ? { edited: { frames: edits, auto } } : {}), ...(pose.hand.size ? { skeletonSetByHand: pose.edits } : {}), checked: [...checked],
       fromPictures: [...fromPixels] }, null, 2)],
@@ -201,41 +213,57 @@ export default function CrouchLab() {
         <button type="button" aria-label="スタートラインを右へ" disabled={!ready || busy} onClick={() => move(start + NUDGE)}>▶</button>
       </div></div>
     </section>
+    {/* The light mode (the user, 2026-10-16): folded until asked for, then the moments set one by one in this card. */}
+    <section className="sprint10-card pick-card" aria-label="コマを自分で選ぶ解析">
+      {picking ? <><h2>コマを選ぶ（軽い解析・試作）</h2>
+        {pick.phase === 'failed' ? <p role="alert" className="sprint10-note">{pick.status}</p> : <PickView session={pick} url={url} onFinish={pick.finish} />}
+        <button type="button" className="pick-quit" onClick={pick.reset}>コマ選びをやめる</button></>
+      : <details className="pick-intro"><summary><span>古いスマホ向け：コマを自分で選んで解析（試作）<small>解析しながら、自分の動きを1コマずつ確かめられます</small></span></summary>
+        <p>「解析する」に時間がかかるとき向けです。構え・ブロックを離れる瞬間・各歩の接地と離地のコマを、見本を見ながら自分で合わせます。AIはそのコマだけ骨格を見るので、早く終わります。1歩目の接地からは次の接地・離地のコマを予測して先に出すので、ずれていれば◀▶で直してください。</p>
+        <p>先に上の「2」でスタートラインを合わせてください（選手を見つける目安にします）。ブロックの力と前向きの力は出しません。</p>
+        <button type="button" disabled={!ready || busy} onClick={startPick}>{light ? '最初から選び直す' : 'コマを自分で選ぶ'}</button>
+      </details>}
+    </section>
     <section className="sprint10-card sprint10-run"><h2>3　解析する</h2>
-      <button className="sprint10-primary" disabled={!ready || busy} onClick={() => void analyze()}>解析する</button>
+      <button className="sprint10-primary" disabled={!ready || busy || picking} onClick={() => void analyze()}>解析する</button>
       {busy && <button onClick={() => { owner.current?.abort(); owner.current = null; setBusy(false); setMessage('解析を中止しました。'); }}>中止</button>}
       <p role="status">{message || '動画を選び、スタートラインを合わせると解析できます。'}</p>
       {busy && <progress max="1" value={progress} aria-label="解析の進み具合" />}
     </section>
     {result && <section ref={resultCard} className="sprint10-card sprint10-result" aria-label="解析結果"><h2>解析結果</h2>
-      {result.reason ? <p role="alert" className="sprint10-note">{result.reason}</p> : <>
+      {/* A result the light mode cannot give yet (no athlete found in the set): the moments to set again, right here. */}
+      {result.reason ? <><p role="alert" className="sprint10-note">{result.reason}</p>{light && <PickView session={pick} url={url} />}</> : <>
         <div className="sprint10-metrics sprint10-summary">{[['解析した歩数', `${result.contacts.length}`, '歩', false],
           ['ブロック→1歩目の接地', seconds(result.firstFlight), '秒', edits.clearance !== undefined || edits.td1 !== undefined]].map(([label, v, unit, edited]) =>
           <div key={String(label)}><span>{label}{edited && <i className="crouch-edited" aria-label="（手で直した値）">✎</i>}</span><strong>{v}<small>{unit}</small></strong></div>)}</div>
-        <p className="crouch-check-note"><span>{editedCount ? `手で直したコマを使っています（${editedCount}か所）。` : '接地・離地などのコマは自動判定です。ずれていたら1コマ単位で直せます。'}
-          {waiting > 0 && ` 要確認 ${waiting}か所。`}</span>
+        {light && pick.waiting > 0 && <p className="sprint10-hint" role="status">選んだコマの骨格を調べています（あと{pick.waiting}コマ）。角度はそのあと出ます。</p>}
+        <p className="crouch-check-note"><span>{light ? 'コマを自分で選んだ結果です（軽い解析・試作）。「確認」で選び直せます。'
+          : editedCount ? `手で直したコマを使っています（${editedCount}か所）。` : '接地・離地などのコマは自動判定です。ずれていたら1コマ単位で直せます。'}
+          {!light && waiting > 0 && ` 要確認 ${waiting}か所。`}</span>
           {tab !== 'check' && <button type="button" onClick={openCheck}>確認する</button>}</p>
-        {measured && !measured.refiner && <p className="sprint10-note">高精度の骨格モデル（RTMPose）を読み込めなかったため、角度と骨格の表示はMediaPipeの骨格を使っています。</p>}
+        {data && !data.refiner && <p className="sprint10-note">高精度の骨格モデル（RTMPose）を読み込めなかったため、角度と骨格の表示はMediaPipeの骨格を使っています。</p>}
         <div ref={tabs} className="sprint10-tabs crouch-tabs" role="tablist" aria-label="結果の表示">{TABS.map(([id, label]) =>
           <button key={id} id={`crouch-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`crouch-panel-${id}`} onClick={() => leaveReview(() => id === 'check' ? openCheck() : choose(id))}>
             {label}{id === 'advice' && checks > 0 && <span className="sprint10-badge" aria-label={`確かめたい点 ${checks}件`}>{checks}</span>}
             {id === 'check' && waiting > 0 && <span className="sprint10-badge" aria-label={`要確認 ${waiting}か所`}>{waiting}</span>}</button>)}</div>
         <div ref={panels} className="sprint10-panels">
           <div id="crouch-panel-advice" role="tabpanel" aria-labelledby="crouch-tab-advice" hidden={tab !== 'advice'}>
-            {research && measured && <CrouchResearch summary={research} sex={sex} onSex={setSex} url={url} frames={pose.frames} direction={result?.direction ?? 1} editing={pose.editing} />}
+            {research && data && <CrouchResearch summary={research} sex={sex} onSex={setSex} url={url} frames={pose.frames} direction={result?.direction ?? 1} editing={pose.editing} />}
             {advice.length > 0 && <div className="cr-flow"><h3>歩ごとの流れ</h3>
               {flowChecks.length > 0 && <ul className="sprint10-advice" aria-label="歩ごとの流れで確かめたい所">{flowChecks.map(a => <li key={a.topic + a.text} className="check">
                 <span aria-hidden="true">!</span><div><strong>{a.topic}</strong>{a.text}</div></li>)}</ul>}
               {flowGood.length > 0 && <p className="cr-flow-ok">✓ {flowGood.join('・')}{flowChecks.length ? 'は' : 'とも'}、加速の流れどおりです。</p>}</div>}
           </div>
           <div id="crouch-panel-force" role="tabpanel" aria-labelledby="crouch-tab-force" hidden={tab !== 'force'}>
-            {measured && <ForceView kind="crouch" contacts={result.contacts} frames={pose.frames} width={measured.width} height={measured.height}
-              direction={result.direction} sex={sex} onSex={setSex} block={result.moveStart != null && result.blockClearance
+            {data && <ForceView kind="crouch" contacts={result.contacts} frames={pose.frames} width={data.width} height={data.height} verticalOnly={!!light}
+              direction={result.direction} sex={sex} onSex={setSex} block={!light && result.moveStart != null && result.blockClearance
                 ? { moveStart: result.moveStart, clearance: result.blockClearance.pts } : null} />}
           </div>
           <div id="crouch-panel-check" role="tabpanel" aria-labelledby="crouch-tab-check" hidden={tab !== 'check'}>
-            <p className="sprint10-hint">自動判定のコマを1つずつ確かめます。ずれていたら◀▶か下のコマで合わせて「このコマに決める」、合っていれば「OK」。数値はすぐ変わります。</p>
-            {tab === 'check' && auto && <CrouchReview url={url} frames={measured!.frames} width={measured!.width} height={measured!.height} pixels={pixels!.moments}
+            <p className="sprint10-hint">{light ? '選んだコマを1つずつ選び直せます。◀▶か下のコマで合わせて「このコマに決める」。数値はすぐ変わります。まだ選んでいない歩も、続けて選べます。'
+              : '自動判定のコマを1つずつ確かめます。ずれていたら◀▶か下のコマで合わせて「このコマに決める」、合っていれば「OK」。数値はすぐ変わります。'}</p>
+            {tab === 'check' && light && <PickView session={pick} url={url} />}
+            {tab === 'check' && !light && auto && <CrouchReview url={url} frames={measured!.frames} width={measured!.width} height={measured!.height} pixels={pixels!.moments}
               auto={auto} result={result} list={list} edits={edits} checked={checked} at={moment} onAt={setMoment}
               onSet={setMomentFrame} onRevert={revert} onRevertAll={() => setEdits({})} onDone={() => choose('steps')} />}
           </div>
@@ -265,7 +293,8 @@ export default function CrouchLab() {
           <p>参考値と比べる：参考値は、下の出典の研究で報告された値です。画面には男子・女子を書かず、数値だけを出します（どの選手の値かは出典に書いています）。女子／男子の切り替えは、男女の値がある項目（構えの体幹、1歩目の接地時間、前膝の平均、「力」のブロック）で、どちらの値を使うかを選びます。「トップ並み」は世界トップやトップ選手の平均±標準偏差の範囲、「良い」は鍛えた選手の平均より標準偏差ぶん以上良い値（鍛えた選手の値しかない項目）。「ふつう」は、ふつうの範囲か、トップとの差が測定の誤差（角度5°、ももの開き8°、時間0.01秒）ほどの値。「伸びしろ」は、研究で速いスタートと結びつく向きに、トップとの差が誤差より大きい値。「判定なし」は、良し悪しがはっきりしていない（研究で結論が分かれる）値です。画像の緑の範囲は参考値（世界トップ・トップ選手、それがない項目は鍛えた選手の平均±標準偏差や総説の範囲）で、色の線がこの選手です。「コツ」は、研究で速い選手に見られる向きへ近づけるための、ひとつの目安です。ももの開きは後ろ足のももと支持脚のももの角度の差で、「前」は後ろ足の膝が支持脚の膝より前（挟み込み）です。脚が速く動く瞬間の値のため、判定したコマが1つずれたり、端末（骨格モデルの計算方式）が違ったりすると数度変わります（同じ動画で前83°と前87°）。体幹は、研究の水平からの角度を、このアプリの角度（鉛直から）に直して比べます。</p>
           <p>床反力（「力」）：フォースプレートを使わず、動画と体重から1回の接地（ブロックは押している間）の平均の力を出します。上向きは体重×9.8×（滞空時間÷接地時間＋1）（Morinら 2005）。前向きは体重×その接地で増えた速さ÷接地時間で、速さは骨格から求めた全身の重心が空中で進む速さ（空中では前向きの速さが変わらないため）。空中の速さは、ブロックを離れてから最後の接地までのすべてのコマに「空中は速さが一定、接地中は前の空中の速さから次の空中の速さへ、途中2か所で曲がりながら変わる」一続きの動きを当てはめて求めます（空中のコマだけでは骨格の点の揺れで1歩の値が体重の±0.15倍ほど動き、接地中に一定に増えるとすると、接地の前半にブレーキがある時に速さを低く読んだため。2026-10-11）。ブロックは体重×離れた後の空中の速さ÷押した時間（重心が動き始めてから前足が離れるまで。動き始めは、重心が約1cm動いた時からさかのぼって求め、さかのぼりは0.05秒まで）、上向きは手で支えた分も含みます。この計算で分かるのは区間全体の平均です。矢印は写真とは別の図に、区間全体の平均の向きとして表示します。矢印の長さは一定で、大きさは数値で示します。接地中の各瞬間の力は求めていないため、写真に力の矢印を重ねたり、どの瞬間に力が前向き・上向きだったかを判定したりはできません。距離は身長と胴の長さの比（胴は身長の0.288、Drillis・Contini 1966）から出すため、身長が実際と違うと前向きの力もその割合だけずれます（目安±1割）。参考値と比べるのは、男子と女子の両方の値が同じ研究でそろうブロックの前向きの力だけです：スロベニアの国内トップ級の選手（男子22人・女子6人、平均17歳、力を測るブロック、練習のスタート10回の平均）の、ブロックを離れる速さと押した時間（男子3.20 m/s・0.349秒、女子3.03 m/s・0.363秒、Mirkovら 2020）から計算した男子0.93倍・女子0.85倍。「参考値」の女子／男子で選んだ方と比べ、0.85〜1.15倍を「男子（女子）の参考値並み」とします。1・2歩目の離地の速さや、ブロックを離れるときの上向きの速さ（力の向きの目安に必要）は、女子の値が見つからないため比べません。1回の値は腰や手足の点のずれで大きく変わることがあるので、同じ条件の何本かで比べてください。</p>
           <p>参考値の出典（研究）：構えの膝はBezodisら（2019、総説：前膝91〜99°、後膝117〜136°）、速い選手ほど前膝が深いことはCiacciら（2017、世界トップ・一流の男女20人）、女子の前膝の平均（約103°）と構えの体幹はČohら（1998、男子13人・女子11人）。ブロックを離れてから1歩目の接地までと1歩目の接地時間はBezodisら（2019：ダイヤモンドリーグの選手は100m 女子11.10秒・男子10.03秒、その下の群は11.95秒・10.74秒）。1歩目の体幹・脛・ももの開きの世界トップの値は、2018年世界室内60m決勝の男子8人（Walkerら 2021：離地の体幹とももの開きの2つで、1歩目の推進の違いの約9割を説明）。鍛えた選手の脛・ももの開き・空中時間は男子15人・女子6人（女子の100m平均11.79秒、Donaldsonら 2022）。接地で脛が前に倒れているほど良いことはDonaldsonら（2020、一流と準一流の比較）と2023年の研究（J Sports Sci）。接地のときの挟み込みが速さと結びつくのは最高速度の局面（Miyashiroら 2019）で、加速では離地で支持脚のももを後ろまで伸ばす選手ほど速い結果です（Haugenら 2018）。歩ごとの流れ（歩ごとに接地時間が短くなり、脛と体幹が起きていく）はBezodisら（2019）とDonaldsonら（2022）。グラフの点線はČoh・Tomazin（2006、100m 10.15秒の選手）の1〜4歩目です。</p>
-          <p>骨格：選手を見つけて追い、接地・離地を判定するのはMediaPipe、角度と画像・スロー再生の骨格はRTMPose（{measured?.refiner === 'webgpu' ? 'WebGPU' : measured?.refiner === 'wasm' ? 'WebAssembly' : '今回は未使用'}）です。かがんだ構えではRTMPoseの方が膝・腰の位置が体に合い、接地・離地の時刻は映像との差がMediaPipeの方が小さかったためです（3人の検証動画）。</p>
+          <p>骨格：選手を見つけて追い、接地・離地を判定するのはMediaPipe、角度と画像・スロー再生の骨格はRTMPose（{data?.refiner === 'webgpu' ? 'WebGPU' : data?.refiner === 'wasm' ? 'WebAssembly' : '今回は未使用'}）です。かがんだ構えではRTMPoseの方が膝・腰の位置が体に合い、接地・離地の時刻は映像との差がMediaPipeの方が小さかったためです（3人の検証動画）。</p>
+          {light && <p>軽い解析（コマを自分で選ぶ・試作）：構え・ブロックを離れる瞬間・各歩の接地と離地は、あなたが選んだコマです（接地は足が床に着いた最初のコマ、離地とブロックはまだ着いている最後のコマ。時刻はそのコマと前・後のコマの間）。骨格のAIは、選んだコマ（構えはその前の4コマ、ブロックは前後2コマも）だけを見ます。次の接地・離地の予測は、前の歩の接地時間と滞空時間からの目安です。全部のコマで体を追わないため、ブロックの力と前向きの力、スロー再生の瞬間以外の骨格は出しません。同じコマを選べば、角度と時間は「解析する」と同じ計算です（構えの角度だけは、使うコマが違うため数度変わることがあります）。</p>}
           <p>接地・離地・ブロックを離れる瞬間は、「確認」で1コマ単位で直せます。直した値には ✎ を付け、保存（JSON）には自動の結果も残します。暗い動画や、カメラの性能が低いスマホの動画では、自動の判定が1コマ以上ずれることがあります。</p>
           <p>この解析の時間はコマ単位（1/240秒）で判定しているため、0.01〜0.02秒の差は誤差の範囲です。ブロックを離れる瞬間は平均で約0.01秒早めに判定するため、1歩目の接地までの時間は少し長めに出ます。</p></details>
       </>}

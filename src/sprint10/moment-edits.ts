@@ -8,7 +8,8 @@ import type { CrouchFrame } from './crouch';
 /** The frames the user chose, by moment key: `td{n}` / `to{n}` for contact n's touchdown / toe-off, others by event. */
 export type Edits = Readonly<Record<string, number>>;
 export interface ReviewMoment {
-  key: string; kind: 'clearance' | 'touchdown' | 'toeOff' | 'release' | 'crossing';
+  /** 'set': the crouch start's set, chosen by hand in its light mode (crouch-pick.ts). */
+  key: string; kind: 'set' | 'clearance' | 'touchdown' | 'toeOff' | 'release' | 'crossing';
   /** The contact's index (`td{n}`, `to{n}`), else null. */
   step: number | null;
   label: string; short: string;

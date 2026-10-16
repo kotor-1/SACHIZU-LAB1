@@ -1,0 +1,34 @@
+/* The crouch start's light mode (CrouchPick.tsx): the moments set by hand, the sample for each, the slider. */
+/* One column that may shrink: the moments' row scrolls sideways inside it (a grid sized to it ran past the card). */
+.pick-view{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}.pick-view>*{min-width:0}
+.pick-card>h2{margin-bottom:10px}
+.pick-intro>summary{display:flex;align-items:center;gap:8px;min-height:48px;font-size:15px;font-weight:750;cursor:pointer;list-style:none}
+/* The line under the title: lines of even length, broken between phrases where the browser can (no lone last kana). */
+.pick-intro>summary small{display:block;margin-top:3px;font-size:12.5px;font-weight:650;line-height:1.5;color:var(--sz-accent);text-wrap:balance;word-break:auto-phrase}
+.pick-intro>summary::-webkit-details-marker{display:none}
+.pick-intro>summary::after{content:'＋';margin-left:auto;padding-left:12px;color:var(--sz-muted)}.pick-intro[open]>summary::after{content:'－'}
+.pick-intro p{margin:6px 0 10px;font-size:13px;line-height:1.65;color:var(--sz-text-2)}
+.sprint10 .pick-intro button{width:100%}
+.pick-guide{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--sz-line);border-radius:12px;background:var(--sz-surface-2)}
+.pick-guide-pictures{display:flex;align-items:center;gap:6px}
+.pick-sample{display:block;width:92px;height:69px}
+.pick-foot{display:block;width:60px;height:45px;border-radius:8px;background:var(--sz-surface-3)}
+.pick-guide-words small{display:block;font-size:11px;font-weight:750;letter-spacing:.04em;color:var(--sz-accent)}
+.pick-guide-words strong{display:block;font-size:14px;line-height:1.4;color:var(--sz-text)}
+.pick-guide-words p{margin:2px 0 0;font-size:12px;line-height:1.5;color:var(--sz-text-2)}
+.pick-ground{stroke:var(--sz-line-strong)}
+.pick-block{fill:var(--sz-surface-3);stroke:var(--sz-faint);stroke-width:.02}
+.pick-body polyline,.pick-body line,.pick-watch polyline{fill:none;stroke-linecap:round;stroke-linejoin:round}
+.pick-body polyline,.pick-body line{stroke:var(--sz-text-2)}.pick-body circle{fill:var(--sz-text-2)}
+.pick-watch polyline{stroke:var(--sz-accent)}.pick-watch circle,.pick-ring{stroke:var(--sz-accent)}
+.pick-shoe{fill:var(--sz-text-2);stroke:var(--sz-bg)}
+.crouch-review-scrub{display:grid;grid-template-columns:48px minmax(0,1fr) auto;align-items:center;gap:10px}
+.sprint10 .crouch-review-scrub button{min-height:44px;padding:0;font-size:15px}
+.crouch-review-scrub input{width:100%;accent-color:var(--sz-accent)}
+.crouch-review-scrub span{min-width:4.4em;text-align:right;font-size:13px;color:var(--sz-muted);font-variant-numeric:tabular-nums}
+.sprint10 .crouch-review-moments button.upcoming{opacity:.4;border-style:dashed}
+.pick-status{margin:0;min-height:1.4em;font-size:13px;color:var(--sz-muted)}
+.pick-finish{display:grid;gap:6px}.sprint10 .pick-finish .sprint10-primary{width:100%}
+.pick-finish small{font-size:12px;line-height:1.5;color:var(--sz-muted);text-align:center}
+.sprint10 .pick-quit{width:100%;margin-top:10px;background:transparent;color:var(--sz-text-2)}
+@media(max-width:360px){.pick-guide{grid-template-columns:1fr}.pick-guide-pictures{justify-content:center}}

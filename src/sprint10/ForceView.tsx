@@ -158,7 +158,7 @@ function NumberBox({ label, unit, value, onValue, min, max, example }: { label: 
 /** Contact-period estimates only: no still frame or posture is presented as an instantaneous force measurement. The
  * crouch start's block is set against the men's or the women's 参考値 of one study (FORCE_STUDY), the only values found
  * for both. */
-export default function ForceView({ kind, contacts, frames, width: W, height: H, direction, block, pxPerM, top = false, sex = 'male', onSex }: {
+export default function ForceView({ kind, contacts, frames, width: W, height: H, direction, block, pxPerM, top = false, sex = 'male', onSex, verticalOnly = false }: {
   kind: 'crouch' | 'run'; contacts: readonly Contact[]; frames: readonly CrouchFrame[]; width: number; height: number; direction: number;
   /** The crouch start: whose 参考値 to compare the block with (the same choice as 参考値と比べる). */
   sex?: Sex; onSex?: (s: Sex) => void;
@@ -168,12 +168,15 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
   block?: { moveStart: number; clearance: number } | null;
   /** A run: the picture's pixels per metre from its two lines. */
   pxPerM?: number | null;
+  /** The crouch start's light mode (crouch-pick.ts): the body is not followed through every frame, so only the vertical
+   * force (from the contact and flight times) is given. */
+  verticalOnly?: boolean;
 }) {
   const [weight, setWeight] = useState<number | null>(() => stored(WEIGHT_KEY)), [height, setHeight] = useState<number | null>(() => stored(HEIGHT_KEY));
   useEffect(() => store(WEIGHT_KEY, weight), [weight]); useEffect(() => store(HEIGHT_KEY, height), [height]);
   const track = useMemo(() => bodyTrack(frames, W, H), [frames, W, H]);
-  const scale = useMemo(() => kind === 'run' ? pxPerM ?? null : height ? scaleFromHeight(frames, W, H, height / 100, block?.clearance ?? -Infinity) : null,
-    [kind, pxPerM, height, frames, W, H, block?.clearance]);
+  const scale = useMemo(() => verticalOnly ? null : kind === 'run' ? pxPerM ?? null : height ? scaleFromHeight(frames, W, H, height / 100, block?.clearance ?? -Infinity) : null,
+    [verticalOnly, kind, pxPerM, height, frames, W, H, block?.clearance]);
   const forces: GroundForces | null = useMemo(() => weight ? groundForces({ mass: weight, contacts, track, pxPerM: scale, scaleSource: kind === 'run' ? 'lines' : 'height', direction,
     speeds: kind === 'run' ? 'steps' : 'flights',
     block: block ? { moveStart: block.moveStart, clearance: block.clearance } : null }) : null, [weight, contacts, track, scale, kind, direction, block]);
@@ -207,12 +210,13 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
     <p className="force-limit">接地中のどの瞬間に、どちらへ力を出したかは、この結果では判断できません。</p>
     <div className="force-inputs">
       <NumberBox label="体重" unit="kg" value={weight} onValue={setWeight} min={20} max={150} example="例 55" />
-      {kind === 'crouch' && <NumberBox label="身長" unit="cm" value={height} onValue={setHeight} min={100} max={220} example="例 160" />}
+      {kind === 'crouch' && !verticalOnly && <NumberBox label="身長" unit="cm" value={height} onValue={setHeight} min={100} max={220} example="例 160" />}
       {kind === 'crouch' && onSex && <div className="force-sex"><span>参考値</span><div className="sprint10-seg" role="group" aria-label="参考値">{(['female', 'male'] as Sex[]).map(s =>
         <button key={s} type="button" aria-pressed={sex === s} onClick={() => onSex(s)}>{s === 'female' ? '女子' : '男子'}</button>)}</div></div>}
     </div>
-    {!weight ? <p className="sprint10-hint">体重を入れると、{kind === 'crouch' ? 'ブロックと' : ''}1歩ごとの平均の力を出します。値はこの端末にだけ残ります。</p> : <>
-      {kind === 'crouch' && !height && <p className="sprint10-note">身長を入れると、前向きの平均の力と、平均の力の向きも出ます（今は上向きの力だけ）。</p>}
+    {!weight ? <p className="sprint10-hint">体重を入れると、{kind === 'crouch' && !verticalOnly ? 'ブロックと' : ''}1歩ごとの平均の力を出します。値はこの端末にだけ残ります。</p> : <>
+      {verticalOnly && <p className="sprint10-note">コマを自分で選んだ解析では、上向きの平均の力だけを出します（前向きの力とブロックの力は、全部のコマで体を追うため「解析する」で出ます）。</p>}
+      {kind === 'crouch' && !verticalOnly && !height && <p className="sprint10-note">身長を入れると、前向きの平均の力と、平均の力の向きも出ます（今は上向きの力だけ）。</p>}
       {kind === 'run' && !pxPerM && <p className="sprint10-note">2本の線から距離が分からないため、上向きの平均の力だけを出しています。</p>}
       {top && <p className="sprint10-note">最高速度の区間では、前向きの力は平均するとほぼ0になります（途中で力を出していないという意味ではありません）。1歩ごとの前向きの値は測定のぶれ（体重の±0.2倍ほど）の範囲なので、この区間では上向きの力を見てください。</p>}
       <p className="force-weight-note">数値は、体重を1とした平均の力の大きさです。</p>
@@ -241,7 +245,7 @@ export default function ForceView({ kind, contacts, frames, width: W, height: H,
         </dl>
         </details>
       </div>}
-      <p className="sprint10-hint">{kind === 'crouch' ? '参考値と比べるのは、男子と女子の両方の値があるブロックだけです（区間平均）。' : ''}その瞬間の力や、姿勢の良し悪しを示すものではありません。出し方は「数値の見方」で確認できます。</p>
+      <p className="sprint10-hint">{kind === 'crouch' && !verticalOnly ? '参考値と比べるのは、男子と女子の両方の値があるブロックだけです（区間平均）。' : ''}その瞬間の力や、姿勢の良し悪しを示すものではありません。出し方は「数値の見方」で確認できます。</p>
     </>}
   </section>;
 }
