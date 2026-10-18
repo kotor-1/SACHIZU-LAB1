@@ -35,6 +35,10 @@ export function useStandPick(file: File | null, url: string) {
   const [found, setFound] = useState<ReadonlyMap<number, FoundPose>>(new Map()), [asked, setAsked] = useState<ReadonlySet<number>>(new Set());
   // The athlete tapped (normalized) at a frame where they were found; null until then.
   const [tap, setTap] = useState<{ x: number; y: number; frame: number } | null>(null), [tapping, setTapping] = useState(false);
+  // 「このコマに決める」 pressed on the takeoff's touchdown before the athlete was found (the user, 2026-10-18: 「フレーム調整
+  // してこのコマで決めるを押した時反応しない」: the only word was a line far below the button): the frame pressed, set as
+  // soon as the athlete is found at it; `asked` counts the presses, to say so by the button and show the picture again.
+  const [queued, setQueued] = useState<number | null>(null), [askedTap, setAskedTap] = useState(0);
   const poses = useRef<PickPoses | null>(null), owner = useRef<AbortController | null>(null), askedNow = useRef(new Set<number>());
   // How long the models took to be made (ms from the start), for the checks on slow phones (data-ready-ms).
   const [readyMs, setReadyMs] = useState<number | null>(null);
@@ -43,7 +47,7 @@ export function useStandPick(file: File | null, url: string) {
   const reset = useCallback(() => {
     owner.current?.abort(); owner.current = null; poses.current?.dispose(); poses.current = null;
     setPhase('idle'); setStatus(''); setTimeline(null); setSize(null); setPicks({}); setAt(null); setFound(new Map()); setAsked(new Set());
-    setTap(null); setTapping(false); askedNow.current = new Set();
+    setTap(null); setTapping(false); setQueued(null); setAskedTap(0); askedNow.current = new Set();
   }, []);
   useEffect(() => reset, [url, reset]);
   // Every frame, with the poses found at the frames the moments now use and at the tap's (where the athlete is), the
@@ -94,12 +98,18 @@ export function useStandPick(file: File | null, url: string) {
       setFound(m => new Map(m).set(frame, r)); setTap({ x, y, frame }); setStatus('');
     }, () => { if (!control.signal.aborted) { setTapping(false); setStatus('選手を探せませんでした。もう一度タップしてください。'); } });
   }
+  // The touchdown pressed before the athlete was found: set once found at that frame (another frame tapped: pressed again).
+  useEffect(() => {
+    if (!tap || queued === null) return;
+    const frame = queued; setQueued(null);
+    if (frame === tap.frame && latest.current.picks.td0 === undefined) decide('td0', frame);
+  }, [tap, queued]);   // eslint-disable-line react-hooks/exhaustive-deps
   /** A moment's frame set: the models look at it round where the athlete should be, and the next moment comes; once both
    * are set while picking, the result (as soon as the models have looked). */
   function decide(key: string, frame: number) {
     const { timeline: tl, tap: tp, found: fd } = latest.current, made = poses.current;
     if (!tl || !made) return;
-    if (key === 'td0' && !tp) { setStatus('先に、跳ぶ選手をタップしてください。'); return; }
+    if (key === 'td0' && !tp) { setQueued(frame); setAskedTap(n => n + 1); return; }
     const next = { ...latest.current.picks, [key]: frame };
     setPicks(next);
     // A frame already looked at with the athlete found (the tap's) is not looked at again.
@@ -118,7 +128,7 @@ export function useStandPick(file: File | null, url: string) {
     setAt(nextStand(next)?.key ?? key);
     if (standEnough(next)) setPhase(p => p === 'picking' ? 'finishing' : p);
   }
-  return { phase, status, frames, size, picks, at, setAt, startFrame, waiting, pending, looked: found.size, tap, tapping, begin, choose, decide, reset, readyMs,
+  return { phase, status, frames, size, picks, at, setAt, startFrame, waiting, pending, looked: found.size, tap, tapping, queued, askedTap, begin, choose, decide, reset, readyMs,
     backend: poses.current?.backend ?? null, took: poses.current?.took ?? [] };
 }
 export type StandSession = ReturnType<typeof useStandPick>;
@@ -145,14 +155,25 @@ export function StandPickView({ session: s, url }: { session: StandSession; url:
   const upcoming = next ? STAND_STEPS.slice(STAND_STEPS.indexOf(next) + 1).map(st => ({ key: st.key, short: st.short })) : [];
   const at = list.some(m => m.key === s.at) ? s.at : list.at(-1)?.key ?? null;
   const preview = useCallback((m: ReviewMoment, frame: number) => standEffects(picks, m.key, frame, frames), [picks, frames]);
+  // A press before the athlete is found shows the picture again (the hooks before the early return below).
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (s.askedTap) root.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }); }, [s.askedTap]);
   if (!frames.length || !W) return <p role="status">{s.status || '動画を読み込んでいます。'}</p>;
   const onTakeoff = at === 'td0';
-  return <div className="pick-view" data-ready-ms={s.readyMs ?? undefined} data-took-ms={s.took.map(Math.round).join(',') || undefined}
+  // By the button while the touchdown waits for the athlete: what to do, or what is going on (the models are made on the
+  // first use, a minute or so on a phone).
+  const preparing = s.readyMs === null ? '（AIを準備しています。初めて使うときは1分ほどかかります）' : '';
+  const ask = !onTakeoff || tap ? null : s.tapping
+    ? `タップした選手を探しています…${preparing}${s.queued !== null ? '　見つかりしだい、このコマに決めます。' : ''}`
+    : s.status && s.status !== 'タップした選手を探しています。' && /見つけられ|探せません/.test(s.status) ? s.status
+    : `先に、映像の中の跳ぶ選手をタップしてください。AIがその選手を見つけてから、このコマに決まります。${preparing}`;
+  return <div ref={root} className="pick-view" data-ready-ms={s.readyMs ?? undefined} data-took-ms={s.took.map(Math.round).join(',') || undefined}
     data-tap={tap ? `${tap.frame}:${tap.x.toFixed(3)},${tap.y.toFixed(3)}` : undefined}>
     <MomentReview url={url} frames={frames} width={W} height={H} list={list} edits={{}} checked={checked} at={at} onAt={s.setAt}
       onSet={s.decide} onRevert={() => undefined} onRevertAll={() => undefined} onDone={() => undefined} preview={preview} down={() => null}
       leg={layout && layout.leg > 0 ? layout.leg : undefined}
       point={(m, frame) => m.key === 'td0' && tap && frame === tap.frame ? { x: tap.x, y: tap.y } : null}
+      note={m => m.key === 'td0' && ask ? <p className={`pick-tap-ask${s.askedTap && !s.tapping ? ' asked' : ''}`} role="status" aria-live="polite">{ask}</p> : null}
       pick={{ guide: m => <StandGuide m={m} tapping={m.key === 'td0' && !tap} />, guessed: m => m.key === next?.key && guess !== null, upcoming,
         onTap: onTakeoff ? s.choose : undefined, zoom: STAND_ZOOM, lastly: '結果が出ます' }} />
     {onTakeoff && tap && <p className="sprint10-hint">選手が違うときは、跳ぶ選手をもう一度タップしてください（「全体」で画面全体を見られます）。</p>}
