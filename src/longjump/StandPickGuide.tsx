@@ -5,30 +5,24 @@ import { PickFoot, StickFigure, type Joints } from '../sprint10/CrouchPickGuide'
  * analysis' frames of すずね幅跳び２, dev-validation/longjump-pick/sample-poses.ts; leg lengths from the stance foot's toe,
  * the ground at 0, running right), the foot to look at in the accent colour, and that foot enlarged. A drawing, not
  * anyone's picture. */
-type Sample = 'takeoffDown' | 'takeoffOff' | 'runDown' | 'runOff';
+type Sample = 'takeoffDown' | 'takeoffOff';
 const SAMPLES: Record<Sample, Joints> = {
   takeoffDown: { 0: [-.71, -1.84], 11: [-.93, -1.55], 12: [-.68, -1.57], 13: [-1.19, -1.38], 14: [-.62, -1.36], 15: [-1, -1.13], 16: [-.44, -1.42], 23: [-.77, -.95], 24: [-.75, -.95],
     25: [-.44, -.58], 26: [-.89, -.48], 27: [-.25, -.07], 28: [-1.32, -.63], 29: [-.29, -.01], 30: [-1.37, -.71], 31: [-.01, -.02], 32: [-1.58, -.56] },
   takeoffOff: { 0: [.48, -2.08], 11: [.46, -1.79], 12: [.31, -1.78], 13: [.69, -1.56], 14: [.14, -1.54], 15: [.67, -1.86], 16: [.05, -1.3], 23: [.4, -1.2], 24: [.51, -1.24],
     25: [.21, -.73], 26: [.94, -1.18], 27: [-.03, -.27], 28: [.75, -.75], 29: [-.11, -.24], 30: [.67, -.7], 31: [.06, -.04], 32: [.84, -.54] },
-  runDown: { 0: [-.21, -1.8], 11: [-.55, -1.57], 12: [-.21, -1.55], 13: [-.88, -1.42], 14: [-.2, -1.27], 15: [-.72, -1.07], 16: [-.06, -1.14], 23: [-.56, -.97], 24: [-.42, -.97],
-    25: [-.25, -.63], 26: [-.47, -.5], 27: [-.25, -.09], 28: [-.86, -.75], 29: [-.31, -.02], 30: [-.94, -.82], 31: [-.02, -.02], 32: [-1.33, -.81] },
-  runOff: { 0: [1.03, -1.84], 11: [.87, -1.61], 12: [.85, -1.61], 13: [1.12, -1.37], 14: [.78, -1.34], 15: [1.22, -1.64], 16: [.84, -1.1], 23: [.69, -1.01], 24: [.88, -1.04],
-    25: [.43, -.58], 26: [1.26, -.93], 27: [.04, -.28], 28: [1.07, -.52], 29: [-.04, -.28], 30: [.99, -.47], 31: [.05, -.05], 32: [1.2, -.31] },
 };
 /** What to set at each moment (a touchdown is the first frame with the foot down, a toe-off the last; crouch.ts frameEdge). */
 export const STAND_TEXT = {
   tap: { title: '跳ぶ選手をタップ', text: '下のつまみで踏切板の近くのコマにして、跳ぶ選手の体をタップします。その選手のまわりを拡大し、AIもその選手を見ます。', zoom: '' },
   takeoffDown: { title: '踏切足が板に着いた最初のコマ', text: '1つ前のコマでは、まだ足が浮いています。', zoom: '靴が板に着いた' },
   takeoffOff: { title: '踏切足のつま先が板に着いている最後のコマ', text: '次のコマで、つま先が板から離れて空中に出ます。', zoom: 'つま先だけ板に着いている' },
-  runDown: { title: '足が地面に着いた最初のコマ', text: '1つ前のコマでは、まだ足が浮いています。', zoom: '靴が地面に着いた' },
-  runOff: { title: 'つま先が地面に着いている最後のコマ', text: '次のコマで、つま先が地面から離れます（かかとはもう上がっています）。', zoom: 'つま先だけ地面に着いている' },
 } as const;
 
 /** The sample and the words for the moment being set; `tapping` while the athlete is not tapped yet. */
-export function StandGuide({ m, tapping }: { m: { key: string; kind: string }; tapping: boolean }) {
-  const which: Sample | 'tap' = tapping ? 'tap' : m.key === 'td0' ? 'takeoffDown' : m.key === 'to0' ? 'takeoffOff' : m.kind === 'touchdown' ? 'runDown' : 'runOff';
-  const t = STAND_TEXT[which], down = which === 'takeoffDown' || which === 'runDown';
+export function StandGuide({ m, tapping }: { m: { kind: string }; tapping: boolean }) {
+  const which: Sample | 'tap' = tapping ? 'tap' : m.kind === 'touchdown' ? 'takeoffDown' : 'takeoffOff';
+  const t = STAND_TEXT[which], down = which === 'takeoffDown';
   return <div className="pick-guide">
     <div className="pick-guide-pictures">
       <StickFigure j={SAMPLES[which === 'tap' ? 'takeoffDown' : which]} label={`見本：${t.title}`} accent={which !== 'tap'} />

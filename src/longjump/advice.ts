@@ -61,7 +61,7 @@ export const STAND_GUIDE = { contact: [.133, .140], knee: 165.5, legAngle: 60, s
 export const STAND_LONGER = .01;
 
 /** The advice from the stands: the takeoff's contact time and the leg's angle at its touchdown first (research ties both to
- * the distance, and neither needs a scale), then the rhythm of the last two steps, the trunk and the knee (reference). */
+ * the distance, and neither needs a scale), then the trunk and the knee at the touchdown (reference). */
 export function standAdvice(r: LongJumpResult): HurdleAdvice[] {
   const out: HurdleAdvice[] = [], S = STAND_GUIDE, [lo, hi] = S.contact;
   const c = r.takeoffContact;
@@ -71,19 +71,14 @@ export function standAdvice(r: LongJumpResult): HurdleAdvice[] {
     out.push({ topic: '踏切の接地時間', level, text: `${c.toFixed(3)}秒（参考値 ${lo.toFixed(3)}〜${hi.toFixed(3)}秒：記録5.5〜6.2 mの選手の平均）。${c <= hi
       ? '参考値並みか短く、素早く踏み切れています。' : level === 'good' ? `参考値並みです（${STAND_LONGER.toFixed(2)}秒ほどの差は、コマの数え方による誤差の範囲です）。`
       : level === 'info' ? '参考値よりやや長めです。接地時間が短いほど遠くへ跳べている傾向があります。'
-      : '参考値より長めです。接地時間が短いほど遠くへ跳べている傾向があります。踏切の膝の曲がり（「姿勢」）や、最後の2歩のリズムと合わせて確かめてください。'}` });
+      : '参考値より長めです。接地時間が短いほど遠くへ跳べている傾向があります。踏切の膝の曲がり（「姿勢」）と合わせて確かめてください。'}` });
   }
   const a = r.posture.legAngle;
   if (a !== null)
     out.push({ topic: '踏切で脚を着く角度', level: 'info', text: `股関節から足首の線が水平から ${Math.round(a)}°（参考値 約${S.legAngle}°）。小さいほど足を体の前に着いていて、記録の良い選手ほど小さい傾向があります。斜めから撮ると大きめに出ます（${S.slant.map(([d, v]) => `斜め${d}°で約${v}°`).join('、')}に見えます）。` });
-  if (r.rhythm !== null) {
-    const p = Math.round(r.rhythm * 100), level = r.rhythm >= 1 ? 'check' : r.rhythm <= .9 ? 'good' : 'info';
-    out.push({ topic: '最後の2歩のリズム', level, text: `最後の1歩の時間は、その前の歩の ${p}%（参考値 ${Math.round(LONG_JUMP_GUIDE.rhythm * 100)}%：世界室内の決勝の平均から）。${level === 'check'
-      ? '最後の1歩がその前の歩より長くなっています（間延び）。' : level === 'good' ? '最後の1歩を短く速く入れています。' : '最後の1歩は、その前の歩より少し短い程度です。'}` });
-  }
-  const lean = (v: number | null) => v === null ? '—' : v < 0 ? `後ろへ ${Math.round(-v)}°` : `前へ ${Math.round(v)}°`;
-  if (r.posture.trunk !== null || r.posture.trunkPenult !== null)
-    out.push({ topic: '上体', level: 'info', text: `1歩前の接地で${lean(r.posture.trunkPenult)}、踏切の接地で${lean(r.posture.trunk)}（鉛直から。記録との直接の結びつきは見つかっていないため、参考です）。` });
+  const t = r.posture.trunk;
+  if (t !== null)
+    out.push({ topic: '上体', level: 'info', text: `踏切の接地で${t < 0 ? `後ろへ ${Math.round(-t)}°` : `前へ ${Math.round(t)}°`}（鉛直から。記録との直接の結びつきは見つかっていないため、参考です）。` });
   if (r.posture.knee !== null)
     out.push({ topic: '踏切接地の膝', level: 'info', text: `${Math.round(r.posture.knee)}°（参考値 約${Math.round(S.knee)}°：記録5.50 mの選手の平均。180°が伸び切った状態）。` });
   return out;

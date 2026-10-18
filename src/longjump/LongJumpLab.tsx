@@ -198,11 +198,11 @@ export default function LongJumpLab() {
     {/* From the stands (the user, 2026-10-18): folded until asked for, then the moments set one by one in this card. */}
     <section className="sprint10-card pick-card" aria-label="スタンドから撮った動画の解析">
       {standing ? <><h2>コマを選ぶ（スタンドから・試作）</h2>
-        {stand.phase === 'failed' ? <p role="alert" className="sprint10-note">{stand.status}</p> : <StandPickView session={stand} url={url} onFinish={stand.finish} />}
+        {stand.phase === 'failed' ? <p role="alert" className="sprint10-note">{stand.status}</p> : <StandPickView session={stand} url={url} />}
         <button type="button" className="pick-quit" onClick={stand.reset}>コマ選びをやめる</button></>
       : <details className="pick-intro"><summary><span>スタンドから撮った動画：コマを自分で選んで解析（試作）<small>解析しながら、自分の動きを1コマずつ確かめられます</small></span></summary>
-        <p>試合のスタンドから撮った動画のように、選手が小さく映る・まわりに人がいる・カメラを動かして撮った動画向けです。踏切の近くで跳ぶ選手をタップしてから、踏切の接地・離地、1歩前と2歩前の離地・接地のコマを、見本を見ながら合わせます。踏切の接地のあとは次のコマを予測して先に出すので、ずれていれば◀▶で直してください。AIは選んだコマだけ骨格を見るので、すぐに結果が出ます。</p>
-        <p>出す値：踏切の接地時間・踏切で脚を着く角度・最後の2歩のリズム（上体と膝は参考）。助走速度と踏切角度は出しません（カメラの固定と物差しが要るため）。時間は撮る向きの影響を受けませんが、角度は斜めから撮るとずれます。なるべく踏切板の真横に近い席から、1秒120コマのスローモーションで撮ってください。</p>
+        <p>試合のスタンドから撮った動画のように、選手が小さく映る・まわりに人がいる・カメラを動かして撮った動画向けです。踏切の近くで跳ぶ選手をタップしてから、踏切の接地と離地の2コマを、見本を見ながら合わせます。離地は予測したコマを先に出すので、ずれていれば◀▶で直してください。AIは選んだ2コマだけ骨格を見るので、離地を決めるとすぐに結果が出ます。</p>
+        <p>出す値：踏切の接地時間・踏切で脚を着く角度（上体と膝は参考）。助走速度と踏切角度は出しません（カメラの固定と物差しが要るため）。時間は撮る向きの影響を受けませんが、角度は斜めから撮るとずれます。なるべく踏切板の真横に近い席から、1秒120コマのスローモーションで撮ってください。踏切の前後が映っていれば足ります。</p>
         <button type="button" disabled={!file || busy} onClick={() => { setMeasured(null); setMessage(''); void stand.begin(); }}>{stand.phase === 'done' ? '最初から選び直す' : 'コマを自分で選ぶ'}</button>
       </details>}
     </section>

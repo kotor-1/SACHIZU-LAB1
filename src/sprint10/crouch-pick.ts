@@ -128,9 +128,8 @@ export function pickLeg(frames: readonly CrouchFrame[], W: number, H: number): n
     ? [Math.hypot((f.pose![a].x - f.pose![b].x) * W, (f.pose![a].y - f.pose![b].y) * H)] : []) : []), LEG_QUANTILE);
 }
 /** RTMPose's feet mended from MediaPipe's (leg-check.ts), as the analysis does before anything is judged or drawn; the
- * frames without RTMPose's pose as they are. */
-export function withMendedFeet(frames: readonly CrouchFrame[], W: number, H: number): CrouchFrame[] {
-  const leg = pickLeg(frames, W, H);
+ * frames without RTMPose's pose as they are. `leg`: the leg length to mend by (the long jump from the stands has its own). */
+export function withMendedFeet(frames: readonly CrouchFrame[], W: number, H: number, leg = pickLeg(frames, W, H)): CrouchFrame[] {
   if (!(leg > 0)) return frames as CrouchFrame[];
   return frames.map(f => { if (!f.refined) return f; const mended = mendFeet(f.refined, f.pose, W, H, leg); return mended === f.refined ? f : { ...f, refined: mended }; });
 }

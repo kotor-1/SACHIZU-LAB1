@@ -37,9 +37,8 @@ export interface PickOptions {
   onTap?: (x: number, y: number, frame: number) => void;
   /** The narrowest enlarged view, as a share of the picture's width (else 0.15): an athlete far away is small. */
   zoom?: number;
-  /** Each moment's place in time when the list is in another order (the long jump sets its takeoff first, then the
-   * steps before): a moment's frame stays between its neighbours in time. */
-  seq?: (m: ReviewMoment) => number;
+  /** What setting the last moment leads to, said instead of going on to the next (the long jump from the stands: its result). */
+  lastly?: string;
 }
 /** Slow play while frames are searched (pick): a quarter of the speed. */
 const PLAY_RATE = .25;
@@ -86,7 +85,6 @@ export function MomentReview({ url, frames, width: W, height: H, list, edits, ch
   // A moment stays between its neighbours of the same kind in time: a gate's crossing between the gates, a foot's moments
   // between the feet's (the 10 m lists both: a gate could not be moved past a touchdown near it, nor a touchdown past it).
   const peers = m ? list.filter(q => (q.kind === 'crossing') === (m.kind === 'crossing')) : [];
-  if (pick?.seq) peers.sort((a, b) => pick.seq!(a) - pick.seq!(b));
   const i = m ? peers.indexOf(m) : -1, lo = i > 0 ? peers[i - 1].frame : -Infinity, hi = i >= 0 && i + 1 < peers.length ? peers[i + 1].frame : Infinity;
   const allowed = (frame: number) => frame > lo && frame < hi && byFrame.has(frame);
 
@@ -267,7 +265,7 @@ export function MomentReview({ url, frames, width: W, height: H, list, edits, ch
         <div><button type="button" className="sprint10-primary" onClick={() => { const { go } = leaving; decide(); go(); }}>決めて移る</button>
           <button type="button" onClick={() => { const { go } = leaving; setLeaving(null); go(); }}>決めずに移る</button>
           <button type="button" onClick={() => setLeaving(null)}>キャンセル</button></div></div>
-      : <p className="crouch-review-pending" role="status">{pick ? 'まだ決めていません。合っていれば「このコマに決める」を押すと、次の瞬間へ進みます。' : 'まだ決めていません。「このコマに決める」を押すと数値に入ります。'}</p>)}
+      : <p className="crouch-review-pending" role="status">{pick ? `まだ決めていません。合っていれば「このコマに決める」を押すと、${pick.lastly && !pick.upcoming.length && !isSet ? pick.lastly : '次の瞬間へ進みます'}。` : 'まだ決めていません。「このコマに決める」を押すと数値に入ります。'}</p>)}
     <div className="crouch-review-actions">
       <button type="button" aria-label="1コマ戻る" onClick={() => step(-1)}>◀</button>
       <button type="button" className={candidate || undecided ? 'sprint10-primary pending' : 'sprint10-primary'} onClick={decide}>{cursor === m.frame && (!pick || isSet) ? 'OK・次へ' : 'このコマに決める'}</button>

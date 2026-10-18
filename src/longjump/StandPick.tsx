@@ -11,23 +11,19 @@ import type { ReviewMoment } from '../sprint10/moment-edits';
 import { leaveReview, MomentReview } from '../sprint10/MomentReview';
 import { usePoseEdits } from '../sprint10/pose-edits';
 import { READ_LIMIT_BYTES } from '../sprint10/recording';
-import { LONG_JUMP_GUIDE, STAND_GUIDE, standAdvice } from './advice';
-import { lowestFoot, nextStand, standEffects, standEnough, standFlags, standFocus, standFrames, standGuess, standHint, standLayout, standResult, standSteps,
+import { STAND_GUIDE, standAdvice } from './advice';
+import { lowestFoot, nextStand, standEffects, standEnough, standFlags, standFocus, standFrames, standGuess, standHint, standLayout, standLeg, standResult, standSteps,
   STAND_STEPS, STAND_VERSION, type Picks, type StandStep } from './stand-pick';
 import { StandGuide } from './StandPickGuide';
 import '../sprint10/crouch-pick.css';
 
-/** The long jump from the stands on screen (stand-pick.ts): the athlete tapped, then each moment set with the check's
- * controls (MomentReview), a sample picture saying which frame, the frames after the first guessed; the pose models look
- * only at the frames set, round the athlete, while the user goes on. */
+/** The long jump from the stands on screen (stand-pick.ts): the athlete tapped, then the takeoff's touchdown and toe-off set
+ * with the check's controls (MomentReview), a sample picture saying which frame, the toe-off guessed; the pose models look
+ * only at the frames set, round the athlete, and the result comes once both are set. */
 export type StandPhase = 'idle' | 'loading' | 'picking' | 'finishing' | 'done' | 'failed';
-/** The moments shown greyed after the one being set. */
-const UPCOMING = 3;
 /** The narrowest enlarged view, as a share of the picture's width: from the stands the athlete is small (the check's 0.15
  * left a foot of 15 px on a 288 px wide view). */
 const STAND_ZOOM = .08;
-/** Each moment's place in time (the moments are set from the takeoff back). */
-const SEQ: Record<string, number> = { td2: 0, to2: 1, td1: 2, to1: 3, td0: 4, to0: 5 };
 
 export function useStandPick(file: File | null, url: string) {
   const [phase, setPhase] = useState<StandPhase>('idle'), [status, setStatus] = useState('');
@@ -53,7 +49,7 @@ export function useStandPick(file: File | null, url: string) {
     if (!timeline) return [];
     const keep = new Set([...standFrames(picks), ...(tap ? [tap.frame] : [])]);
     const withPoses = timeline.map(f => { const p = keep.has(f.frame) ? found.get(f.frame) : undefined; return p ? { ...f, pose: p.pose, refined: p.refined } : f; });
-    return size ? withMendedFeet(withPoses, size.width, size.height) : withPoses;
+    return size ? withMendedFeet(withPoses, size.width, size.height, standLeg(withPoses, size.width, size.height)) : withPoses;
   }, [timeline, picks, found, tap, size]);
   const pending = useMemo(() => new Set([...asked].filter(f => !found.has(f))), [asked, found]), waiting = pending.size;
   useEffect(() => { if (phase === 'finishing' && !waiting) setPhase('done'); }, [phase, waiting]);
@@ -95,7 +91,8 @@ export function useStandPick(file: File | null, url: string) {
       setFound(m => new Map(m).set(frame, r)); setTap({ x, y, frame }); setStatus('');
     }, () => { if (!control.signal.aborted) { setTapping(false); setStatus('選手を探せませんでした。もう一度タップしてください。'); } });
   }
-  /** A moment's frame set: the models look at it round where the athlete should be, and the next moment comes. */
+  /** A moment's frame set: the models look at it round where the athlete should be, and the next moment comes; once both
+   * are set while picking, the result (as soon as the models have looked). */
   function decide(key: string, frame: number) {
     const { timeline: tl, tap: tp, found: fd } = latest.current, made = poses.current;
     if (!tl || !made) return;
@@ -116,36 +113,33 @@ export function useStandPick(file: File | null, url: string) {
       }).then(r => setFound(m => new Map(m).set(frame, r)), () => setFound(m => new Map(m).set(frame, { pose: null, refined: null })));
     }
     setAt(nextStand(next)?.key ?? key);
+    if (standEnough(next)) setPhase(p => p === 'picking' ? 'finishing' : p);
   }
-  /** The result once the models have looked at every frame set. */
-  function finish() { if (standEnough(latest.current.picks)) setPhase(waiting ? 'finishing' : 'done'); }
-  return { phase, status, frames, size, picks, at, setAt, startFrame, waiting, pending, looked: found.size, tap, tapping, begin, choose, decide, finish, reset, readyMs,
+  return { phase, status, frames, size, picks, at, setAt, startFrame, waiting, pending, looked: found.size, tap, tapping, begin, choose, decide, reset, readyMs,
     backend: poses.current?.backend ?? null, took: poses.current?.took ?? [] };
 }
 export type StandSession = ReturnType<typeof useStandPick>;
 
-/** The moments set and the one to set next, with the check's controls; `onFinish` (while picking) to the result. */
-export function StandPickView({ session: s, url, onFinish }: { session: StandSession; url: string; onFinish?: () => void }) {
+/** The moments set and the one to set next, with the check's controls. */
+export function StandPickView({ session: s, url }: { session: StandSession; url: string }) {
   const { frames, picks, size, tap } = s, W = size?.width ?? 0, H = size?.height ?? 0;
   const layout = useMemo(() => W ? standLayout(picks, frames, W, H) : null, [picks, frames, W, H]);
   const tapFrame = tap ? frames.find(f => f.frame === tap.frame) : undefined;
   const tapFoot = useMemo(() => tapFrame ? lowestFoot(anglePose(tapFrame), W, H) : null, [tapFrame, W, H]);
   const done = standSteps(picks), next = nextStand(picks);
-  // The next moment's frame: the takeoff's touchdown where the athlete was tapped (else where the search starts), the
-  // others guessed; a guess before the video's start is not in it.
+  // The next moment's frame: the touchdown where the athlete was tapped (else where the search starts), the toe-off
+  // guessed (the video's last frame when the guess is past its end).
   const guess = next ? standGuess(next.key, picks, frames) : null;
-  const start = !next ? null : next.key === 'td0' ? tap?.frame ?? s.startFrame : guess;
-  const ended = !!next && next.key !== 'td0' && start === null;
+  const start = !next ? null : next.key === 'td0' ? tap?.frame ?? s.startFrame : guess ?? frames.at(-1)?.frame ?? null;
   const flags = useMemo(() => standFlags(picks, frames), [picks, frames]);
   const moment = (st: StandStep, frame: number): ReviewMoment => {
-    const f = frames.find(q => q.frame === frame), place = layout ? standFocus(st.key, f?.pts ?? 0, layout, tapFoot, W, H) : { focus: null, ground: null };
-    return { key: st.key, kind: st.kind, step: st.before, label: st.label, short: st.short, frame, pts: f?.pts ?? 0, autoFrame: frame,
+    const f = frames.find(q => q.frame === frame), place = layout ? standFocus(st.key, layout, tapFoot, W, H) : { focus: null, ground: null };
+    return { key: st.key, kind: st.kind, step: 0, label: st.label, short: st.short, frame, pts: f?.pts ?? 0, autoFrame: frame,
       focus: place.focus, ground: place.ground, flag: flags.get(st.key) ?? null };
   };
   const list = [...done.map(st => moment(st, picks[st.key])), ...(next && start !== null ? [moment(next, start)] : [])];
   const checked = useMemo(() => new Set(done.map(st => st.key)), [done.map(st => st.key).join()]);   // eslint-disable-line react-hooks/exhaustive-deps
-  const upcoming = STAND_STEPS.slice(STAND_STEPS.findIndex(st => st.key === next?.key) + 1).slice(0, next && !ended ? UPCOMING : 0)
-    .map(st => ({ key: st.key, short: st.short }));
+  const upcoming = next ? STAND_STEPS.slice(STAND_STEPS.indexOf(next) + 1).map(st => ({ key: st.key, short: st.short })) : [];
   const at = list.some(m => m.key === s.at) ? s.at : list.at(-1)?.key ?? null;
   const preview = useCallback((m: ReviewMoment, frame: number) => standEffects(picks, m.key, frame, frames), [picks, frames]);
   if (!frames.length || !W) return <p role="status">{s.status || '動画を読み込んでいます。'}</p>;
@@ -157,15 +151,9 @@ export function StandPickView({ session: s, url, onFinish }: { session: StandSes
       leg={layout && layout.leg > 0 ? layout.leg : undefined}
       point={(m, frame) => m.key === 'td0' && tap && frame === tap.frame ? { x: tap.x, y: tap.y } : null}
       pick={{ guide: m => <StandGuide m={m} tapping={m.key === 'td0' && !tap} />, guessed: m => m.key === next?.key && guess !== null, upcoming,
-        onTap: onTakeoff ? s.choose : undefined, zoom: STAND_ZOOM, seq: m => SEQ[m.key] ?? 0 }} />
+        onTap: onTakeoff ? s.choose : undefined, zoom: STAND_ZOOM, lastly: '結果が出ます' }} />
     {onTakeoff && tap && <p className="sprint10-hint">選手が違うときは、跳ぶ選手をもう一度タップしてください（「全体」で画面全体を見られます）。</p>}
-    {ended && <p className="sprint10-note" role="status">動画の始まりまで選びました（ここより前の歩は映っていません）。</p>}
-    <p className="pick-status" role="status" aria-live="polite">{s.tapping ? 'タップした選手を探しています。' : s.status || (s.waiting ? `選んだコマの骨格を調べています（あと${s.waiting}コマ）。` : s.looked ? `選んだコマの骨格を調べました（${s.looked}コマ）。` : '')}</p>
-    {onFinish && <div className="pick-finish">
-      <button type="button" className="sprint10-primary" disabled={!standEnough(picks) || s.phase === 'finishing'} onClick={onFinish}>
-        {s.phase === 'finishing' ? '骨格を調べています…' : !next || ended ? '結果を見る' : 'ここまでで結果を見る'}</button>
-      <small>{standEnough(picks) ? '1歩前・2歩前も選ぶと、最後の2歩のリズムが出ます。' : '踏切の接地と離地まで選ぶと、結果を出せます。'}</small>
-    </div>}
+    <p className="pick-status" role="status" aria-live="polite">{s.tapping ? 'タップした選手を探しています。' : s.status || (s.waiting ? `選んだコマの骨格を調べています（あと${s.waiting}コマ）。${s.phase === 'finishing' ? '終わると結果が出ます。' : ''}` : s.looked ? `選んだコマの骨格を調べました（${s.looked}コマ）。` : '')}</p>
   </div>;
 }
 
@@ -210,18 +198,14 @@ export function StandResultCard({ session: s, url, file }: { session: StandSessi
     const href = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = href; a.download = 'long-jump-stands-result.json'; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
   }
-  const [s1, s2] = result.steps, G = LONG_JUMP_GUIDE, S = STAND_GUIDE;
+  const S = STAND_GUIDE;
   const tiles: [string, string, string, string][] = [
     ['踏切の接地時間', result.takeoffContact === null ? '—' : result.takeoffContact.toFixed(3), '秒', `参考値 ${S.contact[0].toFixed(3)}〜${S.contact[1].toFixed(3)}`],
-    ['踏切で脚を着く角度', result.posture.legAngle === null ? '—' : String(Math.round(result.posture.legAngle)), '°', `参考値 約${S.legAngle}°・斜めからだと大きめ`],
-    ['最後の2歩のリズム', result.rhythm === null ? '—' : String(Math.round(result.rhythm * 100)), '%', result.rhythm === null ? '1歩前・2歩前を選ぶと出ます' : `参考値 ${Math.round(G.rhythm * 100)}%`]];
+    ['踏切で脚を着く角度', result.posture.legAngle === null ? '—' : String(Math.round(result.posture.legAngle)), '°', `参考値 約${S.legAngle}°・斜めからだと大きめ`]];
   const rows: [string, string, string][] = [
-    ...(s2 ? [[`2歩前（接地 → 次の接地）`, seconds(s2.stepTime), `接地 ${seconds(s2.contact)}・空中 ${seconds(s2.flight)}`] as [string, string, string]] : []),
-    ...(s1 ? [[`最後の1歩（接地 → 踏切の接地）`, seconds(s1.stepTime), `接地 ${seconds(s1.contact)}・空中 ${seconds(s1.flight)}`] as [string, string, string]] : []),
-    ['最後の2歩のリズム（最後の1歩 ÷ その前の歩）', result.rhythm === null ? '—' : `${Math.round(result.rhythm * 100)}%`, `参考値 ${Math.round(G.rhythm * 100)}%（世界室内の決勝の平均から）`],
     ['踏切の接地時間', seconds(result.takeoffContact), `参考値 ${S.contact[0].toFixed(3)}〜${S.contact[1].toFixed(3)}秒（記録5.5〜6.2 mの選手の平均）`],
     ['踏切接地：脚の角度（股関節→足首と水平）', result.posture.legAngle === null ? '—' : `${Math.round(result.posture.legAngle)}°`, `参考値 約${S.legAngle}°`],
-    ['上体：1歩前の接地 → 踏切の接地', `${lean(result.posture.trunkPenult)} → ${lean(result.posture.trunk)}`, ''],
+    ['踏切接地の上体（鉛直から）', lean(result.posture.trunk), ''],
     ['踏切接地の膝', result.posture.knee === null ? '—' : `${Math.round(result.posture.knee)}°`, `参考値 約${Math.round(S.knee)}°（記録5.50 mの選手の平均）`]];
   return <section ref={card} className="sprint10-card sprint10-result" aria-label="解析結果（スタンド）"><h2>解析結果</h2>
     {result.reason ? <><p role="alert" className="sprint10-note">{result.reason}</p><StandPickView session={s} url={url} /></> : <>
@@ -242,12 +226,12 @@ export function StandResultCard({ session: s, url, file }: { session: StandSessi
           {result.notes.map(n => <p className="sprint10-note" key={n}>{n}</p>)}
         </div>
         <div id="ljs-panel-check" role="tabpanel" aria-labelledby="ljs-tab-check" hidden={tab !== 'check'}>
-          <p className="sprint10-hint">選んだコマを1つずつ選び直せます。◀▶か下のコマで合わせて「このコマに決める」。数値はすぐ変わります。まだ選んでいない歩も、続けて選べます。</p>
+          <p className="sprint10-hint">選んだコマを選び直せます。◀▶か下のコマで合わせて「このコマに決める」。数値はすぐ変わります。</p>
           {tab === 'check' && <StandPickView session={s} url={url} />}
         </div>
         <div id="ljs-panel-pose" role="tabpanel" aria-labelledby="ljs-tab-pose" hidden={tab !== 'pose'}>
           <ul className="sprint10-mark-legend" aria-label="線の色">{LEGEND.map(([color, label]) => <li key={label}><i style={{ background: color }} />{label}</li>)}</ul>
-          <p className="sprint10-hint">点線は鉛直、弧が測った角度。画像を左右にスワイプして接地を切り替えます。</p>
+          <p className="sprint10-hint">点線は鉛直、弧が測った角度。</p>
           {result.moments.length ? <PhaseFigures url={url} frames={pose.frames} phases={result.moments} onShow={show} editing={pose.editing}
             guides={{ takeoff: `脚の角度（股関節→足首と水平）${result.posture.legAngle === null ? '—' : `${Math.round(result.posture.legAngle)}°`}・参考値 約${S.legAngle}°` }} />
             : <p>接地の画像を作れませんでした。</p>}
@@ -258,14 +242,14 @@ export function StandResultCard({ session: s, url, file }: { session: StandSessi
         </div>
         <div id="ljs-panel-replay" role="tabpanel" aria-labelledby="ljs-tab-replay" hidden={tab !== 'replay'} className="sprint10-replay">
           <CrouchReplay url={url} video={replay} frames={pose.frames} phases={result.moments} events={events} />
-          <p className="sprint10-hint">選んだ接地・離地へ移動できます。1/8は実際の8分の1の速さです。骨格は選んだ接地のコマだけです。</p>
+          <p className="sprint10-hint">踏切の接地・離地へ移動できます。1/8は実際の8分の1の速さです。骨格は踏切の接地のコマだけです。</p>
         </div>
       </div>
       <details className="sprint10-more"><summary>数値の見方</summary>
         <p>スタンドから撮った動画では、選手が小さく、まわりに人がいて、カメラも選手を追って動くため、選手を最初から最後まで自動で追いません。タップした選手のまわりで、選んだコマだけ骨格のAI（選手を探すのはMediaPipe、角度はRTMPose）が見ます。接地は足が着いた最初のコマ、離地はつま先が着いている最後のコマで、時刻はそのコマと前（接地）・後（離地）のコマの間です。</p>
-        <p>時間（接地・空中・リズム）は、コマの時刻の差なので、撮る向きやカメラの動きの影響を受けません（1秒120コマで±0.008秒、240コマで±0.004秒）。角度は画面の上での角度なので、真横から外れるほど変わります。斜めから撮ると、前後方向の長さが縮んで見えるため、脚の角度は大きめに出ます（60°は、斜め30°で約63°、45°で約68°）。体幹の傾きは小さめに出ます。スマホを傾けて撮ると、その分だけずれます。</p>
-        <p>出さない値：助走速度と離地の速さ・踏切角度（カメラを固定し、距離の物差しが要るため）、膝が最も曲がった角度（試合の映像では値が安定しないという研究があるため：Cronin 2024）。</p>
-        <p>出典：踏切の接地時間はNemtsevら（2016：記録平均5.50 mの女子 0.133秒、記録との相関 −0.70、2018：17歳男子（6.16 m）0.140秒）。脚の角度（股関節〜足首の線と水平）はBridgett・Linthorne（2006：61±3°）、Nemtsevら（2016：59.6±2.8°、記録との相関 −0.50）。膝はNemtsevら（2016：接地165.5°）。最後の3歩のリズムはTucker・Bissas（2018、世界室内選手権の決勝：接地0.105・0.113・0.122秒、空中0.112・0.136・0.075秒、比はこれらの平均から計算）。リズムと上体は記録との直接の結びつきが弱いため、参考です。</p>
+        <p>接地時間は、コマの時刻の差なので、撮る向きやカメラの動きの影響を受けません（1秒120コマで±0.008秒、240コマで±0.004秒）。角度は画面の上での角度なので、真横から外れるほど変わります。斜めから撮ると、前後方向の長さが縮んで見えるため、脚の角度は大きめに出ます（60°は、斜め30°で約63°、45°で約68°）。体幹の傾きは小さめに出ます。スマホを傾けて撮ると、その分だけずれます。</p>
+        <p>出さない値：助走速度と離地の速さ・踏切角度（カメラを固定し、距離の物差しが要るため）、最後の2歩のリズム（その前の歩のコマも要るため。真横から三脚で撮った動画なら「解析する」で出ます）、膝が最も曲がった角度（試合の映像では値が安定しないという研究があるため：Cronin 2024）。</p>
+        <p>出典：踏切の接地時間はNemtsevら（2016：記録平均5.50 mの女子 0.133秒、記録との相関 −0.70、2018：17歳男子（6.16 m）0.140秒）。脚の角度（股関節〜足首の線と水平）はBridgett・Linthorne（2006：61±3°）、Nemtsevら（2016：59.6±2.8°、記録との相関 −0.50）。膝はNemtsevら（2016：接地165.5°）。上体は記録との直接の結びつきが見つかっていないため、参考です。</p>
       </details>
     </>}
     <button onClick={save}>結果を保存（JSON）</button>
