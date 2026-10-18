@@ -32,3 +32,5 @@
 .pick-finish small{font-size:12px;line-height:1.5;color:var(--sz-muted);text-align:center}
 .sprint10 .pick-quit{width:100%;margin-top:10px;background:transparent;color:var(--sz-text-2)}
 @media(max-width:360px){.pick-guide{grid-template-columns:1fr}.pick-guide-pictures{justify-content:center}}
+/* The long jump from the stands (longjump/StandPick.tsx): the athlete is tapped on the picture. */
+.crouch-review-view.tappable{cursor:crosshair}

@@ -50,3 +50,41 @@ export function longJumpAdvice(r: LongJumpResult): HurdleAdvice[] {
     out.push({ topic: '1歩前の上体', level: 'info', text: `1歩前の接地で上体は${r.posture.trunkPenult < 0 ? `後ろへ ${Math.round(-r.posture.trunkPenult)}°` : `前へ ${Math.round(r.posture.trunkPenult)}°`}（踏切の接地で${r.posture.trunk === null ? '—' : r.posture.trunk < 0 ? `後ろへ ${Math.round(-r.posture.trunk)}°` : `前へ ${Math.round(r.posture.trunk)}°`}）。` });
   return out;
 }
+
+/** The stands' reference values (stand-pick.ts), the same sources as LONG_JUMP_GUIDE, said without men and women: the
+ * takeoff's contact of women of 5.50 m on average (0.133 s) and of 17-year-old men of 6.16 m (0.140 s; Nemtsev et al. 2016,
+ * 2018); the knee at the takeoff touchdown, women of 5.50 m 165.5° (Nemtsev et al. 2016); the leg's angle about 60°
+ * (59.6-61°). A slanted view makes the leg's angle read larger: its forward part shrinks by the cosine of the slant (60°
+ * reads 63° at 30° off the side view, 68° at 45°). */
+export const STAND_GUIDE = { contact: [.133, .140], knee: 165.5, legAngle: 60, slant: [[30, 63], [45, 68]] } as const;
+/** The takeoff's contact this much longer than the reference's upper end reads as a little long, twice as much as long. */
+export const STAND_LONGER = .01;
+
+/** The advice from the stands: the takeoff's contact time and the leg's angle at its touchdown first (research ties both to
+ * the distance, and neither needs a scale), then the rhythm of the last two steps, the trunk and the knee (reference). */
+export function standAdvice(r: LongJumpResult): HurdleAdvice[] {
+  const out: HurdleAdvice[] = [], S = STAND_GUIDE, [lo, hi] = S.contact;
+  const c = r.takeoffContact;
+  if (c !== null) {
+    // Within STAND_LONGER over the reference: a frame at 120 fps, and the frames' counting differs by one between studies.
+    const level = c <= hi + STAND_LONGER ? 'good' : c <= hi + 3 * STAND_LONGER ? 'info' : 'check';
+    out.push({ topic: '踏切の接地時間', level, text: `${c.toFixed(3)}秒（参考値 ${lo.toFixed(3)}〜${hi.toFixed(3)}秒：記録5.5〜6.2 mの選手の平均）。${c <= hi
+      ? '参考値並みか短く、素早く踏み切れています。' : level === 'good' ? `参考値並みです（${STAND_LONGER.toFixed(2)}秒ほどの差は、コマの数え方による誤差の範囲です）。`
+      : level === 'info' ? '参考値よりやや長めです。接地時間が短いほど遠くへ跳べている傾向があります。'
+      : '参考値より長めです。接地時間が短いほど遠くへ跳べている傾向があります。踏切の膝の曲がり（「姿勢」）や、最後の2歩のリズムと合わせて確かめてください。'}` });
+  }
+  const a = r.posture.legAngle;
+  if (a !== null)
+    out.push({ topic: '踏切で脚を着く角度', level: 'info', text: `股関節から足首の線が水平から ${Math.round(a)}°（参考値 約${S.legAngle}°）。小さいほど足を体の前に着いていて、記録の良い選手ほど小さい傾向があります。斜めから撮ると大きめに出ます（${S.slant.map(([d, v]) => `斜め${d}°で約${v}°`).join('、')}に見えます）。` });
+  if (r.rhythm !== null) {
+    const p = Math.round(r.rhythm * 100), level = r.rhythm >= 1 ? 'check' : r.rhythm <= .9 ? 'good' : 'info';
+    out.push({ topic: '最後の2歩のリズム', level, text: `最後の1歩の時間は、その前の歩の ${p}%（参考値 ${Math.round(LONG_JUMP_GUIDE.rhythm * 100)}%：世界室内の決勝の平均から）。${level === 'check'
+      ? '最後の1歩がその前の歩より長くなっています（間延び）。' : level === 'good' ? '最後の1歩を短く速く入れています。' : '最後の1歩は、その前の歩より少し短い程度です。'}` });
+  }
+  const lean = (v: number | null) => v === null ? '—' : v < 0 ? `後ろへ ${Math.round(-v)}°` : `前へ ${Math.round(v)}°`;
+  if (r.posture.trunk !== null || r.posture.trunkPenult !== null)
+    out.push({ topic: '上体', level: 'info', text: `1歩前の接地で${lean(r.posture.trunkPenult)}、踏切の接地で${lean(r.posture.trunk)}（鉛直から。記録との直接の結びつきは見つかっていないため、参考です）。` });
+  if (r.posture.knee !== null)
+    out.push({ topic: '踏切接地の膝', level: 'info', text: `${Math.round(r.posture.knee)}°（参考値 約${Math.round(S.knee)}°：記録5.50 mの選手の平均。180°が伸び切った状態）。` });
+  return out;
+}

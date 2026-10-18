@@ -5,7 +5,7 @@ import type { ReviewMoment } from './moment-edits';
  * みゆうSD, dev-validation/crouch-pick/sample-poses.ts; leg lengths from the front block's or the stance foot's toe, the
  * ground at 0, running right), the foot to look at in the accent colour, and beside it that foot enlarged against the
  * ground or the block. A drawing, not anyone's picture. */
-type Joints = Record<number, readonly [number, number]>;
+export type Joints = Record<number, readonly [number, number]>;
 type Kind = 'set' | 'clearance' | 'touchdown' | 'toeOff';
 const SAMPLES: Record<Kind, Joints> = {
   set: { 0: [.76, -.65], 11: [.62, -.9], 12: [.59, -.88], 13: [.53, -.52], 14: [.54, -.55], 15: [.55, -.22], 16: [.51, -.21], 23: [.11, -1.08], 24: [-.01, -1.1],
@@ -27,10 +27,18 @@ export const PICK_TEXT: Record<Kind, { title: string; text: string; zoom: string
 };
 const LEGS = [[23, 25, 27, 29, 31], [24, 26, 28, 30, 32]] as const;
 
-/** The stick figure: `watch`, the side of the foot to look at (the toe nearest the origin: the front block's or the
- * stance foot's place). */
+/** The crouch start's sample for a moment: its stick figure, the foot to look at being the toe nearest the origin (the
+ * front block's or the stance foot's place), the block under the front foot (in the set, under both). */
 export function PickSample({ kind }: { kind: Kind }) {
-  const j = SAMPLES[kind], at = (k: number) => j[k];
+  const j = SAMPLES[kind], watch = Math.hypot(...j[31]) <= Math.hypot(...j[32]) ? 0 : 1;
+  return <StickFigure j={j} label={`見本：${PICK_TEXT[kind].title}`} accent={kind !== 'set'}
+    blocks={kind === 'set' ? [31, 32] : kind === 'clearance' ? [watch ? 32 : 31] : []} />;
+}
+/** A stick figure in leg lengths (the ground at 0, running right), the leg whose toe is nearest the origin (the foot to look
+ * at) in the accent colour with its toe ringed (`accent`), blocks under the toes listed (the long jump's samples too,
+ * longjump/StandPickGuide.tsx). */
+export function StickFigure({ j, label, accent = true, blocks = [] }: { j: Joints; label: string; accent?: boolean; blocks?: readonly number[] }) {
+  const at = (k: number) => j[k];
   const watch = Math.hypot(...at(31)) <= Math.hypot(...at(32)) ? 0 : 1;
   const xs = Object.values(j).map(p => p[0]), ys = Object.values(j).map(p => p[1]);
   // The figure fitted into 4:3 with a margin, the ground in view.
@@ -41,9 +49,8 @@ export function PickSample({ kind }: { kind: Kind }) {
   const line = (ks: readonly number[]) => ks.map(k => at(k).join(',')).join(' ');
   const mid = (a: number, b: number) => [(at(a)[0] + at(b)[0]) / 2, (at(a)[1] + at(b)[1]) / 2];
   const [sx, sy] = mid(11, 12), [hx, hy] = mid(23, 24), s = w / 60;
-  const blocks = kind === 'set' ? [31, 32] : kind === 'clearance' ? [watch ? 32 : 31] : [];
   const toe = at(LEGS[watch][4]);
-  return <svg className="pick-sample" viewBox={`${vx} ${vy} ${w} ${h}`} role="img" aria-label={`見本：${PICK_TEXT[kind].title}`}>
+  return <svg className="pick-sample" viewBox={`${vx} ${vy} ${w} ${h}`} role="img" aria-label={label}>
     <line className="pick-ground" x1={vx} x2={vx + w} y1={0} y2={0} strokeWidth={s} />
     {blocks.map(k => <path key={k} className="pick-block" d={`M${at(k)[0] + .06},${0}L${at(k)[0] + .06},${at(k)[1] + .02}L${at(k)[0] - .22},0Z`} />)}
     <g className="pick-body" strokeWidth={2.2 * s}>
@@ -52,21 +59,21 @@ export function PickSample({ kind }: { kind: Kind }) {
       <line x1={sx} y1={sy} x2={hx} y2={hy} />
       <circle cx={at(0)[0]} cy={at(0)[1]} r={.09} />
     </g>
-    {kind !== 'set' && <g className="pick-watch" strokeWidth={2.6 * s}>
+    {accent && <g className="pick-watch" strokeWidth={2.6 * s}>
       <polyline points={line([LEGS[watch][0], LEGS[watch][1], LEGS[watch][2], LEGS[watch][3], LEGS[watch][4], LEGS[watch][2]])} />
       <circle cx={toe[0]} cy={toe[1] - .02} r={.2} fill="none" strokeWidth={1.4 * s} />
     </g>}
-    {kind === 'set' && <g className="pick-body" strokeWidth={2.2 * s}>
+    {!accent && <g className="pick-body" strokeWidth={2.2 * s}>
       <polyline points={line([LEGS[watch][0], LEGS[watch][1], LEGS[watch][2], LEGS[watch][3], LEGS[watch][4], LEGS[watch][2]])} /></g>}
   </svg>;
 }
 /** The foot enlarged against the ground (or the block): a shoe set down flat, tipped onto its toe, or on the block's
  * face, the point that decides the frame ringed. */
-export function PickFoot({ kind }: { kind: Exclude<Kind, 'set'> }) {
+export function PickFoot({ kind, label }: { kind: Exclude<Kind, 'set'>; label?: string }) {
   // A shoe, toe to the right: its sole from the heel (0) to the toe (1), its upper above; tipped by `tilt` degrees about the toe.
   const tilt = kind === 'touchdown' ? 4 : kind === 'toeOff' ? 38 : 30;
   const shoe = 'M-.02,0 L.82,0 Q1.04,0 1.02,-.1 Q.98,-.2 .7,-.24 L.42,-.3 Q.3,-.42 .14,-.4 L.02,-.36 Q-.06,-.2 -.02,0Z';
-  return <svg className="pick-foot" viewBox="-.25 -.95 1.55 1.16" role="img" aria-label={`拡大：${PICK_TEXT[kind].zoom}`}>
+  return <svg className="pick-foot" viewBox="-.25 -.95 1.55 1.16" role="img" aria-label={`拡大：${label ?? PICK_TEXT[kind].zoom}`}>
     {kind === 'clearance' ? <path className="pick-block" d="M.86,.12 L1.3,.12 L1.3,-.62 Z" /> : <line className="pick-ground" x1={-.25} x2={1.3} y1={.12} y2={.12} strokeWidth={.025} />}
     <g transform={kind === 'clearance' ? 'translate(.98,-.06) rotate(-58) translate(-1,0)' : `translate(1,.12) rotate(${-tilt}) translate(-1,0)`}>
       <path className="pick-shoe" d={shoe} strokeWidth={.03} />

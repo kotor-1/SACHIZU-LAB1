@@ -249,8 +249,9 @@ export function analyzeLongJump(frames: readonly CrouchFrame[], options: LongJum
   return base;
 }
 
-/** The pictures: the touchdowns of two steps before, of the step before and of the takeoff. */
-function momentsOf(r: LongJumpResult, frames: readonly CrouchFrame[], W: number, H: number, direction: number, leg: number): Phase[] {
+/** The pictures: the touchdowns of two steps before, of the step before and of the takeoff (also the stands' moments set by
+ * hand, stand-pick.ts). */
+export function momentsOf(r: LongJumpResult, frames: readonly CrouchFrame[], W: number, H: number, direction: number, leg: number): Phase[] {
   const out: Phase[] = [], take = r.takeoff!;
   const add = (key: string, label: string, short: string, c: Contact | undefined, withLeg: boolean) => {
     const f = c?.touchdownFrame != null ? frames.find(q => q.frame === c.touchdownFrame && q.pose) : null, pose = f ? anglePose(f) : null;

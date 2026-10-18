@@ -33,6 +33,13 @@ export interface PickOptions {
   guessed: (m: ReviewMoment) => boolean;
   /** The moments still to set after the list's, shown greyed in the row. */
   upcoming: readonly { key: string; short: string }[];
+  /** A tap on the picture (normalized, at the frame shown): the long jump from the stands has the athlete tapped among others. */
+  onTap?: (x: number, y: number, frame: number) => void;
+  /** The narrowest enlarged view, as a share of the picture's width (else 0.15): an athlete far away is small. */
+  zoom?: number;
+  /** Each moment's place in time when the list is in another order (the long jump sets its takeoff first, then the
+   * steps before): a moment's frame stays between its neighbours in time. */
+  seq?: (m: ReviewMoment) => number;
 }
 /** Slow play while frames are searched (pick): a quarter of the speed. */
 const PLAY_RATE = .25;
@@ -79,6 +86,7 @@ export function MomentReview({ url, frames, width: W, height: H, list, edits, ch
   // A moment stays between its neighbours of the same kind in time: a gate's crossing between the gates, a foot's moments
   // between the feet's (the 10 m lists both: a gate could not be moved past a touchdown near it, nor a touchdown past it).
   const peers = m ? list.filter(q => (q.kind === 'crossing') === (m.kind === 'crossing')) : [];
+  if (pick?.seq) peers.sort((a, b) => pick.seq!(a) - pick.seq!(b));
   const i = m ? peers.indexOf(m) : -1, lo = i > 0 ? peers[i - 1].frame : -Infinity, hi = i >= 0 && i + 1 < peers.length ? peers[i + 1].frame : Infinity;
   const allowed = (frame: number) => frame > lo && frame < hi && byFrame.has(frame);
 
@@ -159,8 +167,8 @@ export function MomentReview({ url, frames, width: W, height: H, list, edits, ch
   const away = (go: () => void) => { if (candidate) setLeaving({ go }); else go(); };
 
   if (!m) return <p>確かめられる瞬間がありません。</p>;
-  const judged = source?.(m) ?? null, crossing = m.kind === 'crossing', mark = crossing ? point?.(m, cursor) ?? null : null;
-  const region = regionOf(view, m, W, H, leg), box = {
+  const judged = source?.(m) ?? null, crossing = m.kind === 'crossing', mark = crossing || pick ? point?.(m, cursor) ?? null : null;
+  const region = regionOf(view, m, W, H, leg, pick?.zoom), box = {
     left: `${-region.x / region.w * 100}%`, top: `${-region.y / region.h * 100}%`, width: `${W / region.w * 100}%`, height: `${H / region.h * 100}%` };
   const unit = region.w / 100;
   const isSet = checked.has(m.key), guessed = !!pick && !isSet && pick.guessed(m);
@@ -198,7 +206,13 @@ export function MomentReview({ url, frames, width: W, height: H, list, edits, ch
       <small>{heading}</small></div>
     {pick?.guide(m)}
     {m.flag && !checked.has(m.key) && <p className="crouch-review-flag">{m.flag}</p>}
-    <div className="crouch-review-view">
+    <div className={pick?.onTap ? 'crouch-review-view tappable' : 'crouch-review-view'} onClick={pick?.onTap ? e => {
+      // The tap's place in the picture: the view shows `region`, the box fills the view (the tools in it are left out).
+      if ((e.target as HTMLElement).closest('.crouch-review-tools')) return;
+      const r = e.currentTarget.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      pick.onTap!((region.x + (e.clientX - r.left) / r.width * region.w) / W, (region.y + (e.clientY - r.top) / r.height * region.h) / H, cursor);
+    } : undefined}>
       <video ref={video} src={url} muted playsInline preload="auto" style={box} />
       {marks && <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={box} aria-hidden="true">
         {m.ground !== null && <line x1={region.x} x2={region.x + region.w} y1={m.ground * H} y2={m.ground * H} stroke="#7dff6b" strokeWidth={unit * .5} strokeDasharray={`${unit * 2} ${unit * 1.5}`} />}
@@ -269,8 +283,9 @@ export function MomentReview({ url, frames, width: W, height: H, list, edits, ch
   </div>;
 }
 
-/** The part of the picture shown (pixels, 4:3): round the foot (the hand, the pelvis at a gate), or the whole picture fitted in. */
-function regionOf(view: View, m: ReviewMoment, W: number, H: number, leg: number) {
+/** The part of the picture shown (pixels, 4:3): round the foot (the hand, the pelvis at a gate), or the whole picture fitted
+ * in; the enlarged view at least `zoom` of the picture's width. */
+function regionOf(view: View, m: ReviewMoment, W: number, H: number, leg: number, zoom = .15) {
   // The set chosen by hand (pick): round the start line, before anyone was found (SET_VIEW of a landscape picture).
   if (view !== 'all' && m.kind === 'set' && m.focus && W > H) {
     const w = SET_VIEW * W, h = w * 3 / 4;
@@ -280,7 +295,7 @@ function regionOf(view: View, m: ReviewMoment, W: number, H: number, leg: number
     const w = W / H > 4 / 3 ? W : H * 4 / 3, h = w * 3 / 4;
     return { x: (W - w) / 2, y: (H - h) / 2, w, h };
   }
-  const w = Math.min(Math.max((m.kind === 'crossing' ? CROSS_LEGS : FOOT_LEGS) * leg, .15 * W), W, H * 4 / 3), h = w * 3 / 4;
+  const w = Math.min(Math.max((m.kind === 'crossing' ? CROSS_LEGS : FOOT_LEGS) * leg, zoom * W), W, H * 4 / 3), h = w * 3 / 4;
   const x = Math.max(0, Math.min(W - w, m.focus.x * W - w / 2)), y = Math.max(0, Math.min(H - h, m.focus.y * H - h * (m.kind === 'release' || m.kind === 'crossing' ? .5 : FOOT_AT)));
   return { x, y, w, h };
 }
