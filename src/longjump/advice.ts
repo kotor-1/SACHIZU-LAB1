@@ -1,5 +1,6 @@
 import type { HurdleAdvice } from '../hurdling/advice';
 import { mps, SPREADS, type LongJumpResult } from './analysis';
+import { foulWords } from './foul';
 
 /** Reference values, from studies (docs/LongJump_MainMeasures_Research_20261006.md; checked in the full text or tables
  * unless marked): not targets for one athlete.
@@ -60,10 +61,16 @@ export const STAND_GUIDE = { contact: [.133, .140], knee: 165.5, legAngle: 60, s
 /** The takeoff's contact this much longer than the reference's upper end reads as a little long, twice as much as long. */
 export const STAND_LONGER = .01;
 
-/** The advice from the stands: the takeoff's contact time and the leg's angle at its touchdown first (research ties both to
- * the distance, and neither needs a scale), then the trunk and the knee at the touchdown (reference). */
-export function standAdvice(r: LongJumpResult): HurdleAdvice[] {
+/** The advice from the stands: the takeoff's position against the foul line when its points are set (foul.ts: `foul` cm
+ * beyond it), the takeoff's contact time and the leg's angle at its touchdown (research ties both to the distance, and
+ * neither needs a scale), then the trunk and the knee at the touchdown (reference). */
+export function standAdvice(r: LongJumpResult, foul: number | null = null): HurdleAdvice[] {
   const out: HurdleAdvice[] = [], S = STAND_GUIDE, [lo, hi] = S.contact;
+  if (foul !== null) {
+    const w = foulWords(foul), n = Math.round(Math.abs(foul));
+    out.push({ topic: '踏切位置', level: w.foul ? 'check' : 'info', text: `${w.text}。${w.foul ? '記録は残りません。助走のスタート位置や、最後の数歩の歩幅を見直す目安にしてください。'
+      : n === 0 ? '点の置き方で±1〜2 cm変わるため、ファールかどうかはこの測り方では決められません。' : `記録は踏切線から測るため、この約${n} cmは記録に入りません。`}` });
+  }
   const c = r.takeoffContact;
   if (c !== null) {
     // Within STAND_LONGER over the reference: a frame at 120 fps, and the frames' counting differs by one between studies.

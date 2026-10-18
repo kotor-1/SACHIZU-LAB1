@@ -25,3 +25,13 @@
 .sprint10 .longjump-ruler-options input[type=number]{width:5em;height:40px;font-size:18px;text-align:center;border:1px solid var(--sz-line-strong);border-radius:10px;background:var(--sz-surface-3);color:var(--sz-text)}
 .longjump-frame-step{display:flex;gap:8px;align-items:center;margin:8px 0 0;font-size:13px}
 @media(max-width:480px){.longjump-nudge .sprint10-seg button{padding:4px 6px;font-size:12px}}
+/* The foul line from the stands (FoulSetter.tsx): four points on the board, magnified round the foot. */
+.foul-view{cursor:crosshair}
+.foul-setter svg line{stroke-width:2;filter:drop-shadow(0 0 1px #000)}
+.foul-setter svg line.line{stroke:#ffd166}.foul-setter svg line.back{stroke:#fff;stroke-dasharray:5 4;opacity:.9}
+.foul-setter svg line.gap{stroke:#7dff6b;stroke-width:3}.foul-setter svg line.gap.over{stroke:#ff5b4a}
+.foul-point.lineA:before,.foul-point.lineB:before{background:#ffd166}.foul-point.back:before{background:#fff}.foul-point.toe:before{background:#7dff6b}
+.foul-ask{margin:8px 0 0;font-size:13px;line-height:1.5;color:var(--sz-text-2)}.foul-ask b{color:var(--sz-accent)}
+.foul-zoom{display:flex;gap:8px;margin:6px 0 0}
+.foul-result{margin:10px 0 8px;padding:10px 12px;border-radius:12px;background:var(--sz-surface-2);font-size:16px;font-weight:800;line-height:1.5;color:var(--sz-text)}
+.foul-result.over{color:#ff8a7a}

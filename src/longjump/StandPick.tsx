@@ -15,6 +15,9 @@ import { STAND_GUIDE, standAdvice } from './advice';
 import { lowestFoot, nextStand, standEffects, standEnough, standFlags, standFocus, standFrames, standGuess, standHint, standLayout, standLeg, standResult, standSteps,
   STAND_STEPS, STAND_VERSION, type Picks, type StandStep } from './stand-pick';
 import { StandGuide } from './StandPickGuide';
+import FoulSetter, { FOUL_HANDLES } from './FoulSetter';
+import { foulCm, foulStart, foulWords, type FoulHandle, type FoulPoints } from './foul';
+import { useStill } from './still';
 import '../sprint10/crouch-pick.css';
 
 /** The long jump from the stands on screen (stand-pick.ts): the athlete tapped, then the takeoff's touchdown and toe-off set
@@ -157,23 +160,37 @@ export function StandPickView({ session: s, url }: { session: StandSession; url:
   </div>;
 }
 
-type Tab = 'advice' | 'check' | 'pose' | 'numbers' | 'replay';
-const TABS: [Tab, string][] = [['advice', 'ポイント'], ['check', '確認'], ['pose', '姿勢'], ['numbers', '数値'], ['replay', 'スロー']];
+type Tab = 'advice' | 'foul' | 'check' | 'pose' | 'numbers' | 'replay';
+const TABS: [Tab, string][] = [['advice', 'ポイント'], ['foul', '踏切位置'], ['check', '確認'], ['pose', '姿勢'], ['numbers', '数値'], ['replay', 'スロー']];
 const LEGEND = [['#ffb02e', '体幹（腰→肩）'], ['#b58cff', '踏切脚の膝']] as const;
 const seconds = (v: number | null) => v === null ? '—' : `${v.toFixed(3)}秒`;
 const lean = (v: number | null) => v === null ? '—' : v < 0 ? `後ろへ ${Math.round(-v)}°` : `前へ ${Math.round(v)}°`;
 
 /** The result of the moments set (stand-pick.ts standResult), with the tabs of the long jump's result: the advice, the
- * moments set again (確認), the pictures, the numbers, the slow replay. */
+ * takeoff's distance to the foul line (points set on the board, foul.ts), the moments set again (確認), the pictures, the
+ * numbers, the slow replay. */
 export function StandResultCard({ session: s, url, file }: { session: StandSession; url: string; file: File | null }) {
   const W = s.size?.width ?? 0, H = s.size?.height ?? 0;
   // The skeleton's points set by hand on the pictures (sprint10/pose-edits.ts), as the analysis' result allows.
   const pose = usePoseEdits(s.frames.length ? s.frames : null);
   const result = useMemo(() => standResult(s.picks, pose.frames, W, H, s.pending), [s.picks, pose.frames, W, H, s.pending]);
-  const advice = useMemo(() => result.reason ? [] : standAdvice(result), [result]);
-  const checks = advice.filter(a => a.level === 'check').length;
   const replay = useRef<HTMLVideoElement>(null), seekTo = useRef<number | null>(null), card = useRef<HTMLElement>(null);
   const [tab, setTab] = useState<Tab>('advice'), tabs = useRef<HTMLDivElement>(null), panels = useRef<HTMLDivElement>(null);
+  // The foul line (foul.ts): the points set on a still of a frame of the takeoff's contact (the toe-off's unless moved), the
+  // still made only while the tab is open (a full-size picture); the distance once all four points are put.
+  const [foul, setFoul] = useState<{ points: FoulPoints | null; placed: ReadonlySet<FoulHandle>; frame: number | null; round: number }>({ points: null, placed: new Set(), frame: null, round: 0 });
+  const layout = useMemo(() => W ? standLayout(s.picks, pose.frames, W, H) : null, [s.picks, pose.frames, W, H]);
+  const contact = useMemo(() => s.picks.td0 === undefined || s.picks.to0 === undefined ? []
+    : pose.frames.filter(f => f.frame >= s.picks.td0 && f.frame <= s.picks.to0), [s.picks, pose.frames]);
+  const foulFrame = foul.frame !== null && contact.some(f => f.frame === foul.frame) ? foul.frame : s.picks.to0 ?? null;
+  const foulAt = useMemo(() => { const f = pose.frames.find(q => q.frame === foulFrame); return f ? insideFrame(f.pts, frameInterval(pose.frames)) : null; }, [foulFrame, pose.frames]);
+  const foulStill = useStill(url, tab === 'foul' ? foulAt : null);
+  const startToe = layout?.places.get('to0') ?? layout?.places.get('td0') ?? (s.tap ? { x: s.tap.x * W, y: s.tap.y * H } : null);
+  const foulPoints = foul.points ?? (startToe && layout ? foulStart(startToe, layout.leg, layout.direction, W, H) : null);
+  const foulDone = !!foul.points && FOUL_HANDLES.every(([h]) => foul.placed.has(h));
+  const beyond = foulDone ? foulCm(foul.points!, W, H) : null, foulText = beyond === null ? null : foulWords(beyond);
+  const advice = useMemo(() => result.reason ? [] : standAdvice(result, beyond), [result, beyond]);
+  const checks = advice.filter(a => a.level === 'check').length;
   useEffect(() => { card.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }); }, []);
   useEffect(() => {
     const v = replay.current;
@@ -194,6 +211,7 @@ export function StandResultCard({ session: s, url, file }: { session: StandSessi
   function show(p: Phase) { seekTo.current = p.pts; choose('replay'); }
   function save() {
     const blob = new Blob([JSON.stringify({ version: STAND_VERSION, file: file?.name, picked: s.picks, tap: s.tap, result,
+      ...(foulDone ? { foulLine: { frame: foulFrame, points: foul.points, cmBeyond: beyond } } : {}),
       ...(pose.hand.size ? { skeletonSetByHand: pose.edits } : {}) }, null, 2)], { type: 'application/json' });
     const href = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = href; a.download = 'long-jump-stands-result.json'; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
@@ -201,12 +219,14 @@ export function StandResultCard({ session: s, url, file }: { session: StandSessi
   const S = STAND_GUIDE;
   const tiles: [string, string, string, string][] = [
     ['踏切の接地時間', result.takeoffContact === null ? '—' : result.takeoffContact.toFixed(3), '秒', `参考値 ${S.contact[0].toFixed(3)}〜${S.contact[1].toFixed(3)}`],
-    ['踏切で脚を着く角度', result.posture.legAngle === null ? '—' : String(Math.round(result.posture.legAngle)), '°', `参考値 約${S.legAngle}°・斜めからだと大きめ`]];
+    ['踏切で脚を着く角度', result.posture.legAngle === null ? '—' : String(Math.round(result.posture.legAngle)), '°', `参考値 約${S.legAngle}°・斜めからだと大きめ`],
+    ['踏切線まで（つま先）', foulText?.value ?? '—', 'cm', foulText?.note ?? '「踏切位置」で板に点を置くと出ます']];
   const rows: [string, string, string][] = [
     ['踏切の接地時間', seconds(result.takeoffContact), `参考値 ${S.contact[0].toFixed(3)}〜${S.contact[1].toFixed(3)}秒（記録5.5〜6.2 mの選手の平均）`],
     ['踏切接地：脚の角度（股関節→足首と水平）', result.posture.legAngle === null ? '—' : `${Math.round(result.posture.legAngle)}°`, `参考値 約${S.legAngle}°`],
     ['踏切接地の上体（鉛直から）', lean(result.posture.trunk), ''],
-    ['踏切接地の膝', result.posture.knee === null ? '—' : `${Math.round(result.posture.knee)}°`, `参考値 約${Math.round(S.knee)}°（記録5.50 mの選手の平均）`]];
+    ['踏切接地の膝', result.posture.knee === null ? '—' : `${Math.round(result.posture.knee)}°`, `参考値 約${Math.round(S.knee)}°（記録5.50 mの選手の平均）`],
+    ['踏切線（ファールライン）まで：つま先', foulText ? `${foulText.value} cm（${foulText.note}）` : '—', '踏切板の白い部分（20 cm）を物差しにした目安。点の置き方で±1〜2 cm']];
   return <section ref={card} className="sprint10-card sprint10-result" aria-label="解析結果（スタンド）"><h2>解析結果</h2>
     {result.reason ? <><p role="alert" className="sprint10-note">{result.reason}</p><StandPickView session={s} url={url} /></> : <>
       <div className="sprint10-metrics sprint10-summary">{tiles.map(([label, value, unit, note]) =>
@@ -224,6 +244,21 @@ export function StandResultCard({ session: s, url, file }: { session: StandSessi
             <span aria-hidden="true">{a.level === 'good' ? '✓' : a.level === 'check' ? '!' : 'i'}</span><div><strong>{a.topic}</strong>{a.text}</div></li>)}</ul>}
           <p className="sprint10-hint">参考値は研究で報告された平均で、選手ごとの目標ではありません（出典は「数値の見方」）。同じ席から撮った試技どうしで比べると、変化が分かりやすくなります。</p>
           {result.notes.map(n => <p className="sprint10-note" key={n}>{n}</p>)}
+        </div>
+        <div id="ljs-panel-foul" role="tabpanel" aria-labelledby="ljs-tab-foul" hidden={tab !== 'foul'}>
+          <p className="sprint10-hint">白い踏切板の幅（20 cm）を物差しにして、つま先から踏切線（ファールライン）までを測ります。下の拡大した画面で、順にタップして点を置きます：①②「線1」「線2」は踏切線（白い板の砂場側の端。緑や粘土の板との境目）の上に、なるべく離して。③「板の端」は、つま先の近くで、白い板の助走路側の端に。④「つま先」は踏切足のつま先の先端（板に着いている所）に。</p>
+          {contact.length > 1 && <div className="longjump-frame-step" role="group" aria-label="測るコマ">
+            <button type="button" disabled={foulFrame === contact[0].frame} onClick={() => { const i = contact.findIndex(f => f.frame === foulFrame); setFoul(f => ({ ...f, frame: contact[Math.max(0, i - 1)].frame })); }}>◀ 1コマ前</button>
+            <span>{foulFrame === s.picks.to0 ? '離地のコマ' : foulFrame === s.picks.td0 ? '接地のコマ' : `接地から${contact.findIndex(f => f.frame === foulFrame)}コマ目`}</span>
+            <button type="button" disabled={foulFrame === contact.at(-1)!.frame} onClick={() => { const i = contact.findIndex(f => f.frame === foulFrame); setFoul(f => ({ ...f, frame: contact[Math.min(contact.length - 1, i + 1)].frame })); }}>1コマ後 ▶</button>
+          </div>}
+          {tab === 'foul' && (foulStill && foulPoints && layout
+            ? <FoulSetter key={`${foulStill.width}x${foulStill.height}-${foul.round}`} still={foulStill} points={foulPoints} placed={foul.placed} leg={layout.leg}
+              onChange={(points, h) => setFoul(f => ({ ...f, points, placed: new Set([...f.placed, h]) }))} />
+            : foulStill === false ? <p className="sprint10-note" role="alert">踏切のコマを読み込めませんでした。「1コマ前」「1コマ後」で別のコマにするか、ページを読み込み直してください。</p>
+            : <p role="status">踏切のコマを読み込んでいます…</p>)}
+          {foulDone && <button type="button" onClick={() => setFoul(f => ({ ...f, placed: new Set(), round: f.round + 1 }))}>点を置き直す</button>}
+          <p className="sprint10-hint">つま先は、板に着いている間で一番前に出たところを測ります（ふつうは離地のコマ）。公式の判定（審判・粘土板の跡）とちがうことがあります。</p>
         </div>
         <div id="ljs-panel-check" role="tabpanel" aria-labelledby="ljs-tab-check" hidden={tab !== 'check'}>
           <p className="sprint10-hint">選んだコマを選び直せます。◀▶か下のコマで合わせて「このコマに決める」。数値はすぐ変わります。</p>
@@ -248,6 +283,7 @@ export function StandResultCard({ session: s, url, file }: { session: StandSessi
       <details className="sprint10-more"><summary>数値の見方</summary>
         <p>スタンドから撮った動画では、選手が小さく、まわりに人がいて、カメラも選手を追って動くため、選手を最初から最後まで自動で追いません。タップした選手のまわりで、選んだコマだけ骨格のAI（選手を探すのはMediaPipe、角度はRTMPose）が見ます。接地は足が着いた最初のコマ、離地はつま先が着いている最後のコマで、時刻はそのコマと前（接地）・後（離地）のコマの間です。</p>
         <p>接地時間は、コマの時刻の差なので、撮る向きやカメラの動きの影響を受けません（1秒120コマで±0.008秒、240コマで±0.004秒）。角度は画面の上での角度なので、真横から外れるほど変わります。斜めから撮ると、前後方向の長さが縮んで見えるため、脚の角度は大きめに出ます（60°は、斜め30°で約63°、45°で約68°）。体幹の傾きは小さめに出ます。スマホを傾けて撮ると、その分だけずれます。</p>
+        <p>踏切線まで：踏切板の白い部分の幅は、規則で20 cm（±2 mm）と決まっています。点を置いた踏切線と板の助走路側の端の間を20 cmとして、つま先から踏切線までの距離を、その比で求めます。板のまわりでは、斜めから撮っても長さが同じ割合で縮むので、比は変わりません。画像の1画素が何cmかは撮り方で変わり、点の置き方で±1〜2 cmほど変わります。踏切線を越えた分はプラス（ファール）、手前はその距離（記録は踏切線から測るため、この分は記録に入りません）です。</p>
         <p>出さない値：助走速度と離地の速さ・踏切角度（カメラを固定し、距離の物差しが要るため）、最後の2歩のリズム（その前の歩のコマも要るため。真横から三脚で撮った動画なら「解析する」で出ます）、膝が最も曲がった角度（試合の映像では値が安定しないという研究があるため：Cronin 2024）。</p>
         <p>出典：踏切の接地時間はNemtsevら（2016：記録平均5.50 mの女子 0.133秒、記録との相関 −0.70、2018：17歳男子（6.16 m）0.140秒）。脚の角度（股関節〜足首の線と水平）はBridgett・Linthorne（2006：61±3°）、Nemtsevら（2016：59.6±2.8°、記録との相関 −0.50）。膝はNemtsevら（2016：接地165.5°）。上体は記録との直接の結びつきが見つかっていないため、参考です。</p>
       </details>
