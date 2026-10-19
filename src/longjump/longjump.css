@@ -31,7 +31,10 @@
 .foul-setter svg line.line{stroke:#ffd166}.foul-setter svg line.back{stroke:#fff;stroke-dasharray:5 4;opacity:.9}
 .foul-setter svg line.gap{stroke:#7dff6b;stroke-width:3}.foul-setter svg line.gap.over{stroke:#ff5b4a}
 .foul-point.lineA:before,.foul-point.lineB:before{background:#ffd166}.foul-point.back:before{background:#fff}.foul-point.toe:before{background:#7dff6b}
-.foul-ask{margin:8px 0 0;font-size:13px;line-height:1.5;color:var(--sz-text-2)}.foul-ask b{color:var(--sz-accent)}
+/* While a point is still to be put, the points put are marks only: a tap on or by them puts the chosen point there. */
+.foul-mark{pointer-events:none;cursor:default}.foul-mark.is-chosen:before{width:16px;height:16px;border-color:#ffd166}
+.foul-setter .sprint10-seg button[data-placed="false"]{outline:1px dashed currentColor;outline-offset:-3px}
+.foul-ask{margin:8px 0 0;font-size:13px;line-height:1.5;color:var(--sz-text-2)}.foul-ask b{color:var(--sz-accent)}.foul-left{display:block;margin-top:2px}
 .foul-zoom{display:flex;gap:8px;margin:6px 0 0}
 .foul-result{margin:10px 0 8px;padding:10px 12px;border-radius:12px;background:var(--sz-surface-2);font-size:16px;font-weight:800;line-height:1.5;color:var(--sz-text)}
 .foul-result.over{color:#ff8a7a}
