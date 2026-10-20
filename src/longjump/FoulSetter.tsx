@@ -9,10 +9,10 @@ import type { Still } from './still';
  * fingers wide, and the user's fourth tap, the toe, fell on the first point's button and only chose it again, 2026-10-19).
  * Once all four are put, a point can be dragged, or moved a pixel at a time. Points are in parts of the picture. */
 export const FOUL_HANDLES: [FoulHandle, string, string][] = [
-  ['lineA', '踏切線（白い板の砂場側の端）の1点目', '線1'],
-  ['lineB', '踏切線の2点目（1点目からなるべく離して）', '線2'],
-  ['back', 'つま先の近くの、白い板の助走路側の端', '板の端'],
-  ['toe', '踏切足のつま先の先端（板に着いている所）', 'つま先'],
+  ['lineA', '踏切線の上', '線1'],
+  ['lineB', '踏切線の上の、線1から離れた所', '線2'],
+  ['back', '白い板の助走路側の端（つま先の真後ろ）', '板の端'],
+  ['toe', '踏切足の靴の先', 'つま先'],
 ];
 /** The magnified part: this many leg lengths wide (the board is 1.22 m, a leg about 0.9 m: the board and the toe fill the
  * part, each picture pixel about one screen pixel on a phone), 4:3, wider or narrower by ZOOM. */

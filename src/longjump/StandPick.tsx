@@ -15,6 +15,7 @@ import { STAND_GUIDE, standAdvice } from './advice';
 import { lowestFoot, nextStand, standEffects, standEnough, standFlags, standFocus, standFrames, standGuess, standHint, standLayout, standLeg, standResult, standSteps,
   STAND_STEPS, STAND_VERSION, type Picks, type StandStep } from './stand-pick';
 import { StandGuide } from './StandPickGuide';
+import FoulGuide from './FoulGuide';
 import FoulSetter, { FOUL_HANDLES } from './FoulSetter';
 import { foulCm, foulStart, foulWords, type FoulHandle, type FoulPoints } from './foul';
 import { useStill } from './still';
@@ -228,7 +229,17 @@ export function StandResultCard({ session: s, url, file }: { session: StandSessi
     setTab(next);
     const top = panels.current?.getBoundingClientRect().top, bar = tabs.current?.offsetHeight ?? 0;
     if (top !== undefined && top < bar) window.scrollBy({ top: top - bar });
+    if (next === 'foul') foulScroll.current = true;
   }
+  // The foul line's tab shown from its top once its picture is there: the sample, the magnified picture and its ask on one
+  // phone screen (with the tabs mid-screen the ask fell below it, where a tap's answer goes unseen; 2026-10-20).
+  const foulScroll = useRef(false);
+  useEffect(() => {
+    if (tab !== 'foul' || !foulStill || !foulScroll.current) return;
+    foulScroll.current = false;
+    const top = panels.current?.getBoundingClientRect().top, bar = tabs.current?.offsetHeight ?? 0;
+    if (top !== undefined && top > bar + 1) window.scrollBy({ top: top - bar });
+  }, [tab, foulStill]);
   function show(p: Phase) { seekTo.current = p.pts; choose('replay'); }
   function save() {
     const blob = new Blob([JSON.stringify({ version: STAND_VERSION, file: file?.name, picked: s.picks, tap: s.tap, result,
@@ -267,7 +278,8 @@ export function StandResultCard({ session: s, url, file }: { session: StandSessi
           {result.notes.map(n => <p className="sprint10-note" key={n}>{n}</p>)}
         </div>
         <div id="ljs-panel-foul" role="tabpanel" aria-labelledby="ljs-tab-foul" hidden={tab !== 'foul'}>
-          <p className="sprint10-hint">白い踏切板の幅（20 cm）を物差しにして、つま先から踏切線（ファールライン）までを測ります。下の拡大した画面で、順にタップして点を置きます：①②「線1」「線2」は踏切線（白い板の砂場側の端。緑や粘土の板との境目）の上に、なるべく離して。③「板の端」は、つま先の近くで、白い板の助走路側の端に。④「つま先」は踏切足のつま先の先端（板に着いている所）に。</p>
+          <p className="sprint10-hint">白い踏切板の幅（20 cm）を物差しにして、つま先から踏切線（ファールライン）までを測ります。</p>
+          <FoulGuide left={(layout?.direction ?? 0) < 0} />
           {contact.length > 1 && <div className="longjump-frame-step" role="group" aria-label="測るコマ">
             <button type="button" disabled={foulFrame === contact[0].frame} onClick={() => { const i = contact.findIndex(f => f.frame === foulFrame); setFoul(f => ({ ...f, frame: contact[Math.max(0, i - 1)].frame })); }}>◀ 1コマ前</button>
             <span>{foulFrame === s.picks.to0 ? '離地のコマ' : foulFrame === s.picks.td0 ? '接地のコマ' : `接地から${contact.findIndex(f => f.frame === foulFrame)}コマ目`}</span>

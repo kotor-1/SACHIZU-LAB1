@@ -38,3 +38,19 @@
 .foul-zoom{display:flex;gap:8px;margin:6px 0 0}
 .foul-result{margin:10px 0 8px;padding:10px 12px;border-radius:12px;background:var(--sz-surface-2);font-size:16px;font-weight:800;line-height:1.5;color:var(--sz-text)}
 .foul-result.over{color:#ff8a7a}
+/* The sample (FoulGuide.tsx): the board drawn with the points' colours and tags and the lines of the magnified picture. */
+.foul-guide{margin:8px 0 10px;padding:0 12px;border:1px solid var(--sz-line);border-radius:12px;background:var(--sz-surface-2)}
+.foul-guide>summary{display:flex;align-items:center;min-height:44px;font-size:14px;font-weight:700;cursor:pointer;list-style:none}
+.foul-guide>summary::-webkit-details-marker{display:none}.foul-guide>summary::after{content:'＋';margin-left:auto;padding-left:12px;color:var(--sz-muted)}
+.foul-guide[open]>summary::after{content:'－'}
+.foul-guide svg{display:block;width:100%;height:auto;border-radius:8px}
+.foul-guide .runway{fill:#86463b}.foul-guide .board{fill:#f1f1ec}.foul-guide .strip{fill:#2f7a53}
+.foul-guide svg line{stroke-width:2;filter:drop-shadow(0 0 1px #000)}.foul-guide svg line.line{stroke:#ffd166}
+.foul-guide svg line.back{stroke:#fff;stroke-dasharray:5 4}.foul-guide svg line.gap{stroke:#7dff6b;stroke-width:3}
+.foul-guide svg line.shin{stroke:#9aa3ad;stroke-width:6;stroke-linecap:round;filter:none}
+.foul-guide .shoe{fill:#d5dae0;stroke:#1d2228}
+.foul-guide .label{fill:#fff;font-size:10px;font-weight:700}.foul-guide .board-label{fill:#5b6168;font-size:9px}.foul-guide .line-label{fill:#ffd166}
+.foul-guide .halo{fill:#000;opacity:.5}.foul-guide .dot{stroke:#fff;stroke-width:1.6}
+.foul-guide .lineA .dot,.foul-guide .lineB .dot{fill:#ffd166}.foul-guide .back .dot{fill:#fff}.foul-guide .toe .dot{fill:#7dff6b}
+.foul-guide-tag rect{fill:#fff}.foul-guide-tag text{fill:#123a30;font-size:10px;font-weight:800}
+.foul-guide p{margin:6px 0 10px;font-size:13px;line-height:1.5;color:var(--sz-text-2)}
