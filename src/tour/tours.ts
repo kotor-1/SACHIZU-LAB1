@@ -72,6 +72,7 @@ export const SETS: Record<string, TourSet> = {
     setup: { id: 'rj', steps: [
       { at: '.rj-title', title: 'RJ（リバウンドジャンプ）', text: '連続ジャンプの動画から、平均RSIを推定します。身長や物差しを入れたり、コマを指定したりする必要はありません。' },
       { at: '.rj-legs', title: '跳び方を選ぶ', text: '両脚か、片脚（右・左）かを選びます。' },
+      { at: '.rj-source', title: '録画かカメラか', text: '撮った動画を読み込むか、カメラで撮りながら測るかを選びます。カメラは1秒60コマで撮り、跳び終わるとすぐ結果が出ます。' },
       { at: '.rj-capture', title: '動画を選ぶ', text: '全身と左右の靴、床が映る動画を選びます。正面から、靴と床の色がはっきり違う場所で撮ると正確です。' },
       { at: 'section[aria-label="保存済み骨格から再計算"]', title: '保存したJSONから', text: '前に保存したJSONを選ぶと、動画を読み直さずに計算し直せます。' },
       { at: '.rj-lab > .rj-button', title: '解析する', text: '「入力なしでRJを解析」を押すと解析が始まります。終わるまでこの画面を開いておいてください。' },

@@ -1,5 +1,5 @@
 import { G, quadratic } from '../cmj/analysis';
-import { RJ_MIN_FPS } from './frame-interval';
+import { RJ_MIN_FPS, SIXTY_FPS, sixtyFps } from './frame-interval';
 import type { COMSample } from '../cmj/center-of-mass';
 import { MODELS, modelDisplacement, type Estimate, type ModelId } from './analysis';
 import { SIGNALS, type SignalId } from './lower-body';
@@ -35,9 +35,12 @@ export function detectLowerPeaks(samples: readonly COMSample[], signal: SignalId
   if (samples.some((s, i) => !Number.isFinite(s.pts) || !Number.isInteger(s.frame) ||
     [s.comX, s.comY, s.bodyScale].some(v => v !== null && !Number.isFinite(v)) ||
     (i > 0 && (s.pts <= samples[i - 1].pts || s.frame <= samples[i - 1].frame)))) return fail('INVALID_TIMELINE');
-  if (1 / median(samples.slice(1).map((s, i) => s.pts - samples[i].pts)) < RJ_MIN_FPS) return fail('FRAME_RATE_TOO_LOW');
+  const interval = median(samples.slice(1).map((s, i) => s.pts - samples[i].pts));
+  if (1 / interval < RJ_MIN_FPS) return fail('FRAME_RATE_TOO_LOW');
   const good = samples.filter(valid); if (good.length < 30) return fail('LOWER_POINTS_UNAVAILABLE');
   const threshold = median(good.map(s => s.bodyScale!)) * .07;
+  // The apex parabola needs 7 samples; at 60 frames/s ±50 ms holds them only when rounding allows (SIXTY_FPS).
+  const fitWindow = sixtyFps(interval) ? Math.max(.05, SIXTY_FPS.apexWindowFrames * interval) : .05;
   const smooth = samples.map((s, i) => {
     const neighbors = samples.slice(Math.max(0, i - 2), i + 3);
     return valid(s) && neighbors.every(valid) ? median(neighbors.map(n => n.comY!)) : valid(s) ? s.comY : null;
@@ -52,7 +55,7 @@ export function detectLowerPeaks(samples: readonly COMSample[], signal: SignalId
       if (y < smooth[apex]!) apex = i;
       if (y - smooth[apex]! >= threshold) {
         const s = samples[apex]; let pts = s.pts, py = s.comY!;
-        const rows = samples.filter(r => valid(r) && Math.abs(r.pts - pts) <= .05);
+        const rows = samples.filter(r => valid(r) && Math.abs(r.pts - pts) <= fitWindow);
         const fit = rows.length >= 7 ? quadratic(rows.map(r => ({ t: r.pts - pts, y: r.comY! }))) : null;
         if (fit && fit.a > 0 && Math.abs(fit.b / (2 * fit.a)) <= .025) { pts -= fit.b / (2 * fit.a); py = fit.c - fit.b ** 2 / (4 * fit.a); }
         // Close peaks remain visible as a count/period failure; do not remove

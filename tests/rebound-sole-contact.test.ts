@@ -50,6 +50,18 @@ describe('RJ sole-contact timing (rj-sole-contact-v1)', () => {
     // The template's earlier takeoff (1.42 vs 1.435) gives a shorter contact and a higher RSI.
     expect(out.mean!).toBeLessThan(out.modelMean!);
   });
+  it('at 60 fps moves each takeoff 0.4 frame earlier and keeps the landing (SIXTY_FPS)', () => {
+    const r = report(3), truth = r.cycles.map(c => ({ land: c.startPts + .1771, off: c.startPts + .4352 }));
+    const out = soleContactReport(r, soles(truth, 3.2).filter(f => f.frame % 2 === 0)), shift = .4 / 60;
+    expect(out.takeoffShiftSeconds).toBeCloseTo(shift, 12);
+    expect(out.measuredCycles).toBe(3);
+    out.cycles.forEach((c, i) => {
+      expect(Math.abs(c.takeoffPts! + shift - truth[i].off)).toBeLessThanOrEqual(1 / 120 + 1e-9);
+      expect(Math.abs(c.landingPts! - truth[i].land)).toBeLessThanOrEqual(1 / 60 + 1e-9);
+      expect(c.contactSeconds).toBeCloseTo(c.takeoffPts! - c.landingPts!, 12);
+    });
+    expect(soleContactReport(r, soles(truth, 3.2)).takeoffShiftSeconds).toBe(0);
+  });
   it('uses the later foot for takeoff and the earlier foot for landing', () => {
     const r = report(3), truth = r.cycles.map(c => ({ land: c.startPts + .1771, off: c.startPts + .4352 }));
     const late = soles(truth.map(e => ({ land: e.land + .01, off: e.off + .02 })), 3.2);

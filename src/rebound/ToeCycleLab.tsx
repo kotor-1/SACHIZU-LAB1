@@ -6,20 +6,26 @@ import { typicalInterval } from './frame-interval';
 import type { PoseFrame } from './prediction-observations';
 import { predictionSignals } from './prediction-observations';
 import { AUTOMATIC_REGION } from './automatic-foot';
-import { wholeCycleReport } from './whole-cycle-research';
+import { wholeCycleReport, type WholeCycleReport } from './whole-cycle-research';
 import { toeCycleReport } from './toe-cycle-research';
-import { createLowerSubjectSelector } from './lower-body';
-import { measureSoleBoxes, soleBoxes, soleContactReport, soleRegion, SOLE_CONTACT_SETTINGS, type SoleContactReport, type SoleFrame } from './sole-contact';
+import { soleContactReport, SOLE_CONTACT_SETTINGS, type SoleContactReport, type SoleFrame } from './sole-contact';
+import { soleMeter } from './sole-meter';
 import { parseToeCycleImport, MAX_TOE_CYCLE_IMPORT_BYTES } from './toe-cycle-import';
 import PoseReplay from './PoseReplay';
 import { JUMP_LEGS, LEG_LABELS, SINGLE_LEG_READY, singleLeg, type JumpLegs } from '../cmj/single-leg';
 import { stanceLegFrames, stanceSoles } from './stance-leg';
 import './rebound.css';
 import TourButton from '../tour/TourButton';
+import CameraRJ, { type CameraRecord } from './CameraRJ';
+import { RJ_STALL_MS, type RJSet, type RJSetEnd } from './rj-live-session';
+import { RJ_CAMERA, type CameraTry } from './rj-camera';
 
 type Report = ReturnType<typeof toeCycleReport>;
-type Observation = { file: File | null; filename: string; sourceBytes: number; hash: string;
-  poses: PoseFrame[]; soles: SoleFrame[] | null; origin: 'VIDEO' | 'SAVED_JSON' };
+export type Observation = { file: File | null; filename: string; sourceBytes: number; hash: string;
+  poses: PoseFrame[]; soles: SoleFrame[] | null; origin: 'VIDEO' | 'SAVED_JSON' | 'CAMERA' };
+/** How a camera set was taken, shown above its result. */
+type CameraShown = { width: number; height: number; cameraFps: number | null; seconds: number; frames: number; missedFrames: number;
+  end: RJSetEnd; timing: string | null; waited: number };
 export const TOE_CYCLE_PRESENTATION_VERSION = 'rj-toe-cycle-presentation-v8';
 /** Below this frame rate the shoe soles are not measurable (see frame-interval.ts). */
 const LOW_FPS = 50;
@@ -50,20 +56,24 @@ const reasons: Record<string, string> = {
   SOLE_CONTACT_INSUFFICIENT_CYCLES: `靴底で接地を測れた周期が${SOLE_CONTACT_SETTINGS.minimumCycles}未満。靴と床の色が近い・足元が暗い・両足が重なる場合に起こります`,
   MODEL_CONTACT_UNAVAILABLE: 'つま先の軌跡から接地の目安を作れない', NO_ACCEPTED_TOE_CYCLES: 'つま先の軌跡から計算できる周期がない',
 };
+/** The per-cycle values behind the headline, in time order, with their last-three mean and best (PUSH-style summaries). */
+export function headlineValues(r: Report, sole: SoleContactReport) {
+  const values = sole.headlineMean === null ? [] : sole.basis === 'TOE_MODEL' ? r.cycles.flatMap(c => c.result ? [c.result.value] : [])
+    : sole.cycles.flatMap(c => c.value !== null ? [c.value] : []);
+  return { values, lastThree: values.length >= 3 ? values.slice(-3).reduce((a, b) => a + b, 0) / 3 : null,
+    best: values.length ? Math.max(...values) : null };
+}
 export function ToeCycleResults({ report: r, sole, pelvisMean, legs = 'BOTH', fps = null }: { report: Report; sole: SoleContactReport; pelvisMean: number | null; legs?: JumpLegs; fps?: number | null }) {
   const byId = new Map(sole.cycles.map(c => [c.id, c]));
   const shadow = sole.basis === 'TOE_MODEL', lowFps = fps !== null && fps < LOW_FPS;
   const reason = sole.headlineMean === null ? (r.mean === null ? r.reason : sole.reason) : null;
   const contact = sole.headlineContactSeconds;
-  // Per-cycle values behind the headline, in time order, for PUSH-style summaries.
-  const values = sole.headlineMean === null ? [] : shadow ? r.cycles.flatMap(c => c.result ? [c.result.value] : [])
-    : sole.cycles.flatMap(c => c.value !== null ? [c.value] : []);
-  const lastThree = values.length >= 3 ? values.slice(-3).reduce((a, b) => a + b, 0) / 3 : null;
+  const { values, lastThree, best } = headlineValues(r, sole);
   return <section className="rj-result" aria-label="つま先軌跡によるRJ予測結果">
     <div className="rj-auto-headline">
       <p>{singleLeg(legs) ? `片脚RJ（${LEG_LABELS[legs]}）· ` : ''}平均RSI（推定）</p>
       <strong data-testid="toe-cycle-rsi">{fmt(sole.headlineMean)} <small>m/s</small></strong>
-      {lastThree !== null && <p data-testid="toe-cycle-summary">最後3回の平均 <b>{fmt(lastThree)}</b> · 最高 <b>{fmt(Math.max(...values))}</b> m/s（平均は全{values.length}周期）</p>}
+      {lastThree !== null && <p data-testid="toe-cycle-summary">最後3回の平均 <b>{fmt(lastThree)}</b> · 最高 <b>{fmt(best)}</b> m/s（平均は全{values.length}周期）</p>}
       <p>{shadow ? `つま先の軌跡で計算した周期 ${r.acceptedCycles} / ${r.totalCycles}` : `靴底で接地を測れた周期 ${sole.measuredCycles} / ${r.totalCycles}`} · 解析対象 {r.detected} 頂点{contact !== null && ` · 平均接地 ${Math.round(contact * 1000)} ms`}</p>
       <p data-testid="toe-cycle-model">解析 v6 · 離地・着地を靴底の画像で測定。床の影と重なる動画はつま先の軌跡で計算（周期の型 v3・頂点選択 v4）</p>
     </div>
@@ -105,26 +115,30 @@ export function ToeCycleResults({ report: r, sole, pelvisMean, legs = 'BOTH', fp
   </section>;
 }
 
-/** Reads only the two shoe boxes of each decoded source frame, for the same
- * subject the toe model will select (identical selector, frame order). */
-function soleMeter() {
-  const select = createLowerSubjectSelector({ left: 0, right: 1, top: 0, bottom: 1 }, 'BOTH', { allowSmallInitialSubject: true });
-  const canvas = document.createElement('canvas'), context = canvas.getContext('2d', { willReadFrequently: true });
-  const height = SOLE_CONTACT_SETTINGS.imageHeight;
-  return (bitmap: ImageBitmap, rotation: number, poses: PoseFrame['poses'], frame: number, pts: number): SoleFrame => {
-    const selected = select(poses, pts), portrait = rotation % 180 !== 0;
-    const w = portrait ? bitmap.height : bitmap.width, h = portrait ? bitmap.width : bitmap.height, scale = height / h;
-    const width = Math.round(w * scale), boxes = soleBoxes(selected.length === 1 ? selected[0] : null, width, height);
-    const region = soleRegion(boxes, width, height);
-    if (!context || !region) return { frame, pts, feet: [null, null] };
-    if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
-    context.setTransform(1, 0, 0, 1, 0, 0);
-    context.translate(width / 2, height / 2); context.rotate(rotation * Math.PI / 180); context.scale(scale, scale);
-    context.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2); context.setTransform(1, 0, 0, 1, 0, 0);
-    const rgba = context.getImageData(region.x, region.y, region.width, region.height).data, pixels = new Uint8Array(region.width * region.height);
-    for (let i = 0; i < pixels.length; i++) pixels[i] = (77 * rgba[i * 4] + 150 * rgba[i * 4 + 1] + 29 * rgba[i * 4 + 2]) >> 8;
-    return { frame, pts, feet: measureSoleBoxes({ width: region.width, height: region.height, pixels, rgba }, boxes, region.x, region.y) };
-  };
+/** A camera set as a recording's observations: named by its time, identified by the SHA-256 of its frames (there is no video file). */
+export async function cameraObservation(set: Pick<RJSet, 'poses' | 'soles'>, when: Date): Promise<Observation> {
+  const rows = new TextEncoder().encode(JSON.stringify({ poses: set.poses, soles: set.soles }));
+  const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', rows))].map(b => b.toString(16).padStart(2, '0')).join('');
+  return { file: null, filename: `rj-camera-${when.toISOString().replace(/[:.]/g, '-')}`, sourceBytes: rows.byteLength, hash,
+    poses: set.poses, soles: set.soles, origin: 'CAMERA' };
+}
+/** What 「予測結果・骨格をJSON保存」 saves; 「保存済みJSONから再計算」 reads it back (toe-cycle-import.ts). */
+export function toeCycleExport(observation: Observation, legs: JumpLegs, result: Report, soleResult: SoleContactReport, baseline: WholeCycleReport, extra: object = {}) {
+  return { version: 'rj-toe-cycle-export-v1', presentationVersion: TOE_CYCLE_PRESENTATION_VERSION, legs,
+    result, soleContact: soleResult, pelvisComparison: baseline, inputProvenance: { kind: observation.origin, sourceVideoVerified: observation.origin === 'VIDEO' },
+    observationModel: 'full', manualInputsUsed: false, videoUploaded: false, poses: observation.poses, soles: observation.soles,
+    environment: { userAgent: typeof navigator === 'undefined' ? '' : navigator.userAgent, sourceFrames: observation.poses.length, sourceBytes: observation.sourceBytes }, ...extra };
+}
+/** How a camera set was taken, above its result: whether every frame was read, and what cut it short. */
+export function CameraTaken({ shown: c }: { shown: CameraShown }) {
+  return <div className="rj-camera-taken" data-testid="rj-camera-taken">
+    <p>カメラで計測 · 1秒{c.cameraFps ? Math.round(c.cameraFps) : '—'}コマ · {c.seconds.toFixed(1)}秒 · {c.frames}コマを解析{c.missedFrames ? '' : '（取りこぼしなし）'} · 計測の終わりから{c.waited.toFixed(1)}秒で結果</p>
+    {c.end === 'BEHIND' && <p className="rj-warning">このスマホでは解析が追いつかないため、{c.seconds.toFixed(1)}秒で計測を終えました。跳ぶ回数を減らすか、標準カメラで撮った動画を読み込んでください。</p>}
+    {c.end === 'LIMIT' && <p className="rj-warning">1回の計測は最長{RJ_CAMERA.maximumSeconds}秒のため、そこで終えました。</p>}
+    {c.end === 'STALLED' && <p className="rj-warning">カメラの映像が{RJ_STALL_MS / 1000}秒止まったため、そこまでで計測を終えました。</p>}
+    {c.missedFrames > 0 && <p className="rj-warning" data-testid="rj-camera-missed">カメラのコマを{c.missedFrames}コマ取りこぼしました（スマホの処理が重いと起こります）。その前後では靴底で接地を測れず、その周期は集計から外れることがあります。</p>}
+    {c.timing !== 'frame' && <p className="rj-warning">このブラウザはコマごとの撮影時刻を出さないため、接地の時間がずれることがあります。</p>}
+  </div>;
 }
 
 export default function ToeCycleLab() {
@@ -143,6 +157,9 @@ export default function ToeCycleLab() {
   // The legs of the jumps; the shown result's legs (a change asks for a new calculation).
   const [legs, setLegs] = useState<JumpLegs>('BOTH'), [analysedLegs, setAnalysedLegs] = useState<JumpLegs>('BOTH');
   const [analysedFps, setAnalysedFps] = useState<number | null>(null);
+  // Camera (2026-10-22): a set read frame by frame on the phone, shown with how it was taken; the sets of this visit listed.
+  const [source, setSource] = useState<'file' | 'camera'>('file'), [cameraBusy, setCameraBusy] = useState(false);
+  const [cameraShown, setCameraShown] = useState<CameraShown | null>(null), [records, setRecords] = useState<CameraRecord[]>([]);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   useEffect(() => {
     const hidden = () => { if (document.hidden) owner.current?.abort(); };
@@ -151,7 +168,7 @@ export default function ToeCycleLab() {
       owner.current?.abort(); owner.current = null; cached.current = null; document.removeEventListener('visibilitychange', hidden);
     };
   }, []);
-  function clear() { setReport(null); setSole(null); setPoses([]); setPelvisMean(null); setExportData(null); }
+  function clear() { setReport(null); setSole(null); setPoses([]); setPelvisMean(null); setExportData(null); setCameraShown(null); }
   async function loadJSON(selected: File) {
     if (owner.current) return;
     const control = new AbortController(); owner.current = control; setBusy(true);
@@ -196,7 +213,7 @@ export default function ToeCycleLab() {
         const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('');
         if (!current()) { setMessage('停止しました。途中の結果は表示しません。'); return; }
         const frames: PoseFrame[] = [], soles: SoleFrame[] = [];
-        const measureSoles = soleMeter();
+        const measureSoles = soleMeter(() => document.createElement('canvas'));
         await measureRecording(file, canvas.current, control.signal, state => {
           if (!current()) return;
           if (canvas.current?.height) setAspect(canvas.current.width / canvas.current.height);
@@ -212,25 +229,47 @@ export default function ToeCycleLab() {
       // Yield so the progress message and stop button remain visible before the fit.
       await new Promise<void>(resolve => setTimeout(resolve, 0));
       if (!current()) { setMessage('停止しました。途中の結果は表示しません。'); return; }
-      // Single-leg: the two-feet analysis is given the stance leg for both (see stance-leg.ts).
-      const single = singleLeg(legs);
-      const analysed = single ? stanceLegFrames(observation.poses) : observation.poses;
-      const soles = single && observation.soles ? stanceSoles(observation.poses, observation.soles) : observation.soles;
-      const result = toeCycleReport(analysed, observation.hash, observation.filename);
-      const soleResult = soleContactReport(result, soles);
-      const baseline = wholeCycleReport(predictionSignals(analysed, AUTOMATIC_REGION, 'BOTH').PELVIS, observation.hash, observation.filename);
-      if (!current()) return;
-      setPoses(observation.poses); setReport(result); setSole(soleResult); setPelvisMean(baseline.mean); setAnalysedLegs(legs);
-      const interval = typicalInterval(observation.poses.map(p => p.pts));
-      setAnalysedFps(interval > 0 ? 1 / interval : null);
-      setExportData({ version: 'rj-toe-cycle-export-v1', presentationVersion: TOE_CYCLE_PRESENTATION_VERSION, legs,
-        result, soleContact: soleResult, pelvisComparison: baseline, inputProvenance: { kind: observation.origin, sourceVideoVerified: observation.origin === 'VIDEO' },
-        observationModel: 'full', manualInputsUsed: false, videoUploaded: false, poses: observation.poses, soles: observation.soles,
-        environment: { userAgent: navigator.userAgent, sourceFrames: observation.poses.length, sourceBytes: observation.sourceBytes } });
+      const { soleResult } = show(observation);
       setMessage(`解析完了（${Math.round((performance.now() - started) / 1000)}秒）${reused ? ' · 骨格の再取得なし' : ''}。${soleResult.headlineMean === null ? '算出できなかった理由を確認してください。' : '平均RSIを表示しました。精度未検証の推定値です。'}`);
     } catch (e) {
       if (owner.current === control) setMessage(control.signal.aborted ? '停止しました。途中の結果は表示しません。' : e instanceof Error ? e.message : String(e));
     } finally { awake(); if (owner.current === control) { owner.current = null; setBusy(false); } }
+  }
+  /** One recording's observations analysed and shown: a chosen video, a saved JSON or a camera set. */
+  function show(observation: Observation, extra: object = {}) {
+    // Single-leg: the two-feet analysis is given the stance leg for both (see stance-leg.ts).
+    const single = singleLeg(legs);
+    const analysed = single ? stanceLegFrames(observation.poses) : observation.poses;
+    const soles = single && observation.soles ? stanceSoles(observation.poses, observation.soles) : observation.soles;
+    const result = toeCycleReport(analysed, observation.hash, observation.filename);
+    const soleResult = soleContactReport(result, soles);
+    const baseline = wholeCycleReport(predictionSignals(analysed, AUTOMATIC_REGION, 'BOTH').PELVIS, observation.hash, observation.filename);
+    setPoses(observation.poses); setReport(result); setSole(soleResult); setPelvisMean(baseline.mean); setAnalysedLegs(legs);
+    const interval = typicalInterval(observation.poses.map(p => p.pts));
+    setAnalysedFps(interval > 0 ? 1 / interval : null); setCameraShown(null);
+    setExportData(toeCycleExport(observation, legs, result, soleResult, baseline, extra));
+    return { result, soleResult };
+  }
+  /** A camera set: its frames and times are a recording's (every frame, the camera's own times), so it is analysed as one. */
+  async function cameraSet(set: RJSet, camera: CameraTry) {
+    if (set.timingReset) throw new Error('計測の途中でカメラの時刻が途切れたため、この計測は使えません。もう一度測ってください。');
+    if (set.poses.length < 30) throw new Error(set.end === 'STALLED'
+      ? 'カメラの映像が止まりました。「カメラを止める」を押してから、もう一度「カメラを起動」してください。'
+      : '計測が短すぎました。「計測を開始」を押してから跳んでください。');
+    const when = new Date(), observation = await cameraObservation(set, when);
+    cached.current = null; setFile(null); setUrl(''); setSavedSource(null);
+    const taken = { width: camera.width, height: camera.height, cameraFps: set.cameraFps, seconds: set.seconds, frames: set.poses.length,
+      missedFrames: set.missedFrames, end: set.end, timing: set.timing };
+    const { result, soleResult } = show(observation, { camera: { ...taken, settings: camera, peakWaiting: set.peakWaiting, readFps: set.readFps,
+      frameSize: set.frameSize, frameSource: set.frames } });
+    const waited = (performance.now() - set.endedAt) / 1000;
+    setCameraShown({ ...taken, waited });
+    const { lastThree, best } = headlineValues(result, soleResult);
+    setRecords(old => [...old, { n: old.length + 1, time: when.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      rsi: soleResult.headlineMean, lastThree, best,
+      contactMs: soleResult.headlineContactSeconds === null ? null : Math.round(soleResult.headlineContactSeconds * 1000) }]);
+    setMessage(soleResult.headlineMean === null ? '平均RSIを出せませんでした。下の理由を確認してください。'
+      : `計測の終わりから${waited.toFixed(1)}秒で結果を出しました。精度未検証の推定値です。`);
   }
   function save() {
     if (!exportData) return;
@@ -240,7 +279,7 @@ export default function ToeCycleLab() {
   }
   return <main className="rj-lab rj-public">
     <header><a href={import.meta.env.BASE_URL}>← 種目を選ぶ</a><span>SACHIZU LAB · RJ</span><TourButton /></header>
-    <div className="rj-title"><span>REBOUND JUMP</span><h1>{singleLeg(legs) ? '片脚RJ' : '両足RJ'} · 自動予測</h1><p>動画または保存済みJSONから、平均RSIを推定します。身長・基準物・手動のコマ指定は不要です。</p></div>
+    <div className="rj-title"><span>REBOUND JUMP</span><h1>{singleLeg(legs) ? '片脚RJ' : '両足RJ'} · 自動予測</h1><p>動画・カメラ・保存済みJSONから、平均RSIを推定します。身長・基準物・手動のコマ指定は不要です。</p></div>
     {SINGLE_LEG_READY && <section aria-label="跳び方"><h2>跳び方</h2>
       <div className="rj-legs" role="group" aria-label="跳び方">{JUMP_LEGS.map(id => <button key={id} type="button" className={legs === id ? 'is-selected' : ''}
         aria-pressed={legs === id} disabled={busy} onClick={() => {
@@ -250,6 +289,12 @@ export default function ToeCycleLab() {
         }}>{id === 'BOTH' ? '両脚' : `片脚・${id === 'RIGHT' ? '右' : '左'}`}</button>)}</div>
       {singleLeg(legs) && <p>片脚RJ：反対の脚は床に着けずに保持してください。各コマで床に近い方の足（支持脚）のつま先と靴底で離地・着地を測ります。右・左は結果の記録用です（選手自身の左右）。</p>}
     </section>}
+    <div className="rj-source" role="group" aria-label="映像の入力">{([['file', '録画した動画'], ['camera', 'カメラで計測']] as const).map(([id, label]) =>
+      <button key={id} type="button" className={source === id ? 'is-selected' : ''} aria-pressed={source === id} disabled={busy || cameraBusy} onClick={() => {
+        if (id === source) return;
+        setSource(id); clear(); setMessage(id === 'camera' ? '「カメラを起動」を押してください。' : 'RJの元動画を選んでください。');
+      }}>{label}</button>)}</div>
+    {source === 'camera' ? <CameraRJ onSet={cameraSet} onBusy={setCameraBusy} records={records} /> : <>
     <section className="rj-capture"><h2>動画を選ぶ</h2>
       <p>固定カメラ・全身と左右の靴・床が映る元動画（1080p・120fpsが基本。240fpsは時間とメモリが約2倍かかります。60fpsでも解析できます（接地の時間が粗くなり、RSIが1割ほどずれることがあります）。30fpsでは靴底で測れず高めに出ます）。正面から、靴と床の色がはっきり違う場所で撮影してください。</p>
       <label className="rj-upload"><input className="rj-file-input" ref={videoInput} type="file" accept="video/*" aria-label="つま先軌跡RJの動画を選ぶ" disabled={busy} onChange={e => {
@@ -274,8 +319,10 @@ export default function ToeCycleLab() {
       {savedSource && <p className="rj-warning" data-testid="toe-cycle-import-source">{savedSource} の保存済み骨格を使用。元動画との同一性や骨格の正確さは、このJSONだけでは検証できません。元動画の再生はありません。</p>}
     </section>
     <button className="rj-button" disabled={(!file && !savedSource) || busy} onClick={() => void start()}>入力なしでRJを解析</button>
+    </>}
     {busy && <button className="rj-button rj-secondary" onClick={() => owner.current?.abort()}>解析を停止</button>}
     <p role="status">{message}</p>
+    {report && sole && cameraShown && <CameraTaken shown={cameraShown} />}
     {report && sole && <ToeCycleResults report={report} sole={sole} pelvisMean={pelvisMean} legs={analysedLegs} fps={analysedFps} />}
     {exportData && <button className="rj-button" onClick={save}>予測結果・骨格をJSON保存</button>}
     <footer>靴底接地 v2 / 頂点選択 v4 / 連続軌跡モデル v3 · 動画は端末内で処理。250MB / 30秒 / 3600フレーム以内（1080p・120fps推奨）。ページを閉じると未保存の結果は消えます。</footer>

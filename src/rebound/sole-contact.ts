@@ -1,5 +1,5 @@
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
-import { gapLimit } from './frame-interval';
+import { gapLimit, SIXTY_FPS, sixtyFps, typicalInterval } from './frame-interval';
 import { brightFootEdge, darkFootEdge, type FootBox, type GrayImage } from './pixel-foot';
 import { footBoxesForPair } from './foot-boxes';
 import { fractionRSI } from './hybrid-physics';
@@ -26,7 +26,9 @@ import type { ToeCycleReport } from './toe-cycle-research';
  * difference exceeds 25 ms at landing or takeoff, the silhouette is treated as
  * floor-attached and the headline falls back to the toe template's events.
  * With fewer than three shoe-measured cycles the headline also uses the
- * template, labelled (on turf it read +0.16 above PUSH on average). */
+ * template, labelled (on turf it read +0.16 above PUSH on average).
+ * At 60 frames/s every takeoff is moved 0.4 frame earlier (SIXTY_FPS in
+ * frame-interval.ts): there a step averages in the slow roll onto the toe. */
 export const SOLE_CONTACT_SETTINGS = Object.freeze({
   version: 'rj-sole-contact-v2-experimental' as const,
   imageHeight: 960,
@@ -129,6 +131,8 @@ export interface SoleContactReport {
   mean: number | null; meanContactSeconds: number | null; modelMean: number | null;
   /** Median over cycles of (template landing - sole landing) and (sole takeoff - template takeoff). */
   landingLeadSeconds: number | null; takeoffLagSeconds: number | null;
+  /** How far every shoe takeoff was moved earlier: 0.4 frame at 60 frames/s (SIXTY_FPS), else 0. */
+  takeoffShiftSeconds: number;
   /** What the headline RSI is based on: the shoe bottom, or (when the silhouette
    * merged with a floor shadow) the toe template's contact events. */
   basis: 'SOLE' | 'TOE_MODEL' | null; headlineMean: number | null; headlineContactSeconds: number | null;
@@ -153,11 +157,14 @@ export function soleContactReport(report: ToeCycleReport, soles: readonly SoleFr
   const modelMean = accepted.length ? accepted.reduce((s, c) => s + c.result!.value, 0) / accepted.length : null;
   const base: SoleContactReport = { version: S.version, settings: S, available: false, polarity: null, cycles: [],
     measuredCycles: 0, measuredCycleIds: [], mean: null, meanContactSeconds: null, modelMean,
-    landingLeadSeconds: null, takeoffLagSeconds: null, basis: null, headlineMean: null, headlineContactSeconds: null, reason: null };
+    landingLeadSeconds: null, takeoffLagSeconds: null, takeoffShiftSeconds: 0, basis: null, headlineMean: null, headlineContactSeconds: null, reason: null };
   if (!soles || !soles.length) return { ...base, reason: 'SOLE_OBSERVATIONS_UNAVAILABLE' };
   if (soles.some((f, i) => !Number.isFinite(f.pts) || (i > 0 && f.pts <= soles[i - 1].pts)))
     return { ...base, reason: 'SOLE_OBSERVATIONS_INVALID' };
   const polarity = choosePolarity(report, soles);
+  // 60 frames/s: the first fast step of a rolling takeoff comes late (SIXTY_FPS); landings need no change.
+  const interval = typicalInterval(soles.map(f => f.pts));
+  const takeoffShiftSeconds = sixtyFps(interval) ? SIXTY_FPS.takeoffShiftFrames * interval : 0;
   const cycles: SoleContactCycle[] = accepted.map(c => {
     const period = c.endPts - c.startPts, model = modelContact(c);
     const out: SoleContactCycle = { id: c.id, period, modelLandingPts: model?.landing ?? null, modelTakeoffPts: model?.takeoff ?? null,
@@ -175,7 +182,7 @@ export function soleContactReport(report: ToeCycleReport, soles: readonly SoleFr
         .map(p => ({ t: -p.t, y: p.y })).reverse(), speed, travel);
       if ('reason' in up) return { ...out, reason: up.reason === 'SOLE_EDGE_GAP' ? 'SOLE_EDGE_GAP' : 'SOLE_TAKEOFF_UNRESOLVED' };
       if ('reason' in down) return { ...out, reason: down.reason === 'SOLE_EDGE_GAP' ? 'SOLE_EDGE_GAP' : 'SOLE_LANDING_UNRESOLVED' };
-      out.footTakeoffs[side] = up.t; out.footLandings[side] = -down.t;
+      out.footTakeoffs[side] = up.t - takeoffShiftSeconds; out.footLandings[side] = -down.t;
     }
     // Contact runs from the first foot down to the last foot off.
     const takeoff = Math.max(out.footTakeoffs[0]!, out.footTakeoffs[1]!), landing = Math.min(out.footLandings[0]!, out.footLandings[1]!);
@@ -205,7 +212,7 @@ export function soleContactReport(report: ToeCycleReport, soles: readonly SoleFr
     && (landingLeadSeconds! > S.maximumFloorAttachedSeconds || takeoffLagSeconds! > S.maximumFloorAttachedSeconds);
   const modelContacts = accepted.flatMap(c => { const m = modelContact(c); return m ? [m.takeoff - m.landing] : []; });
   const common = { ...base, available: true, polarity, cycles, measuredCycles: measured.length, measuredCycleIds: measured.map(c => c.id),
-    mean, meanContactSeconds, landingLeadSeconds, takeoffLagSeconds };
+    mean, meanContactSeconds, landingLeadSeconds, takeoffLagSeconds, takeoffShiftSeconds };
   if (floorAttached) return { ...common, basis: 'TOE_MODEL', headlineMean: modelMean, headlineContactSeconds: average(modelContacts),
     reason: 'SOLE_FLOOR_SHADOW_SUSPECTED' };
   // Too few shoe-measured cycles (e.g. a floor shadow that never leaves the

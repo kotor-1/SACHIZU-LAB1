@@ -5,7 +5,9 @@
  * recordings thinned to 60 frames/s the shoe-sole method stayed within 0.125
  * of PUSH on average (0.100 at 120); at 30 the soles were not measurable and
  * the toe template gave values (+0.15 above PUSH, as at 120); at 20 the
- * template became unstable and at 15 no apex was found. */
+ * template became unstable and at 15 no apex was found. Decoding them at 60
+ * instead of thinning (2026-10-23) showed two 60-only biases, now corrected
+ * (SIXTY_FPS below). */
 export const RJ_MIN_FPS = 25;
 
 /** Median interval between consecutive times (0 when fewer than two). */
@@ -23,4 +25,23 @@ export function gapLimit(limit: number, times: readonly number[]): number {
 export function sampleMinimum(count: number, times: readonly number[]): number {
   const interval = typicalInterval(times);
   return interval * 120 <= 1 + 1e-9 ? count : Math.min(count, Math.max(10, Math.round(count / (120 * interval))));
+}
+
+/** Two corrections for 45-90 frames/s ("60": the RJ camera and phones'
+ * standard video), found by analysing the 18 PUSH-referenced recordings
+ * decoded at 60 against their own 120 frames/s analysis (2026-10-23):
+ * - apexWindowFrames: each pelvis apex is refined by a parabola over ±50 ms,
+ *   which needs 7 samples; at 60 frames/s ±50 ms held them only when rounding
+ *   allowed (68 of 200 apexes), so most apexes stayed on a frame and the
+ *   cycle periods moved by up to 2 frames. The window keeps three samples on
+ *   each side.
+ * - takeoffShiftFrames: a shoe takeoff is the first fast upward step; a 60
+ *   frames/s step averages in more of the slow roll onto the toe, so takeoffs
+ *   came 6.9 ms later than at 120 (156 jumps; landings unbiased), contacts
+ *   longer and the mean RSI 0.04 lower. Takeoffs are moved 0.4 frame earlier.
+ * At 90 frames/s and above nothing changes; below 45 (not re-checked) neither. */
+export const SIXTY_FPS = Object.freeze({ minimumFps: 45, maximumFps: 90, apexWindowFrames: 3.5, takeoffShiftFrames: .4 });
+/** Whether a frame interval is in the SIXTY_FPS range. */
+export function sixtyFps(interval: number): boolean {
+  return interval > 1 / SIXTY_FPS.maximumFps && interval <= 1 / SIXTY_FPS.minimumFps;
 }
